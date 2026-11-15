@@ -134,7 +134,7 @@ class SessionHTTPTests(unittest.TestCase):
         self.assertEqual(self.policy.read_resource("admin", "alpha", "board", "same").text, "updated")
         self.assertEqual(len(self.policy.audit_events("admin", "alpha")), 1)
 
-    def test_live_cookie_flow_sets_scoped_flags_and_no_body_credentials(self):
+    def test_synthetic_cookie_flow_sets_scoped_flags_and_no_body_credentials(self):
         start = self.begin_http(); self.assertEqual(start["status"], 200)
         target = start["body"]["data"]["authorization_url"]
         params = parse_qs(urlsplit(target).query)
@@ -302,6 +302,17 @@ class SessionHTTPTests(unittest.TestCase):
         with sqlite3.connect(self.login_path) as db: self.assertEqual(db.execute("PRAGMA journal_mode=WAL").fetchone()[0],"wal")
         self.assertEqual(self.request()["status"],503)
         with sqlite3.connect(self.login_path) as db: self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0],"wal")
+
+    def test_journal_mode_change_between_connect_and_transaction_denied(self):
+        connect = self.sessions._connect
+        def changed():
+            db = connect()
+            with sqlite3.connect(self.login_path) as other:
+                other.execute("PRAGMA journal_mode=WAL")
+            return db
+        with patch.object(self.sessions, "_connect", side_effect=changed):
+            self.assertEqual(self.write()["status"],503)
+        self.assertEqual(self.policy.read_resource("admin","alpha","board","same").revision,1)
 
     def test_main_wal_rejected(self):
         with sqlite3.connect(self.policy_path) as db: db.execute("PRAGMA journal_mode=WAL")

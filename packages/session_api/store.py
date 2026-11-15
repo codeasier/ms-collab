@@ -41,15 +41,19 @@ class SessionPolicyStore:
             db = self.policy._connect()
             db.execute("ATTACH DATABASE ? AS login", (self.login._uri,))
             # Read/validate only. Never silently switch an operator's WAL store.
-            for schema in ("main", "login"):
-                if (db.execute(f"PRAGMA {schema}.journal_mode").fetchone()[0] != "delete"
-                        or db.execute(f"PRAGMA {schema}.synchronous").fetchone()[0] < 2):
-                    raise AuthenticationUnavailable()
+            self._storage_modes(db)
             return db
         except Exception:
             if db is not None:
                 db.close()
             raise AuthenticationUnavailable() from None
+
+    @staticmethod
+    def _storage_modes(db):
+        for schema in ("main", "login"):
+            if (db.execute(f"PRAGMA {schema}.journal_mode").fetchone()[0] != "delete"
+                    or db.execute(f"PRAGMA {schema}.synchronous").fetchone()[0] < 2):
+                raise AuthenticationUnavailable()
 
     def _metadata(self, db):
         if (db.execute("PRAGMA login.application_id").fetchone()[0] != _APP
@@ -77,6 +81,9 @@ class SessionPolicyStore:
             with closing(self._connect()) as db:
                 db.execute("BEGIN IMMEDIATE")
                 try:
+                    # An operator may have changed journal mode after connect.
+                    # Recheck under both locks before relying on atomic commit.
+                    self._storage_modes(db)
                     floor = self._metadata(db)
                     observed = self.login._now()
                     if observed < floor:
