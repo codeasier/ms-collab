@@ -11,7 +11,7 @@ function exact(value, keys) { if (!object(value) || Object.keys(value).length !=
 function number(value, max = Number.MAX_SAFE_INTEGER) { if (!Number.isSafeInteger(value) || value < 0 || value > max) fail(); return value; }
 function text(value, limit) { if (typeof value !== 'string' || !value.trim() || encoder.encode(value).length > limit || /[\x00-\x1f\x7f]/.test(value)) fail(); return value; }
 function id(value) { if (typeof value !== 'string' || !ID.test(value)) fail(); return value; }
-function date(value) { if (typeof value !== 'string' || value.length > 64 || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) fail(); return value; }
+function date(value) { if (typeof value !== 'string' || value.length > 64 || /[\x00-\x1f\x7f]/.test(value) || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) fail(); return value; }
 function choice(value, options) { if (!options.includes(value)) fail(); return value; }
 function boolean(value) { if (typeof value !== 'boolean') fail(); return value; }
 export function scopeOf(value) { exact(value,['workspace_id','connection_id','repository_id']); for (const v of Object.values(value)) id(v); return {...value}; }
@@ -42,6 +42,7 @@ export function validateList(value, scope, options) {
   for (const row of value.items) {
     exact(row,['id','status','source','branch','created_at','details_available','stages_available','summary_available']);
     id(row.id); choice(row.status,STATES); choice(row.source,SOURCES); text(row.branch,400); date(row.created_at);
+    if (Date.parse(row.created_at) > Date.parse(value.source.observed_at)) fail();
     if (ids.has(row.id) || row.details_available !== true) fail();
     ids.add(row.id); boolean(row.stages_available); boolean(row.summary_available);
     for (const key of ['status','source','branch']) if (options[key] && row[key] !== options[key]) fail();
@@ -124,7 +125,8 @@ function csrfHeaders(csrf) {
 export class Client {
   constructor(fetcher = globalThis.fetch) { this.fetcher = fetcher; }
   async request(path, signal, options = {}) {
-    return jsonResponse(await this.fetcher(path,{method:'GET',credentials:'same-origin',mode:'same-origin',redirect:'error',cache:'no-store',signal,...options}));
+    const fetcher=this.fetcher; // Call as a function, not with a Client receiver.
+    return jsonResponse(await fetcher(path,{method:'GET',credentials:'same-origin',mode:'same-origin',redirect:'error',cache:'no-store',signal,...options}));
   }
   base(scope) { const s=scopeOf(scope); return `/api/workspaces/${s.workspace_id}/gui-smoke/${s.connection_id}/${s.repository_id}`; }
   async session(signal) { const value=await this.request('/auth/session',signal); exact(value,['principal_id']); if (typeof value.principal_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value.principal_id)) fail(); return value.principal_id; }
@@ -168,7 +170,8 @@ export class ViewController {
     try {
       const detail=await this.client.detail(view.scope,identity,view.list.source.revision,lane.signal);
       if (lane.epoch !== this.epoch) return false;
-      if (!sameSnapshot(view.list,detail)) fail();
+      const brief=view.list.items.find(row => row.id === identity);
+      if (!sameSnapshot(view.list,detail) || ['id','status','source','branch','created_at'].some(key => brief[key] !== detail.task[key]) || brief.summary_available !== (detail.task.summary !== null) || brief.stages_available !== (detail.task.stages !== null)) fail();
       this.emit({phase:'detail',view,detail}); return true;
     } catch (error) { if (lane.epoch === this.epoch) { this.view=null; this.emit({phase:'error',error}); } return false; }
   }

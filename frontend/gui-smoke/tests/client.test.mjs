@@ -234,3 +234,30 @@ test('detail changed snapshot fails closed; competing details retain only latest
   slow.reject(new ViewError(404));assert.equal(await older,false);
   assert.equal(view.state.phase,'detail');assert.equal(view.state.detail.task.id,'task-2');
 });
+
+
+test('all identifier, credential and timestamp endings reject CR/LF exactly',async()=>{
+  for(const ending of ['\n','\r','\r\n','\n\r']) {
+    for(const key of ['workspace_id','connection_id','repository_id']) assert.throws(()=>scopeOf({...scope,[key]:scope[key]+ending}),ViewError);
+    const v=list();v.items[0].id+=ending;assert.throws(()=>validateList(v,scope,options),ViewError);
+    const d=detail();d.task.commit+=ending;assert.throws(()=>validateDetail(d,scope,'task-1',1),ViewError);
+    const time=list();time.source.observed_at+=ending;assert.throws(()=>validateList(time,scope,options),ViewError);
+    await assert.rejects(()=>new Client(async()=>response({principal_id:'alice'+ending})).session(),ViewError);
+    let calls=0;const client=new Client(async()=>{calls++;return response({logged_out:true});});
+    await assert.rejects(()=>client.signOut('a'.repeat(32)+ending),ViewError);
+    await assert.rejects(()=>client.detail(scope,'task-1'+ending,1),ViewError);assert.equal(calls,0);
+  }
+});
+
+test('detail must reconcile the brief from the same version and page',async()=>{
+  for(const mutate of [d=>d.task.status='failed',d=>d.task.source='web',d=>d.task.branch='other',d=>d.task.created_at='2026-01-02T10:00:00Z',d=>d.task.summary=null,d=>d.task.stages=null]) {
+    const d=detail();mutate(d);const {view}=controller({detail:async()=>d});await view.load(scope);
+    assert.equal(await view.detail('task-1'),false);assert.equal(view.view,null);
+  }
+  const future=list();future.items[0].created_at='2027-01-02T10:00:00Z';assert.throws(()=>validateList(future,scope,options),ViewError);
+});
+
+test('transport never supplies a Client receiver to the native fetch function',async()=>{
+  const client=new Client(async function(path){assert.equal(this,undefined);assert.equal(path,'/auth/session');return response({principal_id:'alice'});});
+  assert.equal(await client.session(),'alice');
+});

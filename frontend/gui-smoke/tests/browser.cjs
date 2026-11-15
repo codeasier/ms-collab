@@ -5,7 +5,8 @@ const {mkdtempSync,rmSync,mkdirSync}=require('node:fs');
 const {tmpdir}=require('node:os');const {join}=require('node:path');
 const assert=require('node:assert/strict');const readline=require('node:readline');
 (async()=>{
-  const temp=mkdtempSync(join(tmpdir(),'ms-collab-gui-cert-'));let server,browser;
+  const temp=mkdtempSync(join(tmpdir(),'ms-collab-gui-cert-'));let server,browser,page,errors=[],requests=[];
+  const shots=process.env.SCREENSHOT_DIR||'gui-smoke-screenshots';mkdirSync(shots,{recursive:true});
   try {
     execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',join(temp,'key.pem'),'-out',join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'});
     server=spawn('python3',['-m','packages.gui_smoke_ui.tests.browser_server',join(temp,'cert.pem'),join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_GUI_UI_TEST:'1'},stdio:['ignore','pipe','pipe']});
@@ -13,8 +14,8 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     const lines=readline.createInterface({input:server.stdout});
     const startup=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Fixture startup timeout: '+stderr)),10000);lines.once('line',line=>{clearTimeout(timer);try{resolve(JSON.parse(line));}catch(e){reject(e);}});server.once('exit',code=>{clearTimeout(timer);reject(Error('Fixture exited '+code+': '+stderr));});});
     browser=await chromium.launch({headless:true,args:['--no-sandbox']});
-    const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1050}}),page=await context.newPage();
-    const errors=[], requests=[];page.on('pageerror',e=>errors.push(e.message));
+    const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1050}});page=await context.newPage();
+    page.on('pageerror',e=>errors.push(e.message));
     page.on('request',r=>requests.push({url:r.url(),method:r.method(),headers:r.headers()}));
     const text=async id=>(await page.locator('#'+id).textContent()).trim();
     async function notice(value){await page.waitForFunction(v=>document.getElementById('notice').textContent.includes(v),value);}
@@ -27,7 +28,6 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     }
     async function login(){await page.locator('#sign-in').click();await page.waitForURL(startup.origin+'/');await page.waitForFunction(()=>document.getElementById('session-label').textContent==='Signed in · alice');}
     async function control(path){assert.equal(await page.evaluate(async p=>(await fetch(p,{method:'POST'})).status,path),200);}
-    const shots=process.env.SCREENSHOT_DIR||'gui-smoke-screenshots';mkdirSync(shots,{recursive:true});
     await page.goto(startup.origin+'/gui-smoke/');await notice('Sign in');assert.equal(await page.locator('#load').isDisabled(),true);
     assert.equal(await page.locator('input[type=password]').count(),0);
     await login();
@@ -49,12 +49,16 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     await load('empty');assert.ok((await text('empty')).includes('No published tasks'));assert.equal(await page.locator('.stat').count(),6);
     await load('unpublished');assert.ok((await text('snapshot-label')).includes('No published snapshot'));assert.equal(await page.locator('.stat').count(),0);
     await load('commons');assert.equal(await page.locator('.task').count(),0);
-    // Captured old authorized bytes cannot repaint after scope switch or clearing.
-    let held;const gate=new Promise(resolve=>held=resolve);let reached;const seen=new Promise(resolve=>reached=resolve);
-    await page.route('**/api/workspaces/alpha/gui-smoke/panel/repo/tasks?*',async route=>{const response=await route.fetch();reached();await gate;await route.fulfill({response}).catch(()=>{});});
+    // Deliberately disable cancellation in this probe: generation must reject
+    // captured authorized bytes even when the old transport completes normally.
+    await page.evaluate(()=>{globalThis.originalAbort=AbortController.prototype.abort;AbortController.prototype.abort=function(){};});
+    let held,handled,reached;const gate=new Promise(r=>held=r),done=new Promise(r=>handled=r),seen=new Promise(r=>reached=r);
+    const oldRoute='**/api/workspaces/alpha/gui-smoke/panel/repo/tasks?*';
+    await page.route(oldRoute,async route=>{try {const response=await route.fetch();reached();await gate;await route.fulfill({response});}finally{handled();}});
     await page.locator('#scope-picker').evaluate(el=>el.open=true);await page.locator('#workspace').fill('alpha');await page.locator('#load').click();await seen;
-    await load('beta');held();await page.unroute('**/api/workspaces/alpha/gui-smoke/panel/repo/tasks?*');
-    await page.waitForTimeout(100);assert.equal(await text('scope-title'),'beta / panel / repo');assert.equal((await text('tasks')).includes('alpha-branch'),false);
+    await load('beta');held();await done;await page.unroute(oldRoute);
+    assert.equal(await text('scope-title'),'beta / panel / repo');assert.equal((await text('tasks')).includes('alpha-branch'),false);
+    await page.evaluate(()=>{AbortController.prototype.abort=globalThis.originalAbort;delete globalThis.originalAbort;});
     // Real navigation Back/Forward: no saved UI/auth reconstruction from history.
     await page.goto(startup.origin+'/gui-smoke/');await page.waitForFunction(()=>document.getElementById('session-label').textContent==='Signed in · alice');
     await page.goBack();await page.waitForFunction(()=>document.getElementById('session-label').textContent==='Signed in · alice');assert.equal(await page.locator('.task').count(),0);
@@ -65,7 +69,13 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     await page.getByRole('button',{name:'Inspect task task-1',exact:true}).click();await page.locator('#detail h3').waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:join(shots,'mobile-detail.png'),fullPage:true});
     await page.locator('#clear').click();assert.equal(await page.locator('#detail').textContent(),'');await load();
-    await page.locator('#sign-out').click();await notice('Signed out');assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');
+    await page.evaluate(()=>{globalThis.originalAbort=AbortController.prototype.abort;AbortController.prototype.abort=function(){};});
+    let releaseOut,receivedOut,finishedOut;const outGate=new Promise(r=>releaseOut=r),outSeen=new Promise(r=>receivedOut=r),outDone=new Promise(r=>finishedOut=r);
+    await page.route(oldRoute,async route=>{try{const response=await route.fetch();receivedOut();await outGate;await route.fulfill({response});}finally{finishedOut();}});
+    await page.locator('#next').click();await outSeen;
+    await page.locator('#sign-out').click();await notice('Signed out');releaseOut();await outDone;await page.unroute(oldRoute);
+    await page.evaluate(()=>{AbortController.prototype.abort=globalThis.originalAbort;delete globalThis.originalAbort;});
+    assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');
     assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
     await login();await load();await control('/synthetic-revoke');await page.locator('#next').click();await notice('session is not active');assert.equal(await page.locator('.task').count(),0);
     // Stale cookies recover through the same real auth flow, not a fake login.
@@ -76,6 +86,10 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     assert.equal(requests.some(r=>!['127.0.0.1','localhost'].includes(new URL(r.url).hostname)),false);
     assert.deepEqual(errors,[]);
     console.log('PASS: synthetic HTTPS login/cookie policy, scope isolation, consistent paging, task evidence, XSS, empty/unpublished, late response, browser history, mobile, logout, session/member revoke. No production/provider/runner acceptance.');
+  } catch(error) {
+    // This fixture has synthetic data only; never log cookies or request headers.
+    if(page&&!page.isClosed()){console.error('Synthetic failure state',JSON.stringify({url:page.url(),body:(await page.locator('body').innerText()).slice(0,2500),errors,paths:requests.map(r=>({path:new URL(r.url).pathname,method:r.method}))}));await page.screenshot({path:join(shots,'failure.png'),fullPage:true});}
+    throw error;
   } finally {
     if(browser)await browser.close();
     if(server&&server.exitCode===null){server.kill('SIGTERM');await new Promise(resolve=>{server.once('exit',resolve);setTimeout(()=>{if(server.exitCode===null)server.kill('SIGKILL');resolve();},3000);});}
