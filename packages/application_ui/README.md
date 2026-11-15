@@ -33,7 +33,11 @@ rechecked. A synthetic fixture is never imported by the production factory.
 
 The wrapper uses the trusted host's fixed transport check for static/bootstrap
 requests too. HTTPS, exact Host/Origin, rejected Authorization headers, no proxy
-header overrides and no CORS apply. Static paths are allowlisted, non-frameable,
+header overrides and no CORS apply. The exact no-query GET HTML entry alone permits a top-level document navigation
+from another site (including a provider callback 303), while still enforcing
+HTTPS/Host, no Authorization, no script-prefix and no foreign Origin. This public
+HTML exception does not apply to bootstrap, assets, API/auth or embedded pages.
+Static paths are allowlisted, non-frameable,
 no-store, nosniff and use a self-only CSP with no inline script/style. Static
 controller source is public even if its page/module is disabled; it grants no API
 access. Legacy bearer entry scripts are not served by this wrapper.

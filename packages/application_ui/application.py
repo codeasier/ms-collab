@@ -47,7 +47,17 @@ class ApplicationUI:
             start_response(status, headers + [('Content-Type', media+'; charset=utf-8'), ('Content-Length', str(len(body)))])
             return [b'' if environ.get('REQUEST_METHOD') == 'HEAD' else body]
         try:
-            self._host._boundary._transport_security(environ)
+            # A provider callback's 303 navigation retains cross-site Fetch
+            # Metadata. Only fixed, public top-level HTML may be that landing
+            # page; no API, bootstrap, script, query or embedded document gets
+            # this exception. HTML contains no identity or private scope data.
+            navigation = (path in {'/', '/manage/', '/responsibility/'}
+                and environ.get('REQUEST_METHOD') == 'GET'
+                and not environ.get('QUERY_STRING')
+                and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
+                and environ.get('HTTP_SEC_FETCH_DEST') == 'document'
+                and environ.get('HTTP_ORIGIN') in {None, self._host._config.origin})
+            self._host._boundary._transport_security(environ, callback=navigation)
         except AuthenticationError:
             return respond('401 Unauthorized', b'authentication_required')
         if environ.get('REQUEST_METHOD') not in {'GET', 'HEAD'} or environ.get('QUERY_STRING'):

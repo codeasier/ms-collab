@@ -75,6 +75,15 @@ class UITests(unittest.TestCase):
         for path in ('/','/manage/','/app/bootstrap','/app/client.mjs'):
             for extra in ({'wsgi.url_scheme':'http'},{'HTTP_HOST':'other.invalid'},{'HTTP_ORIGIN':'https://other.invalid'},{'HTTP_SEC_FETCH_SITE':'same-site'},{'HTTP_SEC_FETCH_SITE':'cross-site'},{'HTTP_AUTHORIZATION':'Bearer not-used'},{'SCRIPT_NAME':'/prefix'}):
                 self.assertEqual(self.read(path,extra=extra)['status'],401,(path,extra))
+    def test_callback_navigation_exception_is_public_html_only(self):
+        navigation={'HTTP_SEC_FETCH_SITE':'cross-site','HTTP_SEC_FETCH_MODE':'navigate','HTTP_SEC_FETCH_DEST':'document'}
+        for path in ('/','/manage/','/responsibility/'):
+            self.assertEqual(self.read(path,extra=navigation)['status'],200)
+            for changed in ({'HTTP_SEC_FETCH_DEST':'iframe'},{'HTTP_SEC_FETCH_MODE':'cors'},{'HTTP_HOST':'other.invalid'},{'wsgi.url_scheme':'http'},{'HTTP_AUTHORIZATION':'Bearer not-used'},{'HTTP_ORIGIN':'https://other.invalid'},{'SCRIPT_NAME':'/prefix'}):
+                self.assertEqual(self.read(path,extra={**navigation,**changed})['status'],401)
+        for path in ('/app/bootstrap','/app/client.mjs','/api/workspaces','/auth/session','/?code=not-allowed'):
+            self.assertEqual(self.read(path,extra=navigation)['status'],401,path)
+        self.assertEqual(self.read('/',method='HEAD',extra=navigation)['status'],401)
     def test_bootstrap_has_only_fixed_non_authorizing_configuration(self):
         data=self.read('/app/bootstrap',cookies='')['body']['data']
         self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
