@@ -30,3 +30,11 @@ Existing demo labels such as `private`/`public` or illustrative space IDs are no
 a stable API or migration mapping. The draft `product`/`shared` kind names express
 intended policy; code and persistent schema must be reconciled explicitly before
 adopting this contract. Labels must never imply anonymous access.
+
+## Implementation increments
+
+The [in-memory workspace policy core](../../packages/workspaces/README.md) is an
+independent server-side implementation slice with negative and concurrent tests.
+It is not connected to the demo HTTP routes, real authentication or persistence.
+The API, sharing and durable isolation gates above remain proposals/unverified
+until their respective implementation and integration tests pass.
