@@ -8,6 +8,8 @@ from urllib.parse import parse_qs,urlencode
 from wsgiref.simple_server import WSGIServer,WSGIRequestHandler,make_server
 from packages.application_ui import ApplicationUI
 from packages.artifact_refresh.tests.fixtures import setup
+from packages.artifact_sync.records import load as load_index, decode_snapshot
+from packages.artifacts import Scope
 
 
 def main():
@@ -39,10 +41,10 @@ def main():
                 if action=='state':
                     with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
                         rows=db.execute('SELECT state FROM artifact_refresh_leases_v1 ORDER BY rowid').fetchall()
-                        revision,candidate,published=db.execute("SELECT revision,candidate,published FROM artifact_indexes_v1 WHERE workspace='alpha'").fetchone()
+                        record=load_index(db,Scope('alpha','source','bucket'));published=record.published
                     result={'calls':len(pages.calls),'loads':len(pages.loads),'leases':[r[0] for r in rows],
-                        'active':sum(r[0]=='active' for r in rows),'revision':revision,'pending':candidate is not None,
-                        'published_rows':len(json.loads(published)['artifacts']) if published is not None else 0}
+                        'active':sum(r[0]=='active' for r in rows),'revision':record.revision,'pending':record.candidate is not None,
+                        'published_rows':len(decode_snapshot(published,record.policy.connection).artifacts) if published is not None else 0}
                 elif action=='pause':release.clear();mode[0]='pause'
                 elif action=='release':release.set()
                 elif action=='timeout':mode[0]='timeout'
