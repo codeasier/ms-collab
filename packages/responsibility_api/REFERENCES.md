@@ -147,8 +147,11 @@ Exact integer versions/counters reject booleans and implicit defaults. Record,
 config, grant, generation and membership revisions are bounded by
 `9007199254740991`; write exhaustion returns 409 before SQL mutation/audit.
 Grant/config versions cannot exceed the enclosing record revision. JSON remains
-bounded to 1 MiB, incoming config/reconfirm bodies to 64 KiB, and reference history
-to 3000 distinct IDs. A proposal proves current authorization and identity
+bounded to 1 MiB and incoming configuration PUT bodies to 65,536 bytes. Only
+`POST /reconfirm` permits 65,624 bytes: the same complete fields plus the exact
+88-byte compact UTF-8 envelope overhead for a 64-hex token. Previously saved
+full-budget fields remain reconfirmable; no other API or method gains a larger
+request budget. Reference history is limited to 3000 distinct IDs. A proposal proves current authorization and identity
 preconditions, not that the updated envelope will fit: longer identity attributes
 can exhaust the serialized bound during confirmation and return 409 without a
 write. Capacity failure never drops retired pins to make room.

@@ -40,6 +40,14 @@ export function validateCapabilities(data,scope){
  validateCommon(data,scope);return data
 }
 export const validConfirmationToken=value=>exact(/^[0-9a-f]{64}$/,value)
+// Only the exact reconfirmation wire envelope receives room for its fixed proof.
+// This is a byte budget, never authorization or permission to change a record.
+export function responsibilityRequestLimit(path,method,body){
+ const parts=typeof path==='string'?path.split('/'):[]
+ if(method!=='POST'||parts.length!==9||parts[0]!==''||parts[1]!=='api'||parts[2]!=='workspaces'||parts[4]!=='responsibility'||parts[8]!=='reconfirm'||![parts[3],parts[5],parts[6],parts[7]].every(value=>exact(segment,value))||!object(body,['fields','confirmation_token'])||!validConfirmationToken(body.confirmation_token))return 65536
+ try{validateFields(body.fields)}catch{return 65536}
+ return 65624 // 65536-byte {fields} plus the 88-byte confirmation_token member.
+}
 export function validateReferences(value,fields){
  const nominated=new Set(fields.flatMap(f=>[...f.owner_ids,...(f.backup?[f.backup.principal_id]:[])]))
  if(!object(value,['state','stale_ids','confirmation_token'])||!['current','reconfirmation_required'].includes(value.state)||!Array.isArray(value.stale_ids)||!unique(value.stale_ids)||!value.stale_ids.every(id=>exact(principal,id)&&nominated.has(id))||(value.confirmation_token!==null&&!validConfirmationToken(value.confirmation_token))||(value.state==='current'?value.stale_ids.length!==0:value.stale_ids.length===0))fail()
@@ -94,9 +102,11 @@ export function createClient({fetcher=fetch}={}){
    if(parts.length!==2||!['capabilities','config','candidates','save','reconfirm'].includes(action))throw new Error('Invalid request.')
    const headers={Authorization:`Bearer ${credential}`},write=['save','reconfirm'].includes(action)
    let suffix=action==='save'?'config':action,body
-   if(write){if(!integer(revision,1))throw new Error('Current revision required.');validateFields(fields);if(action==='reconfirm'&&!validConfirmationToken(confirmation_token))throw new Error('Current confirmation proposal required.');body=JSON.stringify(action==='reconfirm'?{fields,confirmation_token}:{fields});if(new TextEncoder().encode(body).length>65536)throw new Error('Configuration exceeds 64 KiB.');headers['If-Match']=`"${revision}"`;headers['Content-Type']='application/json'}
+   if(write){if(!integer(revision,1))throw new Error('Current revision required.');validateFields(fields);if(action==='reconfirm'&&!validConfirmationToken(confirmation_token))throw new Error('Current confirmation proposal required.');body=JSON.stringify(action==='reconfirm'?{fields,confirmation_token}:{fields});headers['If-Match']=`"${revision}"`;headers['Content-Type']='application/json'}
    if(action==='candidates'){const q=queryFrom(query?.view,query?.field_id,query?.offset);if(query.limit!==20)throw new Error('Invalid request.');const params=new URLSearchParams({view:q.view,offset:String(q.offset),limit:String(q.limit)});if(q.view==='field')params.set('field_id',q.field_id);suffix+='?'+params}
-   const response=await fetcher(`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,{method:action==='reconfirm'?'POST':write?'PUT':'GET',headers,body,signal,credentials:'omit',cache:'no-store',redirect:'error'})
+   const path=`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,method=action==='reconfirm'?'POST':write?'PUT':'GET'
+   if(write&&new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Configuration exceeds 64 KiB.')
+   const response=await fetcher(path,{method,headers,body,signal,credentials:'omit',cache:'no-store',redirect:'error'})
    if(!response.ok){const error=new Error(messageFor(response.status));error.status=response.status;throw error}
    const raw=await response.text();if(raw.length>2097152)fail()
    const payload=JSON.parse(raw);if(!object(payload,['data']))fail();return payload.data

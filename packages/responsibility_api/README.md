@@ -48,7 +48,9 @@ and final current-identity checks apply to all operations.
 | POST | `/reconfirm` | Exact `{fields, confirmation_token}`; explicit current editor, reviewed proposal and `If-Match` |
 | GET | `/candidates` | `view=mine|all|field|unassigned`, optional `field_id`, `offset`, `limit` |
 
-Configuration bodies are bounded to 64 KiB and reject duplicate/unknown keys.
+Configuration PUT bodies are bounded to 65,536 bytes; only reconfirmation POST
+permits 65,624 bytes for the fixed token envelope, so full-budget saved fields
+remain recoverable. Both reject duplicate/unknown keys.
 Owner IDs must resolve to current active members of the same space. Historical
 owner/backup pins never silently transfer to a new identity; stale references
 block all candidate projection until an explicit reviewed confirmation or

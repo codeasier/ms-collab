@@ -329,6 +329,29 @@ class AuthorityTests(unittest.TestCase):
         raw['history']['authority']['principals']['one-too-many']={'issuer':community_fixture.ISSUER,'subject':'one-too-many','generation':1}
         self.write_json('fields',raw);self.assertEqual(self.request()['status'],503)
 
+    def test_full_budget_saved_fields_remain_reconfirmable_with_exact_token_allowance(self):
+        config=[dict(id='full',name='Unicode 😀 "quote" \\ slash',kind='developer',
+                     paths=[str(n)+'x'*997 for n in range(65)],owner_ids=['dev'],backup=None)]
+        compact=lambda value:json.dumps(value,ensure_ascii=False,separators=(',',':')).encode('utf-8')
+        remaining=65536-len(compact({'fields':config}))
+        for path_index,path in enumerate(config[0]['paths']):
+            amount=min(remaining,1024-len(path));config[0]['paths'][path_index]+='y'*amount;remaining-=amount
+        self.assertEqual(remaining,0)
+        body=compact({'fields':config});self.assertEqual(len(body),65536)
+        before=self.rows()
+        self.assertEqual(self.request('/config',method='PUT',token='test-admin',revision=1,raw=body+b' ')['status'],413)
+        self.assertEqual(self.rows(),before)
+        self.assertEqual(self.request('/config',method='PUT',token='test-admin',revision=1,raw=body)['status'],200)
+        self.change_identity('dev');proposal=self.proposal()
+        body=compact({'fields':proposal['fields'],'confirmation_token':proposal['references']['confirmation_token']})
+        self.assertEqual(len(body),65536+88);before=self.rows()
+        self.assertEqual(self.request('/reconfirm',method='POST',token='test-admin',revision=proposal['revision'],raw=body+b' ')['status'],413)
+        self.assertEqual(self.rows(),before)
+        result=self.request('/reconfirm',method='POST',token='test-admin',revision=proposal['revision'],raw=body)
+        self.assertEqual(result['status'],200)
+        self.assertEqual(result['body']['data']['references']['state'],'current')
+        self.assertEqual(result['body']['data']['fields'],config)
+
     def test_reconfirmation_serialized_capacity_conflict_preserves_retired_history(self):
         self.save();raw=self.json_columns()[1];history=raw['history'];limit=1024*1024
         # Valid retired pins can approach the byte cap with fewer than 3000 IDs.

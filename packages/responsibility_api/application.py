@@ -20,6 +20,10 @@ from .records import (_TABLE,read,normalize_evidence,updated_fields,stale_refere
     reconfirmed_fields,capture_publisher,evidence_text,evidence_current,writable,audit)
 
 _ID=re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z')
+_MAX_CONFIG_BODY=65536
+# Compact UTF-8 {fields, confirmation_token: 64 hex} adds exactly 88 bytes.
+# Keep already-saved full-budget fields recoverable without raising PUT limits.
+_MAX_RECONFIRM_BODY=_MAX_CONFIG_BODY+88
 
 
 class ResponsibilityApplication(WorkspaceApplication):
@@ -161,7 +165,7 @@ class ResponsibilityApplication(WorkspaceApplication):
         if environ.get('CONTENT_TYPE','').lower() not in {'application/json','application/json; charset=utf-8'}:raise PolicyError(415,'json_required')
         length=environ.get('CONTENT_LENGTH','')
         if type(length) is not str or not re.fullmatch(r'[0-9]{1,6}',length):raise PolicyError(411,'length_required')
-        if int(length)>65536:raise PolicyError(413,'body_too_large')
+        if int(length)>(_MAX_RECONFIRM_BODY if reconfirm else _MAX_CONFIG_BODY):raise PolicyError(413,'body_too_large')
         try:
             raw=environ['wsgi.input'].read(int(length))
             if type(raw) is not bytes or len(raw)!=int(length):raise ValueError()

@@ -83,7 +83,7 @@ test('no unbounded configuration body or extra response envelope',async()=>{
 
 
 test('actual isolated HTTP service matches client schemas and CAS save',async()=>{
- const child=spawn('python3',['-m','packages.responsibility_ui.tests.browser_server'],{stdio:['ignore','pipe','pipe']});child.stderr.resume()
+ const child=spawn('python3',['-m','packages.responsibility_ui.tests.browser_server'],{env:{...process.env,MS_COLLAB_SYNTHETIC_RESPONSIBILITY_UI:'1'},stdio:['ignore','pipe','pipe']});child.stderr.resume()
  try{
   const origin=await new Promise((resolve,reject)=>{child.stdout.once('data',d=>resolve(d.toString().trim()));child.once('exit',()=>reject(new Error('synthetic fixture stopped')))})
   const client=createClient({fetcher:(url,opts)=>fetch(origin+url,opts)});client.connect('test-admin')
@@ -95,6 +95,15 @@ test('actual isolated HTTP service matches client schemas and CAS save',async()=
   const updated=clone(config.fields);updated[0].name='😀'.repeat(60);updated[0].paths=['😀'.repeat(600)]
   const saved=validateConfig(await client.request(scope,'save',{fields:updated,revision:config.revision}),scope,{revision:config.revision+1,config_version:config.config_version+1})
   assert.deepEqual(saved.fields,updated);assert.equal(sameFields(saved.fields,updated),true)
+  // An existing maximum-size UTF-8 save remains recoverable through this exact
+  // adapter after a real fixture identity ABA, without reducing any fields.
+  const {nearLimitFields,wireBytes}=await import('./body-boundary.mjs'),large=nearLimitFields(65536,undefined,saved.fields)
+  const largeSaved=validateConfig(await client.request(scope,'save',{fields:large,revision:saved.revision}),scope)
+  assert.equal((await fetch(origin+'/synthetic/identity-aba',{method:'POST',headers:{Origin:origin}})).status,200)
+  const stale=validateConfig(await client.request(scope,'config'),scope);assert.equal(stale.references.state,'reconfirmation_required')
+  assert.equal(wireBytes({fields:large,confirmation_token:stale.references.confirmation_token}),65624)
+  const restored=validateConfig(await client.request(scope,'reconfirm',{fields:large,revision:stale.revision,confirmation_token:stale.references.confirmation_token}),scope)
+  assert.equal(restored.revision,largeSaved.revision+1);assert.equal(restored.references.state,'current');assert.deepEqual(restored.fields,large)
  }finally{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
 })
 
@@ -125,4 +134,19 @@ test('reconfirmation is a separate exact POST with proposal and CAS, never retry
  assert.equal(requests.length,1);const {url,options}=requests[0]
  assert.ok(url.endsWith('/reconfirm'));assert.equal(options.method,'POST');assert.equal(options.headers['If-Match'],'"3"');assert.equal(options.credentials,'omit')
  assert.deepEqual(JSON.parse(options.body),{fields,confirmation_token:'a'.repeat(64)})
+})
+
+test('bearer byte budget preserves 64 KiB fields plus only the fixed reconfirmation proof',async()=>{
+ const {nearLimitFields,escapedNames,wireBytes}=await import('./body-boundary.mjs')
+ const requests=[],client=createClient({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,text:async()=>JSON.stringify({data:{}})}}});client.connect('synthetic-only')
+ for(const name of escapedNames){
+  const fields=nearLimitFields(65536,name),confirmation_token='a'.repeat(64)
+  assert.equal(wireBytes({fields,confirmation_token}),65624)
+  await client.request(scope,'save',{fields,revision:3});assert.equal(new TextEncoder().encode(requests.at(-1).options.body).length,65536)
+  await client.request(scope,'reconfirm',{fields,revision:3,confirmation_token});const sent=requests.at(-1)
+  assert.equal(new TextEncoder().encode(sent.options.body).length,65624);assert.equal(sent.options.method,'POST');assert.equal(sent.options.headers['If-Match'],'"3"');assert.deepEqual(JSON.parse(sent.options.body),{fields,confirmation_token})
+  const count=requests.length,tooLarge=nearLimitFields(65537,name)
+  await assert.rejects(client.request(scope,'save',{fields:tooLarge,revision:3}),/64 KiB/)
+  await assert.rejects(client.request(scope,'reconfirm',{fields:tooLarge,revision:3,confirmation_token}),/64 KiB/);assert.equal(requests.length,count)
+ }
 })

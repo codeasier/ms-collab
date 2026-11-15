@@ -54,3 +54,14 @@ no Save, reload, reconnect or conflict automatically confirms or retries.
 Both the standalone bearer entry and shared HTTPS session entry mount this same
 controller. The session adapter uses fresh CSRF and cookies only, never a fabricated
 bearer credential. Tokens and identity-provider subjects are never rendered.
+
+Ordinary configuration saves remain limited to 65,536 UTF-8 JSON bytes for the
+`{fields}` request. Explicit reconfirmation permits exactly 88 additional bytes
+for its fixed 64-hex `confirmation_token` member, for a maximum of 65,624 bytes.
+This preserves recovery of an already accepted near-limit configuration without
+trimming its fields. Both adapters enforce the byte limit after JSON encoding,
+including multibyte characters and escaped quotes/backslashes. The shared cookie
+transport grants this extra budget only to an exact POST to the valid scoped
+responsibility `/reconfirm` route with the exact valid fields/token envelope;
+other routes, methods and payloads retain their 65,536-byte limit. This does not
+change CSRF, revision, identity or authorization requirements.

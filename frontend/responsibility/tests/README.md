@@ -53,3 +53,11 @@ The legacy bearer browser and reference browser use `stopSyntheticFixture` for
 bounded, verified child cleanup. A forced reap remains a test failure, not a
 retry. Both fixture entrypoints share `serve_synthetic`; real HTTP/HTTPS active
 request and idle SIGTERM regressions run in the Python composition suite.
+
+Byte-budget regressions construct valid names containing emoji, quotes and
+backslashes and measure the actual serialized UTF-8 body. They cover the exact
+65,536-byte ordinary-save and 65,624-byte reconfirmation boundaries, rejection at
+one byte over either limit without transport, no budget expansion for unrelated
+cookie routes/methods/malformed envelopes, and fresh CSRF on each request. The
+real HTTP adapter test also saves near-limit fields, induces test-only identity
+ABA and reconfirms all unchanged fields through the service.

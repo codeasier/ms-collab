@@ -1,7 +1,7 @@
 // Cookie-only transport. No session-token getter, bearer construction or storage.
 import {receiveArtifact} from './artifact-downloads.mjs'
 import {readPath} from '../pipelines/client.mjs'
-import {scopeFrom,queryFrom,validateFields,validConfirmationToken} from '../responsibility/client.mjs'
+import {scopeFrom,queryFrom,validateFields,validConfirmationToken,responsibilityRequestLimit} from '../responsibility/client.mjs'
 const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',')
 const token=/^[A-Za-z0-9_-]{43}$/
 const exactToken=value=>typeof value==='string'&&value.match(token)?.[0]===value
@@ -39,7 +39,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
-  if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>65536)throw new Error('Request is too large.')}
+  if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
   if(revision!==undefined){if(!integer(revision))throw new Error('Current revision required.');headers['If-Match']=`"${revision}"`}
   if(requestKey!==undefined){if(typeof requestKey!=='string'||requestKey.match(/^[A-Za-z0-9_-]{1,200}$/)?.[0]!==requestKey)throw new Error('Invalid retry key.');headers['Idempotency-Key']=requestKey}
   if(method!=='GET'){
