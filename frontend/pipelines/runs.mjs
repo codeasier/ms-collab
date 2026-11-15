@@ -53,7 +53,7 @@ async function showDetail(runID){
   const controls=text('div','','task-controls'),label=text('label','Task status'),select=document.createElement('select');select.id='task-status-filter'
   for(const status of ['','success','failure','cancelled','timed_out','skipped','queued','running','unknown']){const option=text('option',status||'All statuses');option.value=status;select.append(option)}label.append(select);controls.append(label)
   const previous=text('button','Previous tasks'),next=text('button','Next tasks');previous.id='task-previous';next.id='task-next';previous.type=next.type='button';controls.append(previous,next);el('detail-body').append(controls)
-  const summary=text('p','');summary.id='task-summary';summary.setAttribute('role','status');const jobs=text('div','');jobs.id='tasks';el('detail-body').append(summary,jobs)
+  const taskSummary=text('p','');taskSummary.id='task-summary';taskSummary.setAttribute('role','status');const jobs=text('div','');jobs.id='tasks';el('detail-body').append(taskSummary,jobs)
   select.addEventListener('change',()=>loadTasks(select.value,0));previous.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,Math.max(0,taskPage.offset-10))});next.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,taskPage.offset+10)})
   await loadTasks('',0)
 

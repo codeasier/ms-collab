@@ -26,3 +26,5 @@ Human review of those screenshots remains required in addition to a green job.
 - [HTTPS task acceptance](../../application/tests/pipeline-tasks-browser.cjs):
   real cookie-session pages, stale task responses/revisions, scope and membership
   invalidation, empty/missing observations, XSS and three synthetic screenshots.
+- `controller.test.mjs`: the actual mounted controller reaches detail→task reads;
+  close/clear cancel chained or late replies and inconsistent pages clear data.
