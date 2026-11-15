@@ -14,7 +14,7 @@ from pathlib import Path
 import sqlite3
 from urllib.parse import quote
 
-from .model import AuditEvent, Membership, ModuleInstance, Principal, Resource, Workspace, identifier, revision
+from .model import MAX_REVISION, AuditEvent, Membership, ModuleInstance, Principal, Resource, Workspace, identifier, revision
 from .service import PolicyError, WorkspaceService
 
 _SCHEMA_VERSION = 2
@@ -31,7 +31,7 @@ _SCHEMA_V1 = (
 )
 
 
-_MAX_AUTHORITY = 9007199254740991
+_MAX_AUTHORITY = MAX_REVISION
 _REALM_COLUMN = "realm TEXT NOT NULL DEFAULT 'uninitialized'"
 _GENERATION_COLUMN = "generation INTEGER NOT NULL DEFAULT 1 CHECK(generation>=1 AND generation<=9007199254740991)"
 _EPOCH_COLUMN = "authority_epoch INTEGER NOT NULL DEFAULT 1 CHECK(authority_epoch>=1 AND authority_epoch<=9007199254740991)"
@@ -231,8 +231,20 @@ class SQLiteWorkspaceService:
     @staticmethod
     def _persist(connection, service, *, audit_start):
         # No delete or replace: retain foreign keys, history, unrelated scopes.
-        if type(service._epoch) is not int or not 1 <= service._epoch <= _MAX_AUTHORITY:
-            raise StorageError("invalid_store")
+        try:
+            revision(service._epoch)
+            for records in (service._workspaces, service._memberships, service._modules, service._resources):
+                for record in records.values():
+                    revision(record.revision)
+            if type(audit_start) is not int or not 0 <= audit_start <= len(service._audit) <= MAX_REVISION:
+                raise ValueError()
+            for sequence, event in enumerate(service._audit, 1):
+                revision(event.revision)
+                revision(event.sequence)
+                if event.sequence != sequence:
+                    raise ValueError()
+        except (ValueError, TypeError):
+            raise StorageError("invalid_store") from None
         connection.executemany("INSERT INTO workspaces VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,state=excluded.state,revision=excluded.revision", (astuple(w) for w in service._workspaces.values()))
         connection.executemany("INSERT INTO memberships VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,principal_id) DO UPDATE SET role=excluded.role,state=excluded.state,revision=excluded.revision", (astuple(m) for m in service._memberships.values()))
         connection.executemany("INSERT INTO modules VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,key) DO UPDATE SET can_read=excluded.can_read,can_write=excluded.can_write,state=excluded.state,revision=excluded.revision", ((m.workspace_id, m.key, "read" in m.capabilities, "write" in m.capabilities, m.state, m.revision) for m in service._modules.values()))

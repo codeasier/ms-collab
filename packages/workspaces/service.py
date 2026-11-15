@@ -10,7 +10,7 @@ from dataclasses import replace
 from threading import RLock
 from uuid import uuid4
 
-from .model import AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace
+from .model import MAX_REVISION, AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace, revision
 
 
 class PolicyError(Exception):
@@ -104,7 +104,7 @@ class WorkspaceService:
     def _match(expected, current):
         if expected is None:
             raise PolicyError(428, "precondition_required")
-        if type(expected) is not int or expected < 1:
+        if type(expected) is not int or not 1 <= expected <= MAX_REVISION:
             raise PolicyError(400, "invalid_revision")
         if expected != current:
             raise PolicyError(412, "stale_revision")
@@ -113,10 +113,36 @@ class WorkspaceService:
         return [m for m in self._memberships.values() if m.workspace_id == workspace_id
                 and m.state == "active" and m.role == "admin" and self._principals[m.principal_id].active]
 
+    def _check_change(self, *revisions, policy=False, audits=1):
+        """Budget the WHOLE operation before changing memory or adapter tables.
+
+        Trusted internal seam, not a counter reset/reservation or public option.
+        Call under the same lock/transaction as the mutations. Multi-row writers
+        must include every changed revision and every success-audit event.
+        """
+        count = len(self._audit)
+        if (type(audits) is not int or not 1 <= audits <= MAX_REVISION
+                or type(count) is not int or not 0 <= count <= MAX_REVISION):
+            raise PolicyError(503, "invalid_counter")
+        try:
+            revision(self._epoch)
+            for value in revisions:
+                revision(value)
+        except ValueError:
+            raise PolicyError(503, "invalid_counter") from None
+        if (any(value == MAX_REVISION for value in revisions)
+                or (policy and self._epoch == MAX_REVISION)
+                or count > MAX_REVISION - audits):
+            raise PolicyError(409, "counter_exhausted")
+
     def _changed(self, actor, workspace, action, object_id, revision, *, policy=False):
+        # Final guard for trusted SQL adapters: failures roll back their shared
+        # transaction. Core in-memory methods also preflight before any mutation.
+        self._check_change(policy=policy)
+        event = AuditEvent(len(self._audit) + 1, actor, workspace, action, object_id, revision)
         if policy:
             self._epoch += 1
-        self._audit.append(AuditEvent(len(self._audit) + 1, actor, workspace, action, object_id, revision))
+        self._audit.append(event)
 
     def _authorize(self, actor_id, workspace_id, module_key, action):
         member = self._member(actor_id, workspace_id)
@@ -163,7 +189,7 @@ class WorkspaceService:
             if old.state != "active":
                 raise PolicyError(409, "membership_revoked")
             try:
-                new = replace(old, role=role, state=state, revision=old.revision + 1)
+                new = replace(old, role=role, state=state)
             except ValueError:
                 raise PolicyError(400, "invalid_membership") from None
             rank = {"viewer": 0, "developer": 1, "admin": 2}
@@ -175,6 +201,8 @@ class WorkspaceService:
             if not remaining and not (new.state == "active" and new.role == "admin"
                                       and self._principals[principal_id].active):
                 raise PolicyError(409, "last_admin")
+            self._check_change(old.revision, policy=True)
+            new = replace(new, revision=old.revision + 1)
             self._memberships[(workspace_id, principal_id)] = new
             self._changed(actor_id, workspace_id, "membership.update", principal_id, new.revision, policy=True)
             return new
@@ -190,6 +218,7 @@ class WorkspaceService:
             self._match(replacement_revision, replacement.revision)
             if actor_id == replacement_id or replacement.state != "active" or not self._principals[replacement_id].active:
                 raise PolicyError(409, "replacement_ineligible")
+            self._check_change(previous.revision, replacement.revision, policy=True, audits=2)
             promoted = replace(replacement, role="admin", revision=replacement.revision + 1)
             demoted = replace(previous, role="developer", revision=previous.revision + 1)
             self._memberships[(workspace_id, replacement_id)] = promoted
@@ -220,6 +249,7 @@ class WorkspaceService:
                 module = ModuleInstance(workspace_id, module_key, capabilities, "disabled")
             except (ValueError, TypeError):
                 raise PolicyError(400, "invalid_module") from None
+            self._check_change(policy=True)
             self._modules[(workspace_id, module_key)] = module
             self._changed(actor_id, workspace_id, "module.install", module_key, 1, policy=True)
             return module
@@ -234,6 +264,7 @@ class WorkspaceService:
             transitions = {"enabled": {"disabling"}, "disabling": {"disabled"}, "disabled": {"enabled"}}
             if state not in transitions[old.state]:
                 raise PolicyError(409, "invalid_transition")
+            self._check_change(old.revision, policy=True)
             new = replace(old, state=state, revision=old.revision + 1)
             self._modules[(workspace_id, module_key)] = new
             self._changed(actor_id, workspace_id, "module.state", module_key, new.revision, policy=True)
@@ -262,6 +293,7 @@ class WorkspaceService:
             transitions = {"active": {"suspended", "archived"}, "suspended": {"active", "archived"}, "archived": set()}
             if state not in transitions[old.state]:
                 raise PolicyError(409, "invalid_transition")
+            self._check_change(old.revision, policy=True)
             new = replace(old, state=state, revision=old.revision + 1)
             self._workspaces[workspace_id] = new
             self._changed(actor_id, workspace_id, "workspace.state", workspace_id, new.revision, policy=True)
@@ -276,6 +308,7 @@ class WorkspaceService:
                 workspace = Workspace(str(uuid4()), name, kind)
             except ValueError:
                 raise PolicyError(400, "invalid_workspace") from None
+            self._check_change(policy=True)
             self._workspaces[workspace.id] = workspace
             self._memberships[(workspace.id, initial_admin)] = Membership(workspace.id, initial_admin, "admin")
             self._changed(actor_id, workspace.id, "workspace.create", workspace.id, 1, policy=True)
@@ -306,9 +339,11 @@ class WorkspaceService:
                 raise PolicyError(404, "not_found")
             self._match(expected_revision, old.revision)
             try:
-                new = replace(old, text=text, revision=old.revision + 1)
+                new = replace(old, text=text)
             except ValueError:
                 raise PolicyError(400, "invalid_resource") from None
+            self._check_change(old.revision)
+            new = replace(new, revision=old.revision + 1)
             self._resources[(workspace_id, module_key, resource_id)] = new
             self._changed(actor_id, workspace_id, "resource.update", resource_id, new.revision)
             return new

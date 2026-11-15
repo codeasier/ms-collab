@@ -5,6 +5,7 @@ import re
 from uuid import uuid4
 
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
+from packages.workspaces.model import MAX_REVISION, revision
 
 _TABLE = 'workspace_invitations_v1'
 _CREATE = f"""CREATE TABLE {_TABLE} (
@@ -50,8 +51,20 @@ def binding(principal, realm):
 
 def records(connection, where, args):
     # where is fixed trusted code, never caller SQL.
-    return [dict(zip(_FIELDS, row)) for row in connection.execute(
+    result = [dict(zip(_FIELDS, row)) for row in connection.execute(
         f'SELECT {",".join(_FIELDS)} FROM {_TABLE} WHERE {where}', args).fetchall()]
+    # Existing schema stays compatible; malformed/oversized legacy counters are
+    # never echoed, rounded, clamped or silently adopted as current authority.
+    try:
+        for item in result:
+            for key in ('revision', 'workspace_revision', 'inviter_revision'):
+                revision(item[key])
+            value = item['member_revision']  # Zero means no previous membership.
+            if type(value) is not int or not 0 <= value <= MAX_REVISION:
+                raise ValueError()
+    except ValueError:
+        raise StorageError('invalid_invitation_record') from None
+    return result
 
 
 def effective_state(policy, item, now):
@@ -106,12 +119,14 @@ def create(connection, policy, actor, workspace, body, key, now):
     item = dict(zip(_FIELDS, (str(uuid4()),workspace,actor,principal.id,binding(principal, policy._realm),binding(policy._principals[actor], policy._realm),body['role'],
                              'pending',now,now+86400,1,policy._workspaces[workspace].revision,
                              admin.revision,member.revision if member else 0,key)))
+    policy._check_change()
     connection.execute(f'INSERT INTO {_TABLE} VALUES ({",".join("?" for _ in _FIELDS)})', tuple(item.values()))
     policy._changed(actor,workspace,'invitation.create',item['id'],1)
     return item
 
 
 def transition(connection, policy, actor, item, state):
+    policy._check_change(item['revision'])
     connection.execute(f'UPDATE {_TABLE} SET state=?,revision=revision+1 WHERE id=?', (state,item['id']))
     item = item | {'state':state,'revision':item['revision']+1}
     policy._changed(actor,item['workspace_id'],'invitation.'+state,item['id'],item['revision'])

@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl
 
 from packages.identity import AuthenticationError, AuthenticationUnavailable, Credential, CredentialVerifier
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
+from packages.workspaces.model import MAX_REVISION
 
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 _REVISION = re.compile(r'"([1-9][0-9]{0,15})"\Z')
@@ -178,7 +179,7 @@ class WorkspaceApplication:
         if value is None:
             raise PolicyError(428, "precondition_required")
         match = _REVISION.fullmatch(value) if type(value) is str else None
-        if match is None:
+        if match is None or int(match[1]) > MAX_REVISION:
             raise PolicyError(400, "invalid_revision")
         return int(match[1])
 

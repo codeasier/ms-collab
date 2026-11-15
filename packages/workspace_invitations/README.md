@@ -125,3 +125,16 @@ Invitation binding digests now include policy realm, principal ID and generation
 for both inviter and invitee. Legacy digests remain stored but invalidated, never
 backfilled into current authority. Synthetic A→B→A/disable-reenable tests do not
 mean identity administration is enabled; see the [closed foundation](../../docs/principal-authority.md).
+
+## Counter exhaustion
+
+Invitation revisions and their captured workspace/inviter/member revisions use
+the same [bounded-counter contract](../workspaces/README.md#bounded-mutation-counters).
+A missing prior membership retains the explicit zero sentinel. Accepting an
+invitation preflights both membership/invitation increments, the policy epoch and
+two audit events before changing either record. Saturation returns a safe `409`
+with the pending invitation and all policy/audit state unchanged. Decline/revoke
+do not advance membership or policy counters, but still need an invitation
+increment and audit slot. Same-key creation replay remains a non-mutating read.
+Existing schema/layout stays unchanged; persisted over-limit counters fail
+closed without echoing, clamping or repairing the record.
