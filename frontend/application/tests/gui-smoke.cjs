@@ -1,0 +1,55 @@
+// Synthetic HTTPS and actual unified cookie session. No live provider or runner.
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
+const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright'),{createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
+async function within(p){let timer;try{return await Promise.race([p,new Promise((_,r)=>timer=setTimeout(()=>r(new Error('synthetic GUI barrier timeout')),15000))])}finally{clearTimeout(timer)}}
+async function main(){
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'gui-entry-'));let server,browser
+ try{
+  execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',path.join(temp,'key.pem'),'-out',path.join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'})
+  server=spawn('python3',['-m','packages.application_ui.tests.gui_browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_GUI_ENTRY_TEST:'1'},stdio:['ignore','pipe','pipe']});server.stderr.resume()
+  const lines=readline.createInterface({input:server.stdout}),startup=await within(new Promise((resolve,reject)=>{lines.once('line',s=>{try{resolve(JSON.parse(s))}catch(e){reject(e)}});server.once('exit',()=>reject(Error('fixture stopped')))}))
+  const folder=path.join(process.env.RUNNER_TEMP||os.tmpdir(),'ms-collab-gui-entry');fs.mkdirSync(folder,{recursive:true})
+  browser=await chromium.launch({headless:true});const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1050}}),page=await context.newPage(),errors=[],requests=[],dialogs=[]
+  page.on('pageerror',e=>errors.push(e.message));page.on('dialog',async d=>{dialogs.push(d.message());await d.dismiss()});page.on('request',r=>{assert.ok(!r.headers().authorization);requests.push({url:r.url(),method:r.method()})})
+  await context.addInitScript(()=>{const original=window.fetch;window.fetch=(input,opts={})=>{const {signal,...rest}=opts;return original.call(window,input,rest)}})
+  const router=createScenarioRouter({origin:startup.origin,onExternal:()=>errors.push('unexpected external route')});await context.route('**/api/**',route=>router.handle(route))
+  const text=id=>page.locator('#'+id).textContent(),notice=value=>page.waitForFunction(v=>document.querySelector('#notice').textContent.includes(v),value)
+  const verified=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='alice'&&!document.querySelector('#app-recheck').disabled)
+  const load=async(workspace='alpha')=>{await page.locator('#scope-picker').evaluate(el=>el.open=true);for(const [id,value]of Object.entries({workspace,connection:'panel',repository:'repo'}))await page.locator('#'+id).fill(value);await page.locator('#load').click();if(['alpha','beta','empty','unpublished'].includes(workspace))await page.locator('#workspace-view').waitFor({state:'visible'});else await notice('not available')}
+  const login=async()=>{await page.locator('#app-sign-in').click();await page.waitForURL(startup.origin+'/');await verified();await page.locator('#app-gui-smoke-link').click();await verified();await page.waitForFunction(()=>!document.querySelector('#load').disabled)}
+  const control=async target=>assert.equal(await page.evaluate(async p=>(await fetch(p,{method:'POST'})).status,target),200)
+  await page.goto(startup.origin+'/gui-smoke/');await page.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled);assert.equal(await page.locator('#load').isDisabled(),true);assert.equal(await page.locator('input[type=password]').count(),0)
+  await login();const cookies=await context.cookies(startup.origin),session=cookies.find(c=>c.name==='__Host-ms-collab-session');assert.ok(session.secure&&session.httpOnly);assert.ok(!(await page.evaluate(()=>document.cookie)).includes('__Host-ms-collab-session'))
+  assert.equal(await page.locator('#app-pipelines-link').isVisible(),false);assert.equal(await page.locator('#app-gui-smoke-link').isVisible(),true)
+  await load();assert.equal(await page.locator('.task').count(),20);assert.equal(await text('result-count'),'33 matching · 33 in snapshot');assert.match(await text('tasks'),/<img src=x/);assert.equal(await page.locator('#tasks img').count(),0)
+  await page.locator('#page-size').selectOption('5');assert.equal(await page.locator('.task').count(),0);await page.getByRole('button',{name:'Apply filters'}).click();await page.waitForFunction(()=>document.querySelectorAll('.task').length===5);await page.screenshot({path:path.join(folder,'desktop-list.png'),fullPage:true})
+  await page.getByRole('button',{name:'Inspect task task-1',exact:true}).click();await page.locator('#detail h3').waitFor();assert.ok((await text('detail')).includes('a'.repeat(40)));assert.ok((await text('detail')).includes('b'.repeat(40)));await page.screenshot({path:path.join(folder,'desktop-detail.png'),fullPage:true})
+  await page.locator('#back').click();await page.locator('#next').click();await page.waitForFunction(()=>document.querySelector('#page-label').textContent==='Page 2 of 7')
+  await control('/synthetic-republish');await page.locator('#next').click();await notice('snapshot changed');assert.equal(await page.locator('.task').count(),0)
+  await load();await page.locator('#status-filter').selectOption('pending');assert.equal(await page.locator('.task').count(),0);await page.getByRole('button',{name:'Apply filters'}).click();await page.waitForFunction(()=>document.querySelectorAll('.task').length===6)
+  await page.getByRole('button',{name:'Inspect task task-3',exact:true}).click();await page.locator('#detail h3').waitFor();assert.match(await text('detail'),/Missing counts are not zero/)
+  await load('empty');assert.match(await text('empty'),/No published tasks/);assert.equal(await page.locator('.stat').count(),6)
+  await load('unpublished');assert.match(await text('snapshot-label'),/No published snapshot/);assert.equal(await page.locator('.stat').count(),0);await load('commons');assert.equal(await page.locator('.task').count(),0)
+  // Fixed dispatcher snapshots the owner before awaiting; ignored abort cannot revive a previous scope.
+  const routePath='/api/workspaces/alpha/gui-smoke/panel/repo/tasks';let seen,release,finished;const started=new Promise(r=>seen=r),gate=new Promise(r=>release=r),done=new Promise(r=>finished=r)
+  router.set(routePath,async route=>{const response=await route.fetch();seen();await gate;await route.fulfill({response});finished()})
+  await page.locator('#workspace').fill('alpha');await page.locator('#load').click();await within(started);await load('beta');const before=requests.filter(x=>x.url.includes('/alpha/gui-smoke/')&&x.url.includes('/summary')).length
+  release();await within(done);await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));assert.equal(await text('scope-title'),'beta / panel / repo');assert.equal(requests.filter(x=>x.url.includes('/alpha/gui-smoke/')&&x.url.includes('/summary')).length,before);router.remove(routePath)
+  // Same session across module navigation, with no repeated sign-in or stored scope.
+  const logins=requests.filter(x=>x.url.endsWith('/auth/start')).length;await page.locator('nav a[href="/manage/"]').click();await verified();await page.locator('#app-gui-smoke-link').click();await verified();assert.equal(await page.locator('#workspace').inputValue(),'');assert.equal(requests.filter(x=>x.url.endsWith('/auth/start')).length,logins)
+  await load();await page.setViewportSize({width:390,height:844});await page.locator('#page-size').selectOption('5');await page.getByRole('button',{name:'Apply filters'}).click();await page.waitForFunction(()=>document.querySelectorAll('.task').length===5);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile-list.png'),fullPage:true})
+  await page.getByRole('button',{name:'Inspect task task-1',exact:true}).click();await page.locator('#detail h3').waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile-detail.png'),fullPage:true})
+  await page.locator('#clear').click();assert.equal(await text('detail'),'');await load();
+  let outSeen,outRelease,outFinished;const outStarted=new Promise(r=>outSeen=r),outGate=new Promise(r=>outRelease=r),outDone=new Promise(r=>outFinished=r)
+  router.set(routePath,async route=>{const response=await route.fetch();outSeen();await outGate;await route.fulfill({response});outFinished()});await page.locator('#next').click();await within(outStarted)
+  await page.locator('#app-sign-out').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'));outRelease();await within(outDone);router.remove(routePath);assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');assert.equal(await page.locator('#load').isDisabled(),true)
+  assert.equal((await context.cookies(startup.origin)).some(c=>c.name==='__Host-ms-collab-session'),false)
+  await login();await load();await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');await page.locator('#app-recheck').click();await verified();assert.equal(await page.locator('.task').count(),0)
+  await load();await control('/synthetic-revoke');await page.locator('#next').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('.task').count(),0)
+  await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('rejected'));await login();await load();await control('/synthetic-policy-revoke');await page.locator('#next').click();await notice('not available');assert.equal(await page.locator('.task').count(),0)
+  await router.drain();await context.unrouteAll({behavior:'wait'});assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[])
+  assert.ok(requests.every(r=>[startup.origin,new URL(startup.provider).origin].includes(new URL(r.url).origin)));assert.ok(!requests.some(r=>r.url.includes('/api/')&&r.method!=='GET'))
+  console.log('GUI entry PASS: same-session navigation, fixed snapshots, unknown evidence, read-only scope, filter clear, ignored abort, explicit logout, pagehide, current policy/session revocation, four responsive screenshots. Synthetic HTTPS only.')
+ }finally{await browser?.close();if(server&&server.exitCode===null){server.kill();await within(new Promise(r=>server.once('exit',r)))}fs.rmSync(temp,{recursive:true,force:true})}
+}
+main().catch(error=>{console.error(error.stack);process.exitCode=1})

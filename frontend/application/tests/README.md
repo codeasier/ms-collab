@@ -36,3 +36,8 @@ Return to [frontend](../README.md).
   browser tooling, via [CI](../../../.github/workflows/pipeline-cookie-ui.yml).
 
 - `assistant-browser.cjs`: synthetic HTTPS saved-owner history, 105 events, archive/restore and interrupted lifecycle coverage; four screenshots, no execution.
+
+- `gui-smoke.test.mjs`, `gui-smoke.cjs`: same-session adapter and real synthetic
+  HTTPS navigation, pagination/CAS, empty/unpublished distinction, literal markup,
+  scope/filter clear, ineffective abort, logout, pagehide and current revocation.
+  Four screenshots are uploaded by [GUI entry CI](../../../.github/workflows/gui-entry.yml).
