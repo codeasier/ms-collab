@@ -55,3 +55,11 @@ All participants are expected to follow our
   production credentials, network access, or shared state.
 - See the [migration acceptance gates](docs/migration-plan.md) before proposing an
   application-module import.
+
+## Public CI
+
+Run the [repository checks](docs/public-ci.md) before pushing a migration batch.
+Passing these limited checks does not replace a sensitive-content review or the
+application's own tests. Do not attach production logs, screenshots or runtime
+data to public PRs. Workflow changes require explicit review of their trust
+boundary; do not introduce privileged PR execution or internal runner access.
