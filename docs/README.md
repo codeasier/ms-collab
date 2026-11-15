@@ -24,7 +24,9 @@
 - [Authorized community API](../packages/community_api/README.md)：同库事务授权、只读刷新与精确内容审批；token可见不自动共享，公开空间不绕过成员权限。
 - [Scoped pipeline provider acquisition](../packages/pipeline_sync/README.md)：读取适配服务的有界 GET 协议、逐次当前授权与原子快照发布；真实服务兼容未验，不含上游写操作。
 
-- [Authorized artifact browser](../packages/artifacts_ui/README.md)：目录、季度、分页与命名视图的受权只读界面；真实同步与下载尚未实现。
+- [Authorized artifact browser](../packages/artifacts_ui/README.md)：目录、季度、分页与命名视图的受权只读界面；同步入口另见下方受权索引，页面自身无同步/下载操作。
 
 - [Identity-addressed workspace invitations](../packages/workspace_invitations/README.md)：可信目录指定身份的邀请/加入、24 小时过期、单次/撤销与事务审计；无公开秘密链接或默认身份。
+
+- [Scoped artifact acquisition and index](../packages/artifact_sync/README.md)：OBS 有界只读分页、同库权限/元数据索引及精确内容审批；合成验证，真实账号兼容和受权下载未完成。
 - [Authorized pipeline observations UI](../packages/pipeline_ui/README.md)：同源受权运行列表、详情及耗时展示；版本一致性与取消竞态防护，不含日志、执行或上游刷新。
