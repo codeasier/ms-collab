@@ -11,3 +11,5 @@
 
 - [Pipeline snapshot analytics](../packages/pipelines/README.md)：作用域快照的成功作业耗时趋势；不含真实上游、执行或日志读取。
 - [Artifact catalog core](../packages/artifacts/README.md)：显式作用域、季度目录与命名筛选；尚未接入真实存储或下载。
+
+- [Transactional workspace API](../packages/workspace_api/README.md)：可信验证器与 SQLite 同事务授权的配置式 WSGI 适配器；没有真实登录提供方或生产启动入口。

@@ -1,0 +1,188 @@
+"""Small WSGI API connecting trusted verification to atomic SQLite policy.
+
+There is no server command, default verifier, anonymous identity, cookie/session
+or mock authentication implementation. Test doubles exist only under tests/.
+"""
+from dataclasses import asdict
+from datetime import datetime, timezone
+from http import HTTPStatus
+import json
+import re
+from urllib.parse import parse_qsl
+
+from packages.identity import AuthenticationError, AuthenticationUnavailable, Credential, CredentialVerifier
+from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
+
+_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
+_REVISION = re.compile(r'"([1-9][0-9]{0,15})"\Z')
+_MAX_BODY = 16384
+
+
+def _invalid():
+    return PolicyError(400, "invalid_request")
+
+
+def _object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate field")
+        result[key] = value
+    return result
+
+
+class WorkspaceApplication:
+    """Trusted application factory. Config is never taken from request fields.
+
+    A deployment MUST supply a reviewed real verifier and a preinitialized store.
+    WSGI servers/proxies must supply bounded request reads, TLS, header normalization
+    and limits. This adapter does not make the existing local demo authenticated.
+    """
+    def __init__(self, *, store: SQLiteWorkspaceService, providers, provider_key,
+                 clock=lambda: datetime.now(timezone.utc)):
+        if type(store) is not SQLiteWorkspaceService:
+            raise ValueError("an initialized SQLite policy store is required")
+        providers = tuple(providers)
+        if type(provider_key) is not str or provider_key not in {p.key for p in providers}:
+            raise ValueError("select an explicit configured provider")
+        self._store = store
+        self._provider_key = provider_key
+        self._verifier = CredentialVerifier(providers=providers, clock=clock)
+
+    def __call__(self, environ, start_response):
+        try:
+            result = self._dispatch(environ)
+            status, body = 200, {"data": result}
+        except AuthenticationError:
+            status, body = 401, {"error": "authentication_required"}
+        except AuthenticationUnavailable:
+            status, body = 503, {"error": "authentication_unavailable"}
+        except StorageError:
+            status, body = 503, {"error": "storage_unavailable"}
+        except PolicyError as error:
+            status, body = error.status, {"error": error.code}
+        except Exception:
+            # No provider, database, credential, body or environment in responses.
+            status, body = 500, {"error": "internal_error"}
+        payload = json.dumps(body, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        headers = [("Content-Type", "application/json; charset=utf-8"),
+                   ("Content-Length", str(len(payload))), ("Cache-Control", "no-store"),
+                   ("X-Content-Type-Options", "nosniff"), ("Vary", "Authorization")]
+        if status == 401:
+            headers.append(("WWW-Authenticate", "Bearer"))
+        start_response(f"{status} {HTTPStatus(status).phrase}", headers)
+        return [payload]
+
+    def _dispatch(self, environ):
+        authorization = environ.get("HTTP_AUTHORIZATION", "")
+        if type(authorization) is not str or not authorization.startswith("Bearer "):
+            raise AuthenticationError()
+        try:
+            credential = Credential(authorization[7:])
+        except ValueError:
+            raise AuthenticationError() from None
+        # Protocol verification (possibly network I/O) occurs before any DB lock.
+        assertion = self._verifier.verify(self._provider_key, credential)
+        method, args, kwargs, write, shape = self._command(environ)
+
+        def operation(policy):
+            # Recheck after waiting for the lock, not merely when token arrived.
+            self._verifier.validate_current(self._provider_key, assertion)
+            principal = next((p for p in policy._principals.values()
+                              if (p.issuer, p.subject) == (assertion.issuer, assertion.subject)), None)
+            if principal is None or not principal.active:
+                raise AuthenticationError()
+            result = getattr(policy, method)(principal.id, *args, **kwargs)
+            # An expiry during policy evaluation rolls back mutations and audit.
+            self._verifier.validate_current(self._provider_key, assertion)
+            if shape == "page":
+                total, records = result
+                return {"total": total, "items": [asdict(item) for item in records]}
+            if shape == "list":
+                return [asdict(item) for item in result]
+            return asdict(result)
+
+        return self._store._transaction(operation, write=write, before_commit=
+            lambda: self._verifier.validate_current(self._provider_key, assertion))
+
+    @staticmethod
+    def _body(environ, keys):
+        if environ.get("CONTENT_TYPE", "").lower() not in {"application/json", "application/json; charset=utf-8"}:
+            raise PolicyError(415, "json_required")
+        length = environ.get("CONTENT_LENGTH", "")
+        if type(length) is not str or not re.fullmatch(r"[0-9]{1,6}", length):
+            raise PolicyError(411, "length_required")
+        size = int(length)
+        if size > _MAX_BODY:
+            raise PolicyError(413, "body_too_large")
+        try:
+            raw = environ["wsgi.input"].read(size)
+            if type(raw) is not bytes or len(raw) != size:
+                raise ValueError("truncated body")
+            body = json.loads(raw.decode("utf-8"), object_pairs_hook=_object,
+                              parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except (KeyError, ValueError, UnicodeError, RecursionError):
+            raise _invalid() from None
+        if type(body) is not dict or set(body) != keys:
+            raise _invalid()
+        for value in body.values():
+            if type(value) is not str:
+                raise _invalid()
+            try:
+                value.encode("utf-8")
+            except UnicodeError:
+                raise _invalid() from None
+        return body
+
+    @staticmethod
+    def _revision(environ):
+        value = environ.get("HTTP_IF_MATCH")
+        if value is None:
+            raise PolicyError(428, "precondition_required")
+        match = _REVISION.fullmatch(value) if type(value) is str else None
+        if match is None:
+            raise PolicyError(400, "invalid_revision")
+        return int(match[1])
+
+    @staticmethod
+    def _page(query):
+        try:
+            pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+            values = _object(pairs)
+            if not values.keys() <= {"offset", "limit"}:
+                raise ValueError()
+            if any(not re.fullmatch(r"[0-9]{1,8}", value) for value in values.values()):
+                raise ValueError()
+            return {key: int(value) for key, value in values.items()}
+        except ValueError:
+            raise _invalid() from None
+
+    def _command(self, environ):
+        # Explicit routes and argument names, never a client-supplied method name.
+        path, verb = environ.get("PATH_INFO", ""), environ.get("REQUEST_METHOD", "")
+        query = environ.get("QUERY_STRING", "")
+        if type(path) is not str or len(path) > 1000 or type(query) is not str or len(query) > 256:
+            raise _invalid()
+        parts = path.split("/")
+        if parts[:3] != ["", "api", "workspaces"] or any(not _SEGMENT.fullmatch(p) for p in parts[3:]):
+            raise PolicyError(404, "not_found")
+        if len(parts) == 3 and verb == "GET" and not query:
+            return "list_workspaces", (), {}, False, "list"
+        if len(parts) == 5 and parts[4] == "members" and verb == "GET" and not query:
+            return "list_memberships", (parts[3],), {}, False, "list"
+        if len(parts) == 6 and parts[4] == "members" and verb == "PATCH" and not query:
+            body = self._body(environ, {"role", "state"})
+            body["expected_revision"] = self._revision(environ)
+            return "set_membership", (parts[3], parts[5]), body, True, "record"
+        if len(parts) >= 7 and parts[4] == "modules" and parts[6] == "resources":
+            if len(parts) == 7 and verb == "GET":
+                return "list_resources", (parts[3], parts[5]), self._page(query), False, "page"
+            if len(parts) == 8 and not query:
+                args = (parts[3], parts[5], parts[7])
+                if verb == "GET":
+                    return "read_resource", args, {}, False, "record"
+                if verb == "PUT":
+                    body = self._body(environ, {"text"})
+                    body["expected_revision"] = self._revision(environ)
+                    return "update_resource", args, body, True, "record"
+        raise PolicyError(404, "not_found")
