@@ -36,7 +36,8 @@ remove the current file. Do not paste the credential into an issue or CI log.
   permissions, or `id-token: write`.
 - No `pull_request_target` or privileged `workflow_run` job executing PR code.
 - No shared dependency cache populated by untrusted code and later consumed by a
-  privileged job; this initial workflow uses no cache or uploaded artifacts.
+  privileged job; no job here uses a dependency cache. Only the two synthetic
+  browser screenshots described below are uploaded.
 - No deployment, publishing, webhook notification, or repository write-back.
 
 GitHub-hosted is not "networkless": these runners may access the public Internet.
@@ -69,3 +70,28 @@ arrives. A green repository check alone does not mean the application builds,
 workspace isolation works, or production deployment is approved.
 
 Reference: [GitHub Actions security guidance](https://docs.github.com/en/actions/reference/security/secure-use).
+
+## Browser acceptance
+
+`Synthetic browser acceptance` installs the locked Playwright development tooling
+into a job-local temporary directory using `npm ci --ignore-scripts`. The lockfile
+pins Playwright and playwright-core to 1.65.1 with npm integrity values. Chromium
+and its OS prerequisites are installed explicitly from the Playwright CLI on the
+fresh GitHub-hosted runner. No application dependency or production data is used.
+
+The smoke script starts and stops its own ephemeral loopback-only demo. Page
+requests outside that exact loopback origin are rejected. This limits browser
+traffic during acceptance; it is not an OS firewall or network sandbox for hostile
+PR code. Installation necessarily uses the public package/browser mirrors.
+
+After successful acceptance, the workflow uploads only
+`$RUNNER_TEMP/ms-collab-browser/desktop.png` and `mobile.png`, retained for three
+days. Both contain synthetic fixtures. It does not upload workspace directories,
+logs, traces, HTML reports, environment files or browser profiles. Uploads do not
+trigger deployments or any privileged downstream workflow. Treat every PR
+artifact as untrusted input; never execute downloaded artifact contents.
+
+A passing smoke run is not a completed human pixel review. Review those two
+screenshots separately before claiming the desktop and narrow layouts accepted.
+No live OAuth, upstream service, production migration or tenant authentication is
+covered by this synthetic check.
