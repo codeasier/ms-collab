@@ -21,3 +21,4 @@
 - [Authorized pipeline snapshot API](../packages/pipeline_api/README.md)：同事务授权的流水线快照列表、详情与耗时趋势；只读合成数据边界，不含真实 CI 提供方或写入。
 
 - [Authorized community API](../packages/community_api/README.md)：同库事务授权、只读刷新与精确内容审批；token可见不自动共享，公开空间不绕过成员权限。
+- [Scoped pipeline provider acquisition](../packages/pipeline_sync/README.md)：读取适配服务的有界 GET 协议、逐次当前授权与原子快照发布；真实服务兼容未验，不含上游写操作。
