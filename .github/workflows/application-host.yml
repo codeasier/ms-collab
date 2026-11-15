@@ -1,0 +1,64 @@
+name: Unified application host checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Unified host session and module tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out this revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Test unified host and auth composition
+        run: |
+          python3 -m unittest discover -s packages/login_state/tests -v
+          python3 -m unittest discover -s packages/session_api/tests -v
+          python3 -m unittest discover -s packages/application_host/tests -v
+
+  cookie-browser-tests:
+    name: Unified host HTTPS acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out this revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked test tooling in temporary directory
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-host-browsers
+        run: |
+          mkdir -p "$RUNNER_TEMP/ms-collab-host-tools"
+          cp scripts/browser/package.json scripts/browser/package-lock.json "$RUNNER_TEMP/ms-collab-host-tools/"
+          npm ci --prefix "$RUNNER_TEMP/ms-collab-host-tools" --ignore-scripts --no-audit --no-fund
+          node "$RUNNER_TEMP/ms-collab-host-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Check actual cookies with synthetic HTTPS/provider only
+        env:
+          NODE_PATH: ${{ runner.temp }}/ms-collab-host-tools/node_modules
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-host-browsers
+        run: node packages/application_host/tests/browser-check.cjs

@@ -101,3 +101,12 @@ seams, not routable endpoints. The latter resolves the current identity and
 executes a configured callback in the policy transaction; it never accepts a
 callback from HTTP. [Artifact metadata API](../artifacts_api/README.md) reuses
 this boundary without duplicating authentication or caching policy decisions.
+
+## Unified session host
+
+An explicit `session_boundary` constructor mode delegates authentication and every
+transaction to the configured [session boundary](../session_api/README.md), never
+to a synthesized bearer identity. It cannot be mixed with bearer configuration.
+The [unified host](../application_host/README.md) supplies its cookie response
+envelope and fixed module routing; it does not enable a real provider or change
+this package's existing explicitly configured bearer API.
