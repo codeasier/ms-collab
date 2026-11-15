@@ -140,28 +140,26 @@ class StaticPrincipalDirectory:
         return self._principals.get((issuer, subject))
 
 
-class Authenticator:
-    """Trusted server entry point. No default provider and no fallback identity.
+class CredentialVerifier:
+    """Configured protocol verification and current assertion checks.
 
-    Returned Principal is a current-request identity snapshot, NOT a session,
-    authorization decision or portable capability. Never cache it as authority;
-    workspace operations must still reauthorize against their latest policy.
+    Only verify() establishes an assertion via the trusted protocol adapter.
+    validate_current() is a post-verification expiry/configuration check, NOT
+    authentication of arbitrary claims. Never accept assertions from a client.
     """
-    def __init__(self, *, providers: tuple[Provider, ...], directory: PrincipalDirectory,
+    def __init__(self, *, providers: tuple[Provider, ...],
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
         registry = {}
         for provider in providers:
             if type(provider) is not Provider or provider.key in registry:
                 raise ValueError("invalid or duplicate provider")
             registry[provider.key] = provider
-        if not callable(getattr(directory, "resolve", None)) or not callable(clock):
-            raise ValueError("directory and clock are required")
+        if not callable(clock):
+            raise ValueError("clock is required")
         self._providers = MappingProxyType(registry)
-        self._directory = directory
         self._clock = clock
 
-    def authenticate(self, provider_key: str, credential: Credential) -> Principal:
-        # provider_key chooses only a preconfigured verifier, never an URL.
+    def verify(self, provider_key: str, credential: Credential) -> VerifiedIdentity:
         if type(provider_key) is not str or type(credential) is not Credential:
             raise AuthenticationError()
         provider = self._providers.get(provider_key)
@@ -173,27 +171,14 @@ class Authenticator:
             raise AuthenticationError() from None
         except Exception:
             raise AuthenticationUnavailable() from None
-        if (type(assertion) is not VerifiedIdentity or assertion.issuer != provider.issuer
-                or assertion.audience != provider.audience):
-            raise AuthenticationError()
-        self._check_time(assertion, provider)
-        try:
-            principal = self._directory.resolve(assertion.issuer, assertion.subject)
-        except Exception:
-            raise AuthenticationUnavailable() from None
-        # Validate the directory result, not merely the requested lookup key.
-        if (type(principal) is not Principal or not principal.active
-                or (principal.issuer, principal.subject) != (assertion.issuer, assertion.subject)):
-            raise AuthenticationError()
-        try:
-            _text(principal.id)
-        except ValueError:
-            raise AuthenticationError() from None
-        # A slow verifier or directory must not turn an expired assertion into a login.
-        self._check_time(assertion, provider)
-        return principal
+        self.validate_current(provider_key, assertion)
+        return assertion
 
-    def _check_time(self, assertion, provider):
+    def validate_current(self, provider_key: str, assertion: VerifiedIdentity) -> None:
+        provider = self._providers.get(provider_key) if type(provider_key) is str else None
+        if (provider is None or type(assertion) is not VerifiedIdentity
+                or assertion.issuer != provider.issuer or assertion.audience != provider.audience):
+            raise AuthenticationError()
         try:
             now = self._clock()
             _instant(now)
@@ -203,3 +188,34 @@ class Authenticator:
                 or assertion.expires_at - assertion.issued_at > provider.max_assertion_age
                 or now - assertion.issued_at >= provider.max_assertion_age):
             raise AuthenticationError()
+
+
+class Authenticator:
+    """Trusted server entry point. No default provider and no fallback identity.
+
+    Returned Principal is a current-request identity snapshot, NOT a session,
+    authorization decision or portable capability. Never cache it as authority;
+    workspace operations must still reauthorize against their latest policy.
+    """
+    def __init__(self, *, providers: tuple[Provider, ...], directory: PrincipalDirectory,
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+        self._verifier = CredentialVerifier(providers=providers, clock=clock)
+        if not callable(getattr(directory, "resolve", None)):
+            raise ValueError("directory is required")
+        self._directory = directory
+
+    def authenticate(self, provider_key: str, credential: Credential) -> Principal:
+        assertion = self._verifier.verify(provider_key, credential)
+        try:
+            principal = self._directory.resolve(assertion.issuer, assertion.subject)
+        except Exception:
+            raise AuthenticationUnavailable() from None
+        if (type(principal) is not Principal or not principal.active
+                or (principal.issuer, principal.subject) != (assertion.issuer, assertion.subject)):
+            raise AuthenticationError()
+        try:
+            _text(principal.id)
+        except ValueError:
+            raise AuthenticationError() from None
+        self._verifier.validate_current(provider_key, assertion)
+        return principal

@@ -72,3 +72,14 @@ python3 -m unittest discover -s packages/identity/tests -v
 
 [Migration boundaries](MIGRATION.md) · [Workspace policy](../workspaces/README.md)
 · [Documentation](../../docs/README.md)
+
+## Transactional consumers
+
+`CredentialVerifier.verify` extracts the protocol verification and current-time
+checks used by `Authenticator`. `validate_current` only rechecks an already
+verified in-process assertion; it does not authenticate arbitrary claims.
+The [workspace API](../workspace_api/README.md) uses this separation to perform
+external verification before a SQLite lock, then resolve the current binding and
+reauthorize inside the policy transaction. It has no endpoint that accepts a
+`VerifiedIdentity` or `Principal` from a client. Existing `Authenticator` behavior
+and generic directory integrations remain unchanged.

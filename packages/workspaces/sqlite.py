@@ -191,16 +191,23 @@ class SQLiteWorkspaceService:
         connection.execute("UPDATE metadata SET epoch=? WHERE id=1", (service._epoch,))
         connection.executemany("INSERT INTO audit VALUES (?,?,?,?,?,?)", (astuple(e) for e in service._audit[audit_start:]))
 
-    def _call(self, method, *args, write=False, **kwargs):
+    def _transaction(self, operation, *, write, before_commit=None):
+        """Internal trusted adapter seam, not a request-selected callback.
+
+        Identity-aware services may bind an already protocol-verified assertion
+        to this snapshot before invoking a protected policy operation.
+        """
         try:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
                     service = self._load(connection)
                     audit_start = len(service._audit)
-                    result = getattr(service, method)(*args, **kwargs)
+                    result = operation(service)
                     if write:
                         self._persist(connection, service, audit_start=audit_start)
+                    if before_commit is not None:
+                        before_commit()
                     connection.commit()
                     return result
                 except BaseException:
@@ -208,6 +215,9 @@ class SQLiteWorkspaceService:
                     raise
         except sqlite3.Error as error:
             raise self._storage_error(error) from None
+
+    def _call(self, method, *args, write=False, **kwargs):
+        return self._transaction(lambda service: getattr(service, method)(*args, **kwargs), write=write)
 
     def authorize(self, actor_id, workspace_id, module_key, action):
         return self._call("authorize", actor_id, workspace_id, module_key, action)

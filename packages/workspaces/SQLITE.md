@@ -112,3 +112,13 @@ Real authenticated HTTP access, database-backed application resources, invitatio
 acceptance, shared-resource grants, provider synchronization and end-to-end
 workspace isolation remain unimplemented. Do not deploy this reference adapter
 or migrate existing production data on the strength of these tests alone.
+
+
+## Configured request integration
+
+The [transactional workspace API](../workspace_api/README.md) is an optional,
+explicitly configured WSGI adapter. Its internal transaction callback resolves
+current issuer/subject bindings from this store and invokes protected operations
+in that same transaction. No callback or actor identifier comes from request
+data. This does not install a provider, create a listener, modify the local demo,
+or make these low-level raw-ID methods suitable as public HTTP endpoints.
