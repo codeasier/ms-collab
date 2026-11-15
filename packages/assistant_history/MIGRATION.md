@@ -44,3 +44,9 @@ History reading is not permission to prompt, execute, reconnect or replay. No
 source default provider, command, environment or network configuration is carried
 forward. Later execution work needs a separately reviewed isolation and resource
 authorization design; this PR is not that design or an implicit authorization.
+
+A later [protocol/preflight increment](../assistant_protocol/README.md) adds
+process-free ACP parsing and audited execution refusal only. It neither changes
+this history API's capabilities nor enables native session execution. The separate
+[runner design](../assistant_protocol/DESIGN.md) records the verified isolation
+blocker and remaining target-OS/authorization prerequisites.
