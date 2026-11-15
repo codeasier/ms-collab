@@ -4,6 +4,21 @@ from .core import AssetError, AssetScope, CatalogBinding, canonical, decode, ide
 from packages.workspaces import PolicyError, SQLiteWorkspaceService
 
 
+_SCHEMA = (
+    """CREATE TABLE research_catalog (
+            workspace_id TEXT NOT NULL, catalog_id TEXT NOT NULL, binding TEXT NOT NULL,
+            revision INTEGER NOT NULL CHECK(revision>=1), evidence TEXT NOT NULL, available INTEGER NOT NULL CHECK(available IN (0,1)),
+            PRIMARY KEY(workspace_id,catalog_id), FOREIGN KEY(workspace_id) REFERENCES workspaces(id)) STRICT""",
+    """CREATE TABLE research_asset (
+            workspace_id TEXT NOT NULL, catalog_id TEXT NOT NULL, id TEXT NOT NULL,
+            type_id TEXT NOT NULL, entity_id TEXT NOT NULL, title TEXT NOT NULL,
+            search_text TEXT NOT NULL, summary TEXT NOT NULL, summary_digest TEXT NOT NULL, detail TEXT NOT NULL,
+            PRIMARY KEY(workspace_id,catalog_id,id),
+            FOREIGN KEY(workspace_id,catalog_id) REFERENCES research_catalog(workspace_id,catalog_id)) STRICT""",
+    """CREATE INDEX research_asset_query ON research_asset(workspace_id,catalog_id,type_id,entity_id,title,id)""",
+)
+
+
 def provision_catalog(store, binding):
     """Explicit trusted setup only; never replace a previously bound source set.
 
@@ -15,17 +30,8 @@ def provision_catalog(store, binding):
     def setup(policy, conn):
         if binding.scope.workspace_id not in policy._workspaces or (binding.scope.workspace_id, "research_assets") not in policy._modules:
             raise AssetError("workspace_not_provisioned")
-        conn.execute('''CREATE TABLE IF NOT EXISTS research_catalog (
-            workspace_id TEXT NOT NULL, catalog_id TEXT NOT NULL, binding TEXT NOT NULL,
-            revision INTEGER NOT NULL CHECK(revision>=1), evidence TEXT NOT NULL, available INTEGER NOT NULL CHECK(available IN (0,1)),
-            PRIMARY KEY(workspace_id,catalog_id), FOREIGN KEY(workspace_id) REFERENCES workspaces(id)) STRICT''')
-        conn.execute('''CREATE TABLE IF NOT EXISTS research_asset (
-            workspace_id TEXT NOT NULL, catalog_id TEXT NOT NULL, id TEXT NOT NULL,
-            type_id TEXT NOT NULL, entity_id TEXT NOT NULL, title TEXT NOT NULL,
-            search_text TEXT NOT NULL, summary TEXT NOT NULL, summary_digest TEXT NOT NULL, detail TEXT NOT NULL,
-            PRIMARY KEY(workspace_id,catalog_id,id),
-            FOREIGN KEY(workspace_id,catalog_id) REFERENCES research_catalog(workspace_id,catalog_id)) STRICT''')
-        conn.execute('CREATE INDEX IF NOT EXISTS research_asset_query ON research_asset(workspace_id,catalog_id,type_id,entity_id,title,id)')
+        for statement in _SCHEMA:
+            conn.execute(statement.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1).replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1))
         old = conn.execute('SELECT binding FROM research_catalog WHERE workspace_id=? AND catalog_id=?', _key(binding.scope)).fetchone()
         if old:
             if old[0] != binding.encode():

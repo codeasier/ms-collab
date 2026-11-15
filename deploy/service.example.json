@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "origin": "https://collab.example.invalid",
+  "data_directory": "/srv/ms-collab/runtime/state",
+  "modules": ["community", "responsibility", "pipelines", "artifacts", "research-assets", "assistant", "gui-smoke"],
+  "artifact_administration": false,
+  "login": {
+    "mode": "disabled",
+    "issuer": "https://identity.example.invalid",
+    "audience": "example-application"
+  }
+}
