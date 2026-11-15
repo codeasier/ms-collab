@@ -21,7 +21,7 @@ administration = WorkspaceAdministrationApplication(
 ```
 
 The existing API supplies the verified identity and current SQLite policy.
-`initialize_administration` creates an additive retry-record table in that same
+`initialize_administration` creates the exact v2 retry-record table in that same
 store. It does not discover, replace, migrate or connect any existing deployment.
 Without explicit initialization, creation/installation fail closed. All existing
 API routes are delegated unchanged. The extension is a `WorkspaceApplication`
@@ -79,26 +79,74 @@ or erase cached/copied data. Do not imply those effects from the lifecycle label
 
 ## Durable retries and transaction boundary
 
-Both POST endpoints require a canonical UUIDv4 `Idempotency-Key`. The retry record
-is scoped to actor, action and workspace (or platform creation), with a digest of
-the exact body. Identical replay returns the current referenced record without
-another mutation/audit; a different body with that key returns 409. Install replay
-does not restore the original disabled state or re-enable anything.
+Both POST endpoints require a canonical UUIDv4 `Idempotency-Key`. The key's
+namespace remains **local actor ID + action + scope + key**, not generation or
+realm. A previously used key never becomes a fresh mutation just because identity
+changed. No pruning, automatic key rotation, reset or regrant endpoint exists.
 
-The operator/admin is reauthorized before any retry record is read, in the same
-SQLite transaction as the policy operation. Current identity, active membership,
-lifecycle and assertion expiry still apply on replay. Creation/installation,
-retry metadata and audit commit or roll back together. Expiry after mutation but
-before commit rolls all three back. The inherited commit-wait and upstream
-revocation limitations remain; this is not a distributed transaction.
+New records retain strict realm, ID, issuer, subject and generation provenance
+for the executing actor. Creation additionally captures the nominated initial
+admin at execution time, deduplicated if it is the actor. Pins are stored as
+bounded canonical JSON, not a credential or a request body. This identifies who
+was actually nominated then. It does **not** prevent a selected local ID changing
+between a human choosing it and the request acquiring its lock. A server-issued
+identity-selection proposal/precondition remains required before identity
+transitions can be enabled; this retry slice is not that protocol.
 
-Retry metadata contains IDs and digests, not request bodies or credentials. There
-is no automatic pruning. Operators must separately define retention, storage and
-rate limits before exposing a service. Clients must retain a retry key across
-uncertain responses. The UI retains it only while the connected page remains
-open; after disconnect/reload, inspect control metadata before creating again.
-No automatic retry is made, and an aborted browser request does not undo an
-already accepted mutation.
+Current authentication and operator/admin authority are checked before looking
+up a key, in the same SQLite transaction. An identical body with all original
+identity pins still current returns the current referenced metadata without
+another mutation or audit. Module replay does not reset its state. A changed
+body, stale actor or initial-admin binding, foreign realm, or known legacy
+unbound record returns generic `409 idempotency_conflict`, without the old result
+or identity. Malformed bound provenance/digests/results fail safely with 503.
+A missing result never turns into a cache miss and a second creation.
+
+Creation/installation, provenance, retry metadata and audit commit or roll back
+together. Assertion expiry after mutation but before commit rolls all changes
+back. The existing final session/expiry guards and role/lifecycle rules remain;
+these records do not upgrade memberships/operators or historical audit actor IDs.
+Old bearer credentials are not made incarnation-aware by this mechanism.
+Identity mutation remains hard closed; it requires those separate gates.
+
+Retain a key across uncertain responses. The UI retains creation keys only while
+the connected page remains open, has no automatic retries and preserves a 409
+rather than inventing a new key. Inspect currently authorized control/module
+metadata before deliberately starting a new request after a conflict or page
+reload. An aborted request does not undo an already committed mutation. A new
+UUID means a consciously new request, not recovery of the old one.
+
+### Explicit offline v1 conversion
+
+Normal requests and `initialize_administration` reject v1, even if it is empty,
+v1/v2 coexistence, unknown versions and modified table/index/trigger definitions.
+Every retry checks this schema again; startup validation is not sufficient.
+Fresh initialization never silently adopts a deployment's old data.
+
+The trusted library helper `migrate_administration_v1(store)` is an **offline
+format conversion**, not an HTTP route, runtime upgrade command or authority
+recovery. Stop all serving processes, obtain an authorized protected backup and
+plan recovery before invoking it on an approved store. It requires the current
+core policy schema and exact prior retry schema under one writer transaction.
+All old rows must pass structural and resource-reference validation. Rows from
+inactive/revoked actors, lost operator roles, suspended/archived workspaces and
+disabled modules are retained, not filtered by current permissions.
+
+The helper copies every original actor/action/scope/key/digest/result verbatim to
+v2 with **NULL authority for every legacy row**, then removes only the old table.
+It never captures today's identity as yesterday's owner. These keys are permanent
+409 conflict tombstones, including if the formerly valid result later disappears;
+normal requests never dereference a tombstone's old result. A malformed schema,
+dangling legacy reference or any DDL/copy/final-validation failure rolls the whole
+conversion back. Business data and prior audits are retained; no business event
+or current identity attribution is fabricated. The result is only the count of
+preserved tombstones. Repeating the v1-only helper against v2 is rejected.
+
+The [configured runtime](../service_runtime/README.md) rejects old installation
+and backup schema digests without rewriting manifests. This standalone helper is
+not a complete installation/backup upgrade procedure. It provides no external
+anti-rollback ledger, database-administrator sandbox or production acceptance.
+Retention, storage, request limits and deployment recovery remain separate work.
 
 ## Verification and remaining deployment work
 

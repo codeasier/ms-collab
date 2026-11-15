@@ -182,3 +182,13 @@ The current policy schema includes persistent GUI publisher/reader grants. Old
 installation or backup fingerprints are rejected without modifying their bytes.
 The [offline GUI schema helper](../gui_smoke/GRANTS.md#legacy-stores-and-recovery-boundaries)
 does not update runtime manifests or authorize a deployment migration.
+
+## Administrative retry schema compatibility
+
+The expected policy schema now includes identity-owned v2 administrative retry
+records. Old installation/backup digests remain unavailable and are never
+rewritten by `check`, startup or restore. The standalone [offline retry helper](
+../workspace_admin_api/README.md#explicit-offline-v1-conversion) preserves old keys
+as unbound conflict tombstones; it is not an installation/manifest upgrade tool.
+Do not delete or edit manifests to bypass this gate. A full runtime upgrade and
+production recovery plan remains separate work.

@@ -53,14 +53,14 @@ class AdministrationTests(unittest.TestCase):
     def test_initialization_is_explicit_and_repeatable(self):
         initialize_administration(self.store)
         with sqlite3.connect(self.path) as db:
-            db.execute("DROP TABLE workspace_admin_requests_v1")
+            db.execute("DROP TABLE workspace_admin_requests_v2")
         self.assertEqual(self.create()["status"], 503)
         initialize_administration(self.store)
         self.assertEqual(self.create()["status"], 200)
 
     def test_unknown_or_replaced_retry_schema_fails_closed(self):
         from packages.workspace_admin_api.requests import _CREATE
-        candidates = ["CREATE TABLE workspace_admin_requests_v1(actor,action,scope,request_key,digest,result_id)",
+        candidates = ["CREATE TABLE workspace_admin_requests_v2(actor,action,scope,request_key,digest,result_id)",
                       _CREATE.replace("workspace.create", "WORKSPACE.CREATE"),
                       _CREATE.replace(" STRICT", ""),
                       _CREATE.replace(" NOT NULL", ""),
@@ -70,14 +70,14 @@ class AdministrationTests(unittest.TestCase):
         for definition in candidates:
             with self.subTest(definition=definition):
                 with sqlite3.connect(self.path) as db:
-                    db.execute("DROP TABLE workspace_admin_requests_v1")
+                    db.execute("DROP TABLE workspace_admin_requests_v2")
                     db.execute(definition)
                 with self.assertRaises(StorageError):
                     initialize_administration(self.store)
                 self.assertEqual(self.create()["status"], 503)
                 self.assertEqual(len(self.store.list_control_workspaces("admin")), 3)
         with sqlite3.connect(self.path) as db:
-            db.execute("DROP TABLE workspace_admin_requests_v1")
+            db.execute("DROP TABLE workspace_admin_requests_v2")
         initialize_administration(self.store)
         self.assertEqual(self.create()["status"], 200)
 
@@ -169,7 +169,7 @@ class AdministrationTests(unittest.TestCase):
         with patch.object(application, "remember", side_effect=expire):
             self.assertEqual(self.create()["status"], 401)
         with sqlite3.connect(self.path) as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM workspace_admin_requests_v1").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM workspace_admin_requests_v2").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM audit").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM workspaces").fetchone()[0], 3)
 
@@ -177,7 +177,7 @@ class AdministrationTests(unittest.TestCase):
         with patch.object(self.store, "_persist", side_effect=StorageError("test")):
             self.assertEqual(self.create()["status"], 503)
         with sqlite3.connect(self.path) as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM workspace_admin_requests_v1").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM workspace_admin_requests_v2").fetchone()[0], 0)
 
     def test_lifecycle_revision_suspend_recover_and_irreversible_archive(self):
         path = CONTROL + "/alpha"

@@ -89,6 +89,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse((self.root/'restored').exists())
         self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
 
+    def test_legacy_admin_retry_installation_and_backup_do_not_auto_migrate(self):
+        from packages.workspace_admin_api.requests import _TABLE, _LEGACY_CREATE
+        self.init();source=self.root/'legacy-admin-backup';backup(self.config,source)
+        with sqlite3.connect(source/'policy.sqlite') as db:
+            db.execute('DROP TABLE '+_TABLE);db.execute(_LEGACY_CREATE);old_digest=schema_digest(db)
+        payload=(source/'policy.sqlite').read_bytes()
+        meta=json.loads((source/'backup.json').read_text())
+        meta.update(policy_schema=old_digest,policy_bytes=len(payload),policy_sha256=sha256(payload).hexdigest())
+        (source/'backup.json').write_bytes(canonical(meta))
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        with self.assertRaises(RuntimeFailure):verify_backup(self.config,source)
+        with sqlite3.connect(self.directory/'policy.sqlite') as db:
+            db.execute('DROP TABLE '+_TABLE);db.execute(_LEGACY_CREATE)
+        installed=json.loads((self.directory/'installation.json').read_text());installed['policy_schema']=old_digest
+        (self.directory/'installation.json').write_bytes(canonical(installed));prior=self.hashes()
+        with self.assertRaises(RuntimeFailure):check(self.config)
+        self.assertEqual(prior,self.hashes());self.restored_config()
+        with self.assertRaises(RuntimeFailure):restore(self.config,source)
+        self.assertFalse((self.root/'restored').exists())
+        self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
+
     def test_check_is_read_only_and_no_network_no_auto_creation(self):
         with self.assertRaises(RuntimeFailure): check(self.config)
         self.assertFalse(self.directory.exists()); self.init(); before=self.hashes()
