@@ -218,13 +218,17 @@ class SessionWorkspaceApplication(WorkspaceApplication):
         raise PolicyError(404, "not_found")
 
     def __call__(self, environ, start_response):
+        return self._respond(environ, start_response, dispatch=super()._dispatch)
+
+    def _respond(self, environ, start_response, *, dispatch):
+        """Trusted host response seam; dispatch is server code, never request data."""
         extra = []
         try:
             path = environ.get("PATH_INFO", "")
             if type(path) is str and path.startswith("/auth/"):
                 status, result, extra = self._auth(environ)
             else:
-                result = super()._dispatch(environ)
+                result = dispatch(environ)
                 status = 200
             body = {"data": result}
         except _StaleSession:
