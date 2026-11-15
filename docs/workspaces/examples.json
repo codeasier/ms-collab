@@ -1,0 +1,44 @@
+{
+  "status": "synthetic-contract-example-not-runtime-config",
+  "contract_version": "0.1-draft",
+  "workspaces": [
+    {"workspace_id": "ws_alpha", "slug": "team-alpha", "kind": "product", "state": "active", "revision": 1},
+    {"workspace_id": "ws_beta", "slug": "team-beta", "kind": "product", "state": "active", "revision": 1},
+    {"workspace_id": "ws_shared", "slug": "shared", "kind": "shared", "state": "active", "revision": 1}
+  ],
+  "memberships": [
+    {"workspace_id": "ws_alpha", "principal_id": "user_alpha_admin", "role": "admin", "state": "active"},
+    {"workspace_id": "ws_beta", "principal_id": "user_beta_admin", "role": "admin", "state": "active"},
+    {"workspace_id": "ws_shared", "principal_id": "user_shared_admin", "role": "admin", "state": "active"},
+    {"workspace_id": "ws_alpha", "principal_id": "user_multi", "role": "viewer", "state": "active"},
+    {"workspace_id": "ws_beta", "principal_id": "user_multi", "role": "admin", "state": "active"},
+    {"workspace_id": "ws_shared", "principal_id": "user_multi", "role": "viewer", "state": "active"}
+  ],
+  "module_instances": [
+    {"workspace_id": "ws_alpha", "module_key": "community", "state": "enabled", "config_revision": 1},
+    {"workspace_id": "ws_beta", "module_key": "community", "state": "enabled", "config_revision": 2},
+    {"workspace_id": "ws_shared", "module_key": "community", "state": "enabled", "config_revision": 1}
+  ],
+  "resources": [
+    {"workspace_id": "ws_alpha", "module_key": "community", "resource_id": "item_42", "revision": 1, "binding_id": "source_alpha", "upstream_type": "issue", "upstream_id": "42"},
+    {"workspace_id": "ws_beta", "module_key": "community", "resource_id": "item_42", "revision": 1, "binding_id": "source_beta", "upstream_type": "issue", "upstream_id": "42"}
+  ],
+  "share_offer": {
+    "source_workspace_id": "ws_alpha",
+    "target_workspace_id": "ws_shared",
+    "source_module_key": "community",
+    "target_module_key": "community",
+    "resource_id": "item_42",
+    "source_revision": 1,
+    "projection_policy": "issue-summary-v1",
+    "fields": ["title", "state"],
+    "access": "read",
+    "state": "offered"
+  },
+  "expected_decisions": [
+    {"principal_id": "user_alpha_admin", "workspace_id": "ws_beta", "action": "resource.read", "outcome": "deny"},
+    {"principal_id": "user_multi", "workspace_id": "ws_alpha", "action": "resource.write", "outcome": "deny"},
+    {"principal_id": "user_multi", "workspace_id": "ws_shared", "action": "offer.projection.read", "outcome": "deny-until-accepted"},
+    {"principal_id": "anonymous", "workspace_id": "ws_shared", "action": "resource.read", "outcome": "deny"}
+  ]
+}
