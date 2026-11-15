@@ -27,9 +27,9 @@ class TestVerifier:
 
 class TestProvider:
     def observe(self, connection, credential, *, observed_at):
-        # Refresh changes one approved row; its old fingerprint must not survive.
+        # Refresh advances every changed record version; old fingerprints must not survive.
         return Snapshot(connection.scope, observed_at, tuple(
-            BoardItem("issue", number, "Changed synthetic issue" if number == 101 else f"Synthetic issue {number}", "open", observed_at if number == 101 else "2026-01-01T00:00:00Z", ("fixture",))
+            BoardItem("issue", number, "Changed synthetic issue" if number == 101 else f"Synthetic issue {number}", "open", observed_at, ("fixture",))
             for number in range(1,102)))
 
 
