@@ -135,11 +135,13 @@ class GitCodeProvider:
         # Injectable transport is trusted code, not a user-configurable endpoint.
         self._transport = transport if transport is not None else HTTPSReadTransport()
 
-    def observe(self, connection: Connection, credential: BoundCredential, *, observed_at: str) -> Snapshot:
+    def observe(self, connection: Connection, credential: BoundCredential, *, observed_at: str, before_read=None) -> Snapshot:
         if not isinstance(connection, Connection) or not isinstance(credential, BoundCredential):
             raise ProviderError("connection and credential are required")
         if credential.scope != connection.scope:
             raise ProviderError("credential scope mismatch")
+        if before_read is not None and not callable(before_read):
+            raise ValueError("trusted request guard required")
         items = []
         for kind, endpoint in (("issue", "issues"), ("pull", "pulls")):
             for page in range(1, connection.max_pages + 1):
@@ -147,7 +149,9 @@ class GitCodeProvider:
                     "state": "all", "sort": "updated", "direction": "desc",
                     "page": page, "per_page": connection.page_size,
                 })
+                if before_read is not None:before_read()
                 raw = self._transport.get(path, credential, connection)
+                if before_read is not None:before_read()
                 try:
                     if not isinstance(raw, list) or len(raw) > connection.page_size:
                         raise ValueError("invalid page")

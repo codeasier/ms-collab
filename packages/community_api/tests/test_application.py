@@ -44,7 +44,8 @@ class TestProvider:
         self.title = "Synthetic issue"
         self.updated = "2026-01-01T00:00:00Z"
         self.scope = None
-    def observe(self, connection, credential, *, observed_at):
+    def observe(self, connection, credential, *, observed_at, before_read=None):
+        if before_read is not None: before_read()
         self.calls += 1
         self.hook()
         return Snapshot(self.scope or connection.scope, observed_at, (
@@ -111,7 +112,7 @@ class CommunityTests(unittest.TestCase):
         r=call(self.app,"/capabilities",token="test-admin")["body"]["data"]
         self.assertTrue(all(r["capabilities"].values()))
         self.assertEqual(call(self.app,"/capabilities",token="test-second")["status"],404)
-        replace_policy(self.store,replace(config(),reader_ids=()),expected_revision=1)
+        replace_policy(self.store,actor_id="admin",config=replace(config(),reader_ids=()),expected_revision=1)
         r=call(self.app,"/capabilities",token="test-admin")["body"]["data"]
         self.assertFalse(r["capabilities"]["items"])
         self.assertTrue(r["capabilities"]["review"])
@@ -207,14 +208,14 @@ class CommunityTests(unittest.TestCase):
         self.assertIsNone(self.state().snapshot)
 
     def test_config_change_during_network_invalidates_refresh(self):
-        self.provider.hook = lambda:replace_policy(self.store, replace(config(), credential_ref="new-ref"), expected_revision=1)
+        self.provider.hook = lambda:replace_policy(self.store,actor_id="admin",config= replace(config(), credential_ref="new-ref"), expected_revision=1)
         self.assertEqual(self.refresh()["status"], 412)
         self.assertIsNone(self.state().snapshot)
         self.assertEqual(self.state().revision, 2)
 
     def test_audience_change_clears_prior_snapshot_and_approvals(self):
         self.refresh(); self.approve()
-        replace_policy(self.store, replace(config(), reader_ids=("admin",)), expected_revision=3)
+        replace_policy(self.store,actor_id="admin",config= replace(config(), reader_ids=("admin",)), expected_revision=3)
         self.assertIsNone(self.state().snapshot)
         self.assertEqual(self.state().approvals, frozenset())
         self.assertEqual(call(self.app)["status"], 404)
@@ -326,7 +327,7 @@ class CommunityTests(unittest.TestCase):
         self.assertEqual(call(self.app)["status"],403)
 
     def test_configured_developer_still_cannot_refresh_or_approve(self):
-        replace_policy(self.store,replace(config(),refresher_ids=("dev",),approver_ids=("dev",)),expected_revision=1)
+        replace_policy(self.store,actor_id="admin",config=replace(config(),refresher_ids=("dev",),approver_ids=("dev",)),expected_revision=1)
         self.assertEqual(self.refresh(token="test-dev")["status"],403)
         self.assertEqual(self.approve([],token="test-dev")["status"],403)
         self.assertEqual(self.provider.calls,0)

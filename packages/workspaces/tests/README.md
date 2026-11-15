@@ -57,3 +57,6 @@ No true login, real database-backed demo or production data was used. See the
 service and SQL gates, realm persistence, bounded epochs, legacy inactive grants
 and runtime-import exclusion for the test-only identity simulation. The fixture
 is not a supported transition implementation or last-admin/operator proof.
+
+`test_grant_fences.py` covers exact recipient sets, bounded generation fields,
+foreign realm rejection and synthetic identity ABA for scoped grant helpers.

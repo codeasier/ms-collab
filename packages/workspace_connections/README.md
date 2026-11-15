@@ -56,10 +56,11 @@ identity commit guard. No bearer fallback or browser-stored credentials exist.
 ### Identity generation boundary
 
 Pins lacking the required realm/generation are rejected, never silently rebuilt
-from current identity state. The installed pin protects **this management and discovery adapter**, not every
-community data route. Existing direct `items`/`review` and other community ACLs
-still use local principal IDs plus current workspace membership and role checks.
-They are not silently upgraded by this page's template pin. Identity rebinding,
+from current identity state. The installed template pin protects **this management
+and discovery adapter**. Direct `items`/`review` and other community routes use the
+separate [persistent data-plane grants](../community_api/GRANTS.md), in addition to
+current membership and role checks. A template pin cannot upgrade a legacy or
+stale data grant. Identity rebinding,
 deactivation/reactivation and directory mutation must remain unavailable until
 all persistent grants and data-plane consumers have reviewed migration/fencing.
 The prerequisite identity-generation foundation is closed by design; there is no
@@ -106,3 +107,13 @@ explicit configuration and authority; this slice does not claim their management
 
 Synthetic tests do not demonstrate live GitCode protocol support, production
 credentials, deployment readiness, or operational template migrations.
+
+## Bound community data-plane writes
+
+Policy edits use the [community grant helper](../community_api/GRANTS.md) in the
+same protected transaction. The helper alone writes the scoped audit; template,
+manager and every selected recipient pin/capability check remain prerequisites.
+An ordinary edit cannot recapture an existing or retired recipient generation.
+Legacy data grants fail closed rather than being upgraded by the management UI.
+Explicit data regrant is a separate trusted action, not a checkbox or PATCH flag.
+Management approval counts exclude semantically expired approval provenance.

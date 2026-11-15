@@ -42,7 +42,7 @@ class ResponsibilityTests(unittest.TestCase):
             self.store.set_module_state('admin',w,'responsibility',state='enabled',expected_revision=1)
         initialize(self.store,[policy(p.scope) for p in self.policies])
         self.app=ResponsibilityApplication(store=self.store,providers=(Provider('test',fixtures.ISSUER,'community-test',self.verifier),),provider_key='test',clock=lambda:self.now)
-        self.provider.observe=lambda connection,credential,observed_at:Snapshot(connection.scope,observed_at,(
+        self.provider.observe=lambda connection,credential,observed_at,before_read=None:Snapshot(connection.scope,observed_at,(
             BoardItem('issue',1,'Unassigned synthetic issue','open','2026-01-01T00:00:00Z'),
             BoardItem('pull',2,'Synthetic UI change','open','2026-01-01T00:00:00Z'),
             BoardItem('pull',3,'Unapproved synthetic change','open','2026-01-01T00:00:00Z'),
@@ -190,7 +190,7 @@ class ResponsibilityTests(unittest.TestCase):
         self.assertEqual(self.request()['status'],404)
         self.assertEqual(self.request(token='test-admin')['body']['data']['fields'],[])
         self.assertEqual(self.rstate()['evidence'],[])
-        replace_community(self.store,replace(fixtures.config(),reader_ids=('reader',)),expected_revision=self.cstate().revision)
+        replace_community(self.store,actor_id='admin',config=replace(fixtures.config(),reader_ids=('reader',)),expected_revision=self.cstate().revision)
         self.assertEqual(self.request(token='test-admin')['status'],404)
 
     def test_admin_demotion_and_assertion_expiry_prevent_writes(self):

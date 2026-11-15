@@ -105,7 +105,7 @@ class ConnectionTests(CommunityTests):
         replacement=replace(self.template,manager_ids=('admin','second'))
         app=WorkspaceConnectionsApplication(api=self.management._api,connections=(replacement,))
         self.assertEqual(call(app,'/manage',base=PATH,token='test-admin')['status'],409)
-        replace_policy(self.store,replace(config(),credential_ref='changed-ref'),expected_revision=1)
+        replace_policy(self.store,replace(config(),credential_ref='changed-ref'),expected_revision=1,actor_id='admin')
         self.assertEqual(self.request('/manage')['status'],409)
         self.assertEqual(self.request()['body']['data']['items'],[])
         self.assertNotIn('changed-ref',str(self.request('/manage')))
@@ -229,6 +229,53 @@ class ConnectionTests(CommunityTests):
     def test_revision_limit_does_not_advance_outside_safe_json_integer(self):
         with sqlite3.connect(self.path) as c:c.execute('UPDATE community_connections SET revision=?',(MAX_REVISION,))
         self.assertEqual(self.change()['status'],409)
+
+    def test_bound_edit_has_one_audit_and_retains_original_recipient_authority(self):
+        before=self.state();count=len(self.store.audit_events('admin','alpha'))
+        self.assertEqual(self.change()['status'],200)
+        state=self.state()
+        self.assertEqual(state.grant_revision,before.grant_revision+1)
+        self.assertEqual(state.authority['principals']['admin'],before.authority['principals']['admin'])
+        self.assertEqual(state.retired_principals['reader'],before.authority['principals']['reader'])
+        self.assertEqual(len(self.store.audit_events('admin','alpha')),count+1)
+
+    def test_legacy_configuration_cannot_be_upgraded_by_management(self):
+        from packages.community_api.records import encode
+        with sqlite3.connect(self.path) as db:
+            db.execute('UPDATE community_connections SET config=?,approvals=? WHERE workspace_id=? AND connection_id=?',
+                (encode(config().as_dict()),'[]','alpha','source'))
+            before=db.execute('SELECT * FROM community_connections').fetchall()
+        self.assertEqual(self.request('/manage')['status'],503)
+        self.assertEqual(self.change(revision=1)['status'],503)
+        with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT * FROM community_connections').fetchall(),before)
+
+    def test_fresh_template_cannot_make_regular_edit_recapture_old_data_pin(self):
+        from packages.workspaces.tests.identity_fixture import simulate_identity
+        from packages.workspace_connections.records import identity
+        self.assertEqual(self.change()['status'],200)
+        with sqlite3.connect(self.path) as db:
+            subject=db.execute("SELECT subject FROM principals WHERE id='reader'").fetchone()[0]
+            simulate_identity(db,"UPDATE principals SET subject='replacement' WHERE id='reader'")
+            simulate_identity(db,"UPDATE principals SET subject=? WHERE id='reader'",(subject,))
+        selected=dict(reader_ids=['reader'],refresher_ids=['admin'],approver_ids=['admin'])
+        self.assertEqual(self.change(grants=selected)['status'],400)
+        # Simulate separately reviewed template replacement only, not data regrant.
+        def template_fixture(policy,db):
+            value=json.loads(db.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()[0])
+            value['reader']=identity(policy,policy._principals['reader'])
+            db.execute("UPDATE workspace_connection_templates_v1 SET identities=? WHERE workspace_id='alpha'",(json.dumps(value),))
+        self.store._transaction(template_fixture,write=True,with_connection=True)
+        self.assertEqual(self.change(grants=selected)['status'],200)
+        self.assertEqual(self.state().authority['principals']['reader']['generation'],1)
+        self.assertEqual(call(self.app)['status'],404)
+
+    def test_management_does_not_count_semantically_expired_approvals(self):
+        self.refresh();self.approve()
+        self.store.set_membership('second','alpha','admin',role='developer',state='active',expected_revision=1)
+        self.store.set_membership('second','alpha','admin',role='admin',state='active',expected_revision=2)
+        current=self.request('/manage')['body']['data']['items'][0]
+        self.assertEqual(current['approved_count'],0)
+        self.assertTrue(current['snapshot_available'])
 
 
 def load_tests(loader, tests, pattern):

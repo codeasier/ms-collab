@@ -14,7 +14,7 @@ class Quiet(WSGIRequestHandler):
 def main():
     fixture=ResponsibilityTests();fixture.setUp()
     try:
-        fixture.provider.observe=lambda connection,credential,observed_at:Snapshot(connection.scope,observed_at,tuple(
+        fixture.provider.observe=lambda connection,credential,observed_at,before_read=None:Snapshot(connection.scope,observed_at,tuple(
             [BoardItem('issue',1,'<img src=x onerror=alert(1)> Synthetic issue','open','2026-01-01T01:00:00Z')]+
             [BoardItem('pull',n,'Synthetic UI change '+str(n),'open','2026-01-01T01:00:00Z') for n in range(2,34)]))
         fixture.now+=timedelta(seconds=1)

@@ -1,11 +1,10 @@
 """Community policy management and authorized scope discovery, not provisioning."""
 from dataclasses import replace
-from hashlib import sha256
 import json
 import re
 
 from packages.community_api import CommunityApplication
-from packages.community_api.records import read, encode
+from packages.community_api.records import read, replace_policy_record, approval_current
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _SEGMENT, _invalid, _object
 from packages.workspaces import PolicyError
@@ -47,7 +46,7 @@ class WorkspaceConnectionsApplication(WorkspaceApplication):
             options.append({'principal_id': p, 'eligible': eligibility})
         return {'id': template.id, 'scope': template.scope.as_dict(), 'revision': state.revision,
             'grants': {k: sorted(getattr(state.policy, k)) for k in GRANTS}, 'options': options,
-            'snapshot_available': state.snapshot is not None, 'approved_count': len(state.approvals)}
+            'snapshot_available': state.snapshot is not None, 'approved_count': len(state.approvals) if approval_current(policy,state) else 0}
 
     def _dispatch(self, environ):
         assertion = self._api._verify_request(environ)
@@ -113,14 +112,8 @@ class WorkspaceConnectionsApplication(WorkspaceApplication):
             if state.revision >= MAX_REVISION:
                 raise PolicyError(409, 'connection_revision_exhausted')
             config = replace(state.policy, **values)
-            scope = template.scope
-            cursor = connection.execute("UPDATE community_connections SET config=?,snapshot=NULL,approvals='[]',revision=revision+1 WHERE workspace_id=? AND connection_id=? AND repository=? AND revision=?",
-                (encode(config.as_dict()), scope.workspace_id, scope.connection_id, scope.repository, state.revision))
-            if cursor.rowcount != 1:
-                raise PolicyError(412, 'revision_conflict')
-            policy._changed(actor, workspace, 'resource.update',
-                'community-config:' + sha256(encode(scope.as_dict()).encode('ascii')).hexdigest(), state.revision + 1)
-            return self._view(policy, template, read(connection, scope), identities)
+            updated = replace_policy_record(policy,connection,actor,config,expected_revision=state.revision)
+            return self._view(policy,template,updated,identities)
         return self._api._authenticated_transaction(assertion, operation, write=editing, with_connection=True)
 
     @staticmethod
