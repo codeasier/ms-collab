@@ -87,7 +87,7 @@ command**. They must not run against production merely because this code exists.
    retaining old columns/data/triggers/version on failure.
 4. Reopen using v2, compose policy/login, and require a new verified login. Old
    rows are **not backfilled into current authority**. History fences without
-   generation are hidden; legacy GUI snapshots require explicit new publication;
+   generation are hidden; legacy GUI snapshots require explicit grant migration/regrant before a new publication;
    legacy pending invitation digests are invalidated. Preserve retained records
    for separately authorized recovery rather than exporting or silently rewriting.
 
@@ -110,7 +110,7 @@ here before identity administration can open.
 | --- | --- | --- |
 | Login attempts and sessions; session-backed host/UI | Joint realm/epoch issuance and exact current ID/generation verification; legacy NULL denied in composed host. | Real provider bound-code acceptance remains separate. Backup rollback is not solved. |
 | Saved assistant history and blocked ACP preflight | Persistent realm/generation fence; old records hidden, no automatic recovery; preflight reuses exact history fence. | Object-level lineage, executable runner isolation/authorization and recovery not implemented. |
-| GUI observation snapshots | V2 audience includes realm and each reader generation; old snapshot reads denied until explicit newer publication. | Trusted publisher allowlist is still local IDs; upgrade publisher/configuration grants before identity administration. |
+| GUI observation snapshots and publisher configuration | [Persistent grants](../packages/gui_smoke/GRANTS.md) bind every reader/publisher to realm/generation; publication has grant + nonreset snapshot CAS. Explicit regrant clears old content, stale configurations cannot publish, and legacy rows are never auto-adopted. | Historical publisher eligibility does not retroactively rescind an authorized reader observation; live panel provenance, protected deployment migration and actual identity administration remain separate. |
 | Workspace invitations | Inviter and invitee digests include realm, ID, issuer, subject and generation; old digests never upgraded. | Actual directory transitions and identity-safe administrative workflow remain closed. |
 | Artifact byte grants and streams | Persistent realm/generation grants, independent monotonic byte revision and reviewed-parent index pin; full flow pin checked through acquisition/output. [Contract](../packages/artifact_sync/GRANTS.md). | Real cloud acceptance and host resource recovery remain separate; regrant never recycles uncertain active leases. |
 | Community reads/review/refresh/approve | [Bound persistent grants](../packages/community_api/GRANTS.md), retired-ID pins, monotonic grant revisions, approver generation/membership provenance and per-page actor/config guards. Known legacy grants require explicit CAS regrant that discards old content. | Management/template constraints remain additional gates, not substitutes for data-plane grants. Standalone provider calls do not claim workspace authorization; already dispatched I/O cannot be undone. |

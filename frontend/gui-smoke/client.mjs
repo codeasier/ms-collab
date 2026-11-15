@@ -24,7 +24,7 @@ function envelope(value, scope, extra, revision) {
   if (source.kind !== 'stored_observation' || source.live_provider_verified !== false || source.full_history_complete !== false || source.execution_enabled !== false) fail();
   number(source.revision);
   if (value.available) { if (!source.revision) fail(); date(source.observed_at); }
-  else if (source.revision !== 0 || source.observed_at !== null) fail();
+  else if (source.observed_at !== null) fail();
   if (revision != null && source.revision !== revision) fail();
   const caps = exact(value.capabilities,['read','submit','cancel','retry','reproduce','refresh','download']);
   if (caps.read !== true || Object.entries(caps).some(([k,v]) => k !== 'read' && v !== false)) fail();

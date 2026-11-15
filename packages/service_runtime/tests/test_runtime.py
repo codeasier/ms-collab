@@ -45,7 +45,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.directory.stat().st_mode & 0o777,0o700)
         for item in self.directory.iterdir(): self.assertEqual(item.stat().st_mode & 0o777,0o600)
         with sqlite3.connect(self.directory/'policy.sqlite') as db:
-            for table in ('principals','operators','workspaces','memberships','modules','resources','community_connections','artifact_indexes_v1','assistant_conversations','research_catalog','gui_smoke_snapshots'):
+            for table in ('principals','operators','workspaces','memberships','modules','resources','community_connections','artifact_indexes_v1','assistant_conversations','research_catalog','gui_smoke_snapshots','gui_smoke_grants'):
                 self.assertEqual(db.execute('SELECT COUNT(*) FROM '+table).fetchone()[0],0)
             self.assertEqual(schema_digest(db),POLICY_DIGEST)
         with sqlite3.connect(self.directory/'login.sqlite') as db:
@@ -67,6 +67,27 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO principals VALUES('blocked','https://identity.example.invalid','blocked',1,1,1)")
         self.assertFalse(check(self.config)['login_enabled'])
+
+    def test_old_gui_schema_installation_and_backup_are_rejected_without_rewrite(self):
+        self.init();source=self.root/'old-backup';backup(self.config,source)
+        # Synthetic prior-layout checkpoint with a self-consistent old manifest.
+        with sqlite3.connect(source/'policy.sqlite') as db:
+            db.execute('DROP TABLE gui_smoke_grants');old_digest=schema_digest(db)
+        payload=(source/'policy.sqlite').read_bytes()
+        meta=json.loads((source/'backup.json').read_text())
+        meta.update(policy_schema=old_digest,policy_bytes=len(payload),policy_sha256=sha256(payload).hexdigest())
+        (source/'backup.json').write_bytes(canonical(meta))
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        with self.assertRaises(RuntimeFailure):verify_backup(self.config,source)
+        with sqlite3.connect(self.directory/'policy.sqlite') as db:db.execute('DROP TABLE gui_smoke_grants')
+        installation=json.loads((self.directory/'installation.json').read_text());installation['policy_schema']=old_digest
+        (self.directory/'installation.json').write_bytes(canonical(installation));prior=self.hashes()
+        with self.assertRaises(RuntimeFailure):check(self.config)
+        self.assertEqual(prior,self.hashes())
+        self.restored_config()
+        with self.assertRaises(RuntimeFailure):restore(self.config,source)
+        self.assertFalse((self.root/'restored').exists())
+        self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
 
     def test_check_is_read_only_and_no_network_no_auto_creation(self):
         with self.assertRaises(RuntimeFailure): check(self.config)

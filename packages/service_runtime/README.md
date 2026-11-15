@@ -175,3 +175,10 @@ for this installation tool's bounded checks/backup, not a scalable storage backe
   and operational boundaries. The runtime's stricter choices are local policy,
   not a claim that default Gunicorn settings satisfy this service's contract.
 - [Documentation index](../../docs/README.md) and [deployment examples](../../deploy/README.md).
+
+## GUI grant schema compatibility
+
+The current policy schema includes persistent GUI publisher/reader grants. Old
+installation or backup fingerprints are rejected without modifying their bytes.
+The [offline GUI schema helper](../gui_smoke/GRANTS.md#legacy-stores-and-recovery-boundaries)
+does not update runtime manifests or authorize a deployment migration.

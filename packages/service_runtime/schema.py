@@ -14,9 +14,10 @@ from packages.artifact_sync.records import _CREATE as ARTIFACTS, _EVENT_CREATE a
 from packages.assistant_history.store import _TABLES as HISTORY
 from packages.responsibility_api.records import _SCHEMA as RESPONSIBILITY
 from packages.gui_smoke.store import _SCHEMA as GUI
+from packages.gui_smoke.grants import _SCHEMA as GUI_GRANTS
 from packages.research_assets.store import _SCHEMA as ASSETS
 
-MODULE_SCHEMA = (ADMIN, INVITES, COMMUNITY, ARTIFACTS, ARTIFACT_EVENTS, *HISTORY.values(), RESPONSIBILITY, GUI, *ASSETS)
+MODULE_SCHEMA = (ADMIN, INVITES, COMMUNITY, ARTIFACTS, ARTIFACT_EVENTS, *HISTORY.values(), RESPONSIBILITY, GUI, GUI_GRANTS, *ASSETS)
 POLICY_SCHEMA = (*WORKSPACE, *MODULE_SCHEMA)
 
 

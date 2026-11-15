@@ -10,18 +10,21 @@ external panel boundary that must not be copied into a public multi-user service
 
 ## Explicit configuration and storage
 
-Call `initialize(store)` on an existing `SQLiteWorkspaceService`, then configure
+Call `initialize(store)` on a new `SQLiteWorkspaceService` module store, explicitly
+enroll the frozen connections with `initialize_connections(store, connections)`, then configure
 `GuiSmokeApplication(store=..., providers=..., provider_key=..., connections=(...))`.
 There is no default login, listener, user, module installation or connection.
 The trusted module catalog/setup must separately approve and enable `gui_smoke`.
 Each frozen `SmokeConnection` names one exact `SmokeScope(workspace_id,
 connection_id, repository_id)` and explicit nonempty `readers` and `publishers`
-sets of local principal IDs. IDs are logical identifiers, not provider addresses,
+sets of local principal IDs. Their complete configuration and identity-generation
+grants are also persisted, not inferred afresh by a request. See the
+[persistent authority and legacy recovery contract](GRANTS.md). IDs are logical identifiers, not provider addresses,
 repository URLs, credentials or guessed ownership. The factory accepts at most
 100 configured scopes and 100 principals per set.
 
 `publish_snapshot(store, configured, actor=..., tasks=(...), observed_at=...,
-expected_revision=...)` is a **trusted Python ingress**, not an HTTP route or an
+expected_grant_revision=..., expected_revision=...)` is a **trusted Python ingress**, not an HTTP route or an
 external adapter. The actor must already be a verified local principal, explicitly
 listed as publisher, and currently authorized for module read and write. Every
 selected reader must currently have module read permission. A future adapter
@@ -53,24 +56,21 @@ and caller URL parameters are never credentials or configuration. See the
 The stored envelope binds the exact workspace/connection/repository coordinates,
 revision and observation time. It also captures workspace/module revisions and,
 for each explicitly approved reader, issuer/subject and membership revision.
-Read access requires those fences to match current policy. Removing a configured
-reader applies only to a request-serving instance that has loaded the new frozen
-configuration; an old process retains its old allowlist during a partial rollout.
-Shared SQLite membership/module revocation does not depend on that rollout. A
-republished narrower audience also gates old readers of that snapshot, but old
-publishers must be drained/reconfigured for a lasting configuration-only removal:
-a still-authorized publisher with old configuration and the current revision can
-explicitly republish its original audience. Adding a configured reader
-does **not** expose older snapshots until explicit republication. Membership changes or module/workspace revision
-changes likewise need an explicit new publication, not automatic resurrection.
+Read access requires those fences to match current policy. A reader or publisher also needs its current persistent identity grant; an old
+instance's different DTO cannot override a changed persisted configuration.
+Explicit destructive regrant advances independent grant/snapshot counters and
+clears content, even for an identical DTO. Adding a reader never reveals old data.
+Membership changes or module/workspace revisions still require new publication.
 
-V2 snapshots capture policy realm and each reader's principal generation, as well
-as issuer/subject and membership revision. Binding A→B→A or disable/reenable no
-longer restores an older snapshot in synthetic transition tests. V1 snapshots are
-retained but unreadable until an explicit newer publication recaptures authority.
-The publisher/configured local-ID grants are not yet fully generation-aware;
-actual identity transitions remain code-level closed. See the [authority consumer
-matrix](../../docs/principal-authority.md). Policy reads linearize at one SQLite
+V3 snapshots bind the grant digest/revision in addition to realm and each reader's
+principal generation. The trusted publisher must pass both publication CAS
+preconditions and a current persisted publisher pin. Principal A→B→A cannot revive
+an old grant. Historical publisher loss does not alone revoke already-authorized
+reader observations; new writes deny, while explicit regrant clears all content.
+Known v1/v2 legacy rows require offline schema migration then explicit destructive
+regrant, not automatic republication. Identity transitions remain code-level closed.
+See the [grant contract](GRANTS.md) and [authority consumer matrix](../../docs/principal-authority.md).
+Policy reads linearize at one SQLite
 snapshot; later revocation cannot retract already authorized/read bytes. This is
 not instantaneous cancellation or a tamper-evident database.
 HTTP assertion expiry is checked after the read and before transaction completion.
@@ -89,8 +89,8 @@ All three accept optional `revision`. A nonzero offset requires it (428); a
 changed revision is 412. Restart pagination rather than combine snapshots. The
 response `source` names revision/observation time and always declares
 `live_provider_verified=false`, `full_history_complete=false`,
-`execution_enabled=false`. No record is `available=false`, revision 0 and no
-observation time; a deliberately published empty snapshot is `available=true`.
+`execution_enabled=false`. No record is `available=false`, with no observation time and a preserved snapshot
+counter (0 before first publication, possibly nonzero after explicit clearing); a deliberately published empty snapshot is `available=true`.
 Missing data never masquerades as a verified successful run or complete history.
 
 All capabilities other than read are false. There are **no** HTTP publication,
