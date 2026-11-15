@@ -58,14 +58,14 @@ class DemoHTTPTest(unittest.TestCase):
             status, _, modules = self.json(f'/api/workspaces/{workspace}/modules')
             self.assertEqual(status, 200)
             self.assertEqual(modules['workspace_id'], workspace)
-            self.assertEqual([item['id'] for item in modules['items']], ['overview'])
+            self.assertEqual([item['id'] for item in modules['items']], ['overview', 'community-board'])
             status, _, body = self.json(f'/api/workspaces/{workspace}/overview')
             self.assertEqual(status, 200)
             self.assertEqual(body['workspace_id'], workspace)
             self.assertEqual(body['data']['open_items'], count)
 
     def test_inaccessible_and_unknown_spaces_have_identical_response(self):
-        for resource in ['modules', 'overview']:
+        for resource in ['modules', 'overview', 'community-board']:
             denied = self.json(f'/api/workspaces/product-beta/{resource}')
             missing = self.json(f'/api/workspaces/no-such-workspace/{resource}')
             self.assertEqual(denied[0], 404)
@@ -94,7 +94,7 @@ class DemoHTTPTest(unittest.TestCase):
             self.assertEqual(self.json('/api/workspaces/product-alpha/overview', method=method)[0], 405)
 
     def test_static_allowlist_and_unknown_routes(self):
-        for path in ['/', '/app.mjs', '/navigation.mjs', '/style.css']:
+        for path in ['/', '/app.mjs', '/navigation.mjs', '/board.mjs', '/style.css']:
             self.assertEqual(self.request(path)[0], 200)
         for path in ['/LICENSE', '/backend/ms_collab/app.py', '/../LICENSE', '/%2e%2e/LICENSE', '/.env', '/api/missing']:
             self.assertEqual(self.json(path)[0], 404)
@@ -109,6 +109,51 @@ class DemoHTTPTest(unittest.TestCase):
             self.assertEqual(self.json('/healthz', headers=headers)[0], 403)
         origin = f'http://127.0.0.1:{self.server.server_port}'
         self.assertEqual(self.json('/healthz', headers={'Origin': origin})[0], 200)
+
+    def test_board_is_scoped_and_observed_not_live(self):
+        for workspace, total in [('product-alpha', 2), ('commons', 1)]:
+            status, headers, body = self.json(f'/api/workspaces/{workspace}/community-board')
+            self.assertEqual(status, 200)
+            self.assertEqual(body['mode'], 'synthetic-demo')
+            self.assertEqual(body['coverage'], 'observed_subset')
+            self.assertEqual(body['total'], total)
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            for item in body['items'] + body['sources']:
+                self.assertEqual(item['workspace_id'], workspace)
+            self.assertTrue(all(source['observed_at'].endswith('Z') for source in body['sources']))
+
+    def test_board_filters_and_pagination(self):
+        base = '/api/workspaces/product-alpha/community-board'
+        first = self.json(base + '?limit=1&offset=0')[2]
+        second = self.json(base + '?limit=1&offset=1')[2]
+        self.assertEqual(first['total'], 2)
+        self.assertEqual(len(first['items']), 1)
+        self.assertNotEqual(first['items'], second['items'])
+        filtered = self.json(base + '?kind=pull&state=merged&q=synthetic')[2]
+        self.assertEqual(filtered['total'], 1)
+        self.assertEqual(filtered['items'][0]['kind'], 'pull')
+        self.assertEqual(self.json(base + '?q=not-present')[2]['items'], [])
+
+    def test_board_gate_precedes_query_and_projection(self):
+        with patch('ms_collab.app.BOARD') as board:
+            for workspace in ['product-beta', 'not-present']:
+                self.assertEqual(self.json(f'/api/workspaces/{workspace}/community-board?identity=admin')[0], 404)
+            with patch('ms_collab.app.MEMBERSHIPS', {'product-alpha': frozenset({'overview.read'})}):
+                self.assertEqual(self.json('/api/workspaces/product-alpha/community-board')[0], 404)
+            spaces = dict(WORKSPACES)
+            spaces['product-alpha'] = Workspace('product-alpha', 'Alpha', 'private', ('overview',))
+            with patch('ms_collab.app.WORKSPACES', spaces):
+                self.assertEqual(self.json('/api/workspaces/product-alpha/community-board')[0], 404)
+            with patch('ms_collab.app.MEMBERSHIPS', {'product-alpha': MEMBERSHIPS['product-alpha']}):
+                self.assertEqual(self.json('/api/workspaces/commons/community-board')[0], 404)
+            board.list_items.assert_not_called()
+
+    def test_board_rejects_unknown_duplicate_and_unbounded_filters(self):
+        for query in ['workspace_id=product-beta', 'connection_id=other', 'token=example',
+                      'q=a&q=b', 'kind=unknown', 'state=unknown', 'limit=0', 'limit=101',
+                      'offset=-1', 'offset=99999999', 'limit=1.5', 'limit=', 'q=' + 'a' * 201,
+                      'q=' + 'a' * 2048, 'bare', 'q=1&kind=issue&state=open&limit=1&offset=0&x=1&y=2']:
+            self.assertEqual(self.json('/api/workspaces/product-alpha/community-board?' + query)[0], 400, query[:80])
 
     def test_head_returns_no_body(self):
         status, _, body = self.request('/healthz', method='HEAD')

@@ -27,6 +27,21 @@
         <dl><div><dt>Synthetic repositories</dt><dd id="repositories"></dd></div>
           <div><dt>Synthetic open items</dt><dd id="open-items"></dd></div></dl>
       </article>
+      <article id="community-board" hidden aria-labelledby="board-title">
+        <h3 id="board-title">Community board</h3>
+        <p>Synthetic, read-only observations. Shared collaboration shows only its own example records.</p>
+        <form id="board-filters" class="board-filters">
+          <label>Kind<select id="board-kind"><option value="">All kinds</option><option value="issue">Issues</option><option value="pull">Pull requests</option></select></label>
+          <label>State<select id="board-state"><option value="">All states</option><option value="open">Open</option><option value="closed">Closed</option><option value="merged">Merged</option></select></label>
+          <label>Title or label<input id="board-query" type="search" maxlength="200" placeholder="Search observed items"></label>
+          <label>Page size<select id="board-limit"><option value="10">10</option><option value="1">1 (pagination demo)</option><option value="25">25</option></select></label>
+          <button type="submit">Apply filters</button>
+        </form>
+        <p id="board-status" role="status" aria-live="polite"></p>
+        <ul id="board-items" class="board-items"></ul>
+        <div class="board-pagination"><button id="board-prev" type="button" disabled>Previous</button><span id="board-page"></span><button id="board-next" type="button" disabled>Next</button></div>
+        <details><summary>Observation sources (not live)</summary><ul id="board-sources"></ul></details>
+      </article>
     </section>
     <section class="next"><h2>What this proves</h2>
       <p>Read-only navigation, server-side membership checks over a fixed fixture,

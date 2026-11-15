@@ -20,19 +20,20 @@ class Module:
 
 
 WORKSPACES = MappingProxyType({
-    "product-alpha": Workspace("product-alpha", "Product Alpha", "private", ("overview",)),
-    "product-beta": Workspace("product-beta", "Product Beta", "private", ("overview",)),
-    "commons": Workspace("commons", "Shared collaboration", "public", ("overview",)),
+    "product-alpha": Workspace("product-alpha", "Product Alpha", "private", ("overview", "community-board")),
+    "product-beta": Workspace("product-beta", "Product Beta", "private", ("overview", "community-board")),
+    "commons": Workspace("commons", "Shared collaboration", "public", ("overview", "community-board")),
 })
 MODULES = MappingProxyType({
+    "community-board": Module("community-board", "Community board", "community-board.read", "Synthetic issues and pull requests"),
     "overview": Module("overview", "Overview", "overview.read", "Synthetic workspace overview"),
 })
 # A fixed, synthetic server-side principal. There is no login or user selection.
 # The public workspace still requires explicit membership. Never use this as auth.
 DEMO_USER = "demo-developer"
 MEMBERSHIPS = MappingProxyType({
-    "product-alpha": frozenset({"overview.read"}),
-    "commons": frozenset({"overview.read"}),
+    "product-alpha": frozenset({"overview.read", "community-board.read"}),
+    "commons": frozenset({"overview.read", "community-board.read"}),
 })
 OVERVIEWS = MappingProxyType({
     "product-alpha": {"summary": "Example product-team workspace", "repositories": 2, "open_items": 5},
