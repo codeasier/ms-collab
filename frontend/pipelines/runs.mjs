@@ -1,10 +1,10 @@
-import {scopeFrom,loadSnapshot,validateDetail} from './client.mjs'
+import {scopeFrom,loadSnapshot,validateDetail,validateTasks} from './client.mjs'
 export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{}}){
 if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
 const el=id=>document.getElementById(id),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
-let active=false,epoch=0,controller,detailEpoch=0,detailController,scope,snapshot,page=0,filter={query:'',status:''}
+let active=false,epoch=0,controller,detailEpoch=0,detailController,taskEpoch=0,taskController,detailRun,taskPage,taskFilter='',scope,snapshot,page=0,filter={query:'',status:''}
 function text(tag,value,className){const n=document.createElement(tag);n.textContent=value;if(className)n.className=className;return n}
-function closeDetail(){detailEpoch++;detailController?.abort();detailController=undefined;el('detail').close();el('detail-title').textContent='';el('detail-status').textContent='';el('detail-body').replaceChildren()}
+function closeDetail(){detailEpoch++;taskEpoch++;taskController?.abort();taskController=undefined;detailRun=undefined;taskPage=undefined;taskFilter='';detailController?.abort();detailController=undefined;el('detail').close();el('detail-title').textContent='';el('detail-status').textContent='';el('detail-body').replaceChildren()}
 function clearPanel(){closeDetail();snapshot=undefined;page=0;el('panel').hidden=true;for(const id of ['scope-title','revision','summary','coverage'])el(id).textContent='';el('runs').replaceChildren();el('durations').replaceChildren()}
 function cancel(){epoch++;controller?.abort();controller=new AbortController();return epoch}
 function disconnect(message='Disconnected. Reconnect to read current authorized state.'){
@@ -46,11 +46,32 @@ async function showDetail(runID){
  closeDetail();detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
  el('detail-title').textContent=runID;el('detail-status').textContent='Reading current authorized run details…';el('detail').showModal()
  try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID,summary);if(token!==epoch||detailToken!==detailEpoch)return
-  const run=data.run;el('detail-status').textContent=`${run.status} · snapshot version ${version} · observed ${run.observed_at}`
+  const run=data.run;detailRun=run
   if(run.stages===null)el('detail-body').append(text('p','Stage and job details were not available in this observation.'))
   else if(!run.stages.length)el('detail-body').append(text('p','This observation contains no stage entries.'))
-  for(const stage of run.stages||[]){const section=text('section','');section.append(text('h3',stage.name));for(const job of stage.jobs){const row=text('article','','job');row.append(text('h4',job.name),text('p',`${job.id} · ${job.status}`),text('p',`Started: ${job.started_at??'unavailable'}`),text('p',`Finished: ${job.finished_at??'unavailable'}`));section.append(row)}el('detail-body').append(section)}
+  const stages=text('section','');stages.id='task-stages';el('detail-body').append(stages)
+  const controls=text('div','','task-controls'),label=text('label','Task status'),select=document.createElement('select');select.id='task-status-filter'
+  for(const status of ['','success','failure','cancelled','timed_out','skipped','queued','running','unknown']){const option=text('option',status||'All statuses');option.value=status;select.append(option)}label.append(select);controls.append(label)
+  const previous=text('button','Previous tasks'),next=text('button','Next tasks');previous.id='task-previous';next.id='task-next';previous.type=next.type='button';controls.append(previous,next);el('detail-body').append(controls)
+  const taskSummary=text('p','');taskSummary.id='task-summary';taskSummary.setAttribute('role','status');const jobs=text('div','');jobs.id='tasks';el('detail-body').append(taskSummary,jobs)
+  select.addEventListener('change',()=>loadTasks(select.value,0));previous.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,Math.max(0,taskPage.offset-10))});next.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,taskPage.offset+10)})
+  await loadTasks('',0)
+
  }catch(error){if(token!==epoch||detailToken!==detailEpoch||error.name==='AbortError')return;failure(error,token)}
+}
+async function loadTasks(status,offset){
+ if(!active||!detailRun||!snapshot||!scope)return
+ const token=epoch,dt=detailEpoch,tt=++taskEpoch,selected={...scope},run=detailRun,version=snapshot.revision;taskController?.abort();taskController=new AbortController();taskPage=undefined
+ for(const id of ['task-status-filter','task-previous','task-next'])el(id).disabled=true;el('tasks').replaceChildren();el('task-stages').replaceChildren();el('task-summary').textContent='Checking the same revision and current permissions…'
+ try{const data=validateTasks(await client.request(selected,'tasks',{runID:run.id,revision:version,offset,limit:10,status,signal:taskController.signal}),selected,version,run,{offset,limit:10,status});if(token!==epoch||dt!==detailEpoch||tt!==taskEpoch||!active)return
+  taskPage=data;taskFilter=status;el('detail-status').textContent=`${run.status} · snapshot version ${version} · observed ${run.observed_at}`
+  el('task-stages').append(text('h3','Stage observations'),text('p','Stage result was not supplied. Job counts do not certify stage success, run success or a release gate.'))
+  for(const stage of data.stages){const counts=Object.entries(stage.status_counts).filter(([,count])=>count).map(([state,count])=>`${state}: ${count}`).join(' · ');el('task-stages').append(text('p',`${stage.index+1}. ${stage.name} · ${stage.task_count} recorded tasks${counts?' · '+counts:''}`))}
+  for(const job of data.items){const row=text('article','','job');row.append(text('h4',job.name),text('p',`Stage ${job.stage_index+1}, task ${job.job_index+1} · ${job.id} · ${job.status}`),text('p',`Started: ${job.started_at??'unavailable'}`),text('p',`Finished: ${job.finished_at??'unavailable'}`));if(job.id_occurrences>1)row.append(text('p',`Ambiguous provider ID: ${job.id_occurrences} occurrences in this run. Position is a reference within this snapshot, not permission to target a remote job.`));el('tasks').append(row)}
+  if(!data.items.length)el('tasks').append(text('p',run.stages===null?'Task details unavailable. This is not evidence that no tasks ran.':'No recorded tasks match this filter. No provider history completeness is implied.'))
+  el('task-summary').textContent=`${data.total} matching of ${data.coverage.task_count} recorded tasks · Page ${Math.floor(data.offset/10)+1} of ${Math.max(1,Math.ceil(data.total/10))} · duplicate-ID observations: ${data.coverage.duplicate_id_tasks}`
+  el('task-status-filter').disabled=false;el('task-previous').disabled=offset===0;el('task-next').disabled=offset+10>=data.total
+ }catch(error){if(token!==epoch||dt!==detailEpoch||tt!==taskEpoch||error.name==='AbortError')return;failure(error,token)}
 }
 if(!sessionMode)el('connect').addEventListener('submit',event=>{event.preventDefault();if(!transportAllowed)return;try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque access credential.';return}active=true;el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided workspace, connection and pipeline.'})
 el('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})

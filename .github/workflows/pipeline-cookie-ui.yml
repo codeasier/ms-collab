@@ -52,6 +52,7 @@ jobs:
           node --test frontend/application/tests/*.test.mjs
           node --test frontend/pipelines/tests/*.test.mjs
           node frontend/application/tests/pipeline-browser.cjs
+          node frontend/application/tests/pipeline-tasks-browser.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -60,6 +61,17 @@ jobs:
             ${{ runner.temp }}/ms-collab-pipeline-cookie/desktop.png
             ${{ runner.temp }}/ms-collab-pipeline-cookie/mobile.png
             ${{ runner.temp }}/ms-collab-pipeline-cookie/detail.png
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 3
+      - name: Upload only synthetic task-page screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-pipeline-task-screenshots
+          path: |
+            ${{ runner.temp }}/ms-collab-pipeline-tasks/desktop.png
+            ${{ runner.temp }}/ms-collab-pipeline-tasks/mobile.png
+            ${{ runner.temp }}/ms-collab-pipeline-tasks/detail.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

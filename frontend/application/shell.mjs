@@ -1,3 +1,5 @@
+import {mountGuiSmokePage} from '../gui-smoke/view.mjs'
+import {createGuiSmokeSessionClient} from './gui-smoke-session.mjs'
 import {mountAssetPage} from '../research-assets/browser.mjs'
 import {createAssetSessionClient} from '../research-assets/client.mjs'
 import {mountAssistantPage} from '/assistant/history.mjs'
@@ -68,6 +70,7 @@ async function start(){
   el('app-login-note').textContent=bootstrap.login_configured?'Sign-in uses only the explicitly configured identity provider. No provider protocol or production readiness is implied.':'Sign-in is unavailable: no reviewed bound-code identity provider is configured. Existing valid sessions may be rechecked; no default identity is supplied.'
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
   const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
+  const gui=el('app-gui-smoke-link');if(gui)gui.hidden=!bootstrap.ui_modules.includes('gui-smoke')
   const assets=el('app-research-assets-link');if(assets)assets.hidden=!bootstrap.ui_modules.includes('research-assets')
   const assistant=el('app-assistant-link');if(assistant)assistant.hidden=!bootstrap.ui_modules.includes('assistant')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
@@ -76,6 +79,10 @@ async function start(){
   else if(document.body.dataset.page==='responsibility'){
    if(!bootstrap.ui_modules.includes('responsibility'))throw new Error('Responsibility is not configured on this service.')
    page=mountResponsibilityPage({client:createResponsibilitySessionClient(session),sessionMode:true,onSignOut:signOut})
+  }
+  else if(document.body.dataset.page==='gui-smoke'){
+   if(!bootstrap.ui_modules.includes('gui-smoke'))throw new Error('GUI observations are not configured on this service.')
+   page=mountGuiSmokePage({client:createGuiSmokeSessionClient(session)})
   }
   else if(document.body.dataset.page==='assistant'){
    if(!bootstrap.ui_modules.includes('assistant'))throw new Error('Saved history is not configured on this service.')

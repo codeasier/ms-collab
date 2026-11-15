@@ -50,7 +50,7 @@ class UITests(unittest.TestCase):
     def test_all_static_assets_are_bounded_public_content_with_csp(self):
         for path in _FILES:
             response=self.read(path,cookies='')
-            if path=='/artifact-admin/':
+            if path in {'/artifact-admin/','/gui-smoke/'}:
                 self.assertEqual(response['status'],404);continue
             self.assertEqual(response['status'],200,path)
             headers=dict(response['headers']);self.assertEqual(headers['Cache-Control'],'no-store')

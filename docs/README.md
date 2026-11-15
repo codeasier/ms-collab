@@ -54,3 +54,6 @@
 - [GitCode login activation gate](gitcode-login-acceptance.md)：官方证据与服务端绑定缺口、离线 fail-closed 回归和隔离验收步骤；不是已接入真实登录。
 
 - [ACP protocol preparation and blocked execution admission](../packages/assistant_protocol/README.md)：纯内存协议与 owner/workspace 授权拒绝审计；无进程、MCP、真实外联或执行入口，明确 OS 隔离验收阻塞。
+- [Pipeline stage/task observations and log boundary](../packages/pipeline_api/LOG_BOUNDARY.md)：固定版本的阶段计数与任务分页，重复ID不等于执行身份；原始日志因隐私契约未建立仍关闭。
+
+- [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.

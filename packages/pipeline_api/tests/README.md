@@ -14,3 +14,7 @@ are absent. Resource corruption never becomes a successful empty list.
 The verifier and token-like test strings are local doubles, not production
 credentials. No live identity/CI provider, production data or external network is
 used. [API boundary and remaining work](../README.md)
+
+- `test_tasks.py`: fixed-revision pages/filter counts, duplicate IDs and positions,
+  empty/missing stages, exact query shape, stale pages, current membership and
+  final assertion expiry, corrupted private fields, and closed log/write paths.
