@@ -148,7 +148,10 @@ config, grant, generation and membership revisions are bounded by
 `9007199254740991`; write exhaustion returns 409 before SQL mutation/audit.
 Grant/config versions cannot exceed the enclosing record revision. JSON remains
 bounded to 1 MiB, incoming config/reconfirm bodies to 64 KiB, and reference history
-to 3000 distinct IDs. Capacity failure never drops retired pins to make room.
+to 3000 distinct IDs. A proposal proves current authorization and identity
+preconditions, not that the updated envelope will fit: longer identity attributes
+can exhaust the serialized bound during confirmation and return 409 without a
+write. Capacity failure never drops retired pins to make room.
 
 Tests use synthetic identities, temporary SQLite and explicit test-only future
 transitions. The production mutation guards remain closed. Hashes provide binding

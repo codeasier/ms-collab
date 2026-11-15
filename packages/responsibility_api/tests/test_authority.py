@@ -329,6 +329,32 @@ class AuthorityTests(unittest.TestCase):
         raw['history']['authority']['principals']['one-too-many']={'issuer':community_fixture.ISSUER,'subject':'one-too-many','generation':1}
         self.write_json('fields',raw);self.assertEqual(self.request()['status'],503)
 
+    def test_reconfirmation_serialized_capacity_conflict_preserves_retired_history(self):
+        self.save();raw=self.json_columns()[1];history=raw['history'];limit=1024*1024
+        # Valid retired pins can approach the byte cap with fewer than 3000 IDs.
+        for n in range(1000):
+            ident='capacity-retired-'+str(n)
+            history['memberships'][ident]=1
+            history['authority']['principals'][ident]={'issuer':'x'*200,'subject':'😀'*200,'generation':1}
+            try:encode(raw)
+            except ValueError:
+                del history['memberships'][ident];del history['authority']['principals'][ident]
+                break
+        else:self.fail('synthetic history did not reach the explicit byte bound')
+        history['memberships']['capacity-tail']=1
+        history['authority']['principals']['capacity-tail']={'issuer':'x','subject':'x','generation':1}
+        available=limit-len(encode(raw))-100
+        self.assertGreaterEqual(available,0)
+        history['authority']['principals']['capacity-tail']['subject']='😀'*min(available//12,200) or 'x'
+        self.write_json('fields',raw)
+        with sqlite3.connect(self.path) as db:
+            simulate_identity(db,'UPDATE principals SET subject=? WHERE id=?',('😀'*200,'dev'))
+        proposal=self.proposal();self.assertIsNotNone(proposal['references']['confirmation_token'])
+        before=self.rows();response=self.reconfirm(proposal)
+        self.assertEqual(response['status'],409)
+        self.assertEqual(response['body'],{'error':'reference_history_exhausted'})
+        self.assertEqual(self.rows(),before)
+
     def test_foreign_realm_all_bound_record_never_grants_current_actor(self):
         self.save();self.publish()
         for key,value in zip(('policy','fields','evidence'),self.json_columns()):

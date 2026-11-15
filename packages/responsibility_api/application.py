@@ -60,7 +60,8 @@ class ResponsibilityApplication(WorkspaceApplication):
                     try:current_token,current=proposal(policy,actor,state,community)
                     except (ValueError,PolicyError):raise PolicyError(409,'reference_reconfirmation_unavailable') from None
                     if token!=current_token:raise PolicyError(412,'reference_proposal_changed')
-                    raw=reconfirmed_fields(state,current)
+                    try:raw=reconfirmed_fields(state,current)
+                    except ValueError:raise PolicyError(409,'reference_history_exhausted') from None
                 self._write(db,scope,'fields=?,config_version=config_version+1',(raw,),state['revision'])
                 audit(policy,actor,scope,state['revision']+1,
                       'responsibility.references.reconfirm' if action=='reconfirm' else 'resource.update')
