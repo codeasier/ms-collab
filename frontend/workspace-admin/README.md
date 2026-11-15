@@ -1,0 +1,9 @@
+# Workspace administration client
+
+Independent same-origin management page for an explicitly configured workspace
+API. No credentials, identity provider or server are bundled. See the
+[composition and security boundary](../../packages/workspace_ui/README.md).
+
+- `admin.mjs`: page lifecycle, edit dialog and stale-request guards.
+- `client.mjs`: strict response validation and memory-only request client.
+- [Tests](tests/README.md): unit and hosted browser acceptance.

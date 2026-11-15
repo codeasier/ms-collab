@@ -13,3 +13,5 @@
 - [Artifact catalog core](../packages/artifacts/README.md)：显式作用域、季度目录与命名筛选；尚未接入真实存储或下载。
 
 - [Transactional workspace API](../packages/workspace_api/README.md)：可信验证器与 SQLite 同事务授权的配置式 WSGI 适配器；没有真实登录提供方或生产启动入口。
+
+- [Workspace administration UI](../packages/workspace_ui/README.md)：显式配置事务 API 的成员管理页面；不含默认身份或真实登录流程。
