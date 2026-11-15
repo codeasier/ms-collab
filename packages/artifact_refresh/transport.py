@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Deadline-bound OBS listing only; no object bytes or client-selected URL."""
 import math
+import ipaddress
 import socket
 import ssl
 import threading
@@ -22,25 +23,69 @@ class _TimedHTTPS(_PinnedHTTPS):
         super().__init__(*args, **kwargs)
         self.deadline, self._transport_socket = deadline, None
         self.cleanup_uncertain = False
+        self._ownership = threading.Lock()
 
     def connect(self):
-        super().connect()
-        self._transport_socket = self.sock
-        if time.monotonic() >= self.deadline:
-            self.abort()
-            raise TimeoutError()
+        # Keep the same public-only DNS/pinned TLS contract, but own the socket
+        # before TCP or TLS I/O, not only after HTTPSConnection.connect returns.
+        addresses = socket.getaddrinfo(self.host, 443, type=socket.SOCK_STREAM)
+        if not addresses or len(addresses) > 32:
+            raise OSError('invalid DNS')
+        for family, kind, proto, canon, address in addresses:
+            ip = ipaddress.ip_address(address[0])
+            if family not in (socket.AF_INET, socket.AF_INET6) or not ip.is_global or ip.is_reserved or ip.is_multicast:
+                raise OSError('nonpublic destination')
+        family, kind, proto, canon, address = addresses[0]
+        with self._ownership:
+            raw = socket.socket(family, kind, proto)
+            self._transport_socket = raw
+        try:
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError()
+            raw.settimeout(self.timeout)
+            raw.connect(address)
+            # The swap must not race an abort between detach and ownership.
+            # TLS handshake itself runs after ownership is registered.
+            with self._ownership:
+                self.sock = self._context.wrap_socket(raw, server_hostname=self.host, do_handshake_on_connect=False)
+                self._transport_socket = self.sock
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError()
+            self.sock.do_handshake()
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError()
+        except BaseException:
+            self.close()
+            raise
 
     def abort(self):
-        sock = self._transport_socket or self.sock
-        if sock is not None:
+        with self._ownership:
+            sock = self._transport_socket
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except BaseException:
+                    self.cleanup_uncertain = True
+                try:
+                    sock.close()
+                except BaseException:
+                    self.cleanup_uncertain = True
+
+    def close(self):
+        with self._ownership:
+            failed = False
             try:
-                sock.shutdown(socket.SHUT_RDWR)
+                super().close()
             except BaseException:
-                self.cleanup_uncertain = True
-            try:
-                sock.close()
-            except BaseException:
-                self.cleanup_uncertain = True
+                failed = True
+            if self._transport_socket is not None:
+                try:
+                    self._transport_socket.close()
+                except BaseException:
+                    failed = True
+            self.cleanup_uncertain = self.cleanup_uncertain or failed
+            if failed:
+                raise RefreshCleanupError()
 
 
 class BoundedOBSReadTransport:

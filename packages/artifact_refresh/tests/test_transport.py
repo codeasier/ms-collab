@@ -91,4 +91,34 @@ class TransportTests(unittest.TestCase):
         sock=BadSocket();owner._transport_socket=sock;owner.abort()
         self.assertTrue(owner.cleanup_uncertain and sock.closed)
 
+    def test_socket_owned_before_tls_handshake_and_timer_closes_it(self):
+        entered=threading.Event();released=threading.Event()
+        class Raw:
+            closed=False
+            def settimeout(self,n):pass
+            def connect(self,address):pass
+            def close(self):self.closed=True
+        class TLS(Raw):
+            def do_handshake(self):entered.set();released.wait(2)
+            def shutdown(self,how):released.set()
+        raw,tls=Raw(),TLS();context=ssl.create_default_context()
+        owner=_TimedHTTPS(CONFIG.host,context=context,deadline=time.monotonic()+.1)
+        with patch('packages.artifact_refresh.transport.socket.getaddrinfo',return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('93.184.216.34',443))]),patch('packages.artifact_refresh.transport.socket.socket',return_value=raw),patch.object(context,'wrap_socket',return_value=tls) as wrap:
+            timer=threading.Timer(.1,owner.abort);timer.start()
+            try:
+                with self.assertRaises(TimeoutError):owner.connect()
+            finally:timer.cancel();timer.join();owner.close()
+        self.assertTrue(entered.is_set() and released.is_set() and tls.closed)
+        self.assertIs(owner._transport_socket,tls);self.assertFalse(wrap.call_args.kwargs['do_handshake_on_connect'])
+        self.assertEqual(wrap.call_args.kwargs['server_hostname'],CONFIG.host)
+    def test_connect_close_failure_is_owned_and_reported(self):
+        class Raw:
+            def settimeout(self,n):pass
+            def connect(self,address):raise OSError('synthetic connect failure')
+            def close(self):raise OSError('synthetic close failure')
+        owner=_TimedHTTPS(CONFIG.host,context=ssl.create_default_context(),deadline=time.monotonic()+1)
+        with patch('packages.artifact_refresh.transport.socket.getaddrinfo',return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('93.184.216.34',443))]),patch('packages.artifact_refresh.transport.socket.socket',return_value=Raw()):
+            with self.assertRaises(RefreshCleanupError):owner.connect()
+        self.assertTrue(owner.cleanup_uncertain)
+
 if __name__=='__main__':unittest.main()
