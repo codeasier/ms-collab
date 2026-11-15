@@ -52,3 +52,8 @@ Local durable policy/resource transactions are now tested, but the outside-scope
 items in the table still apply to HTTP, providers and distributed side effects.
 No true login, real database-backed demo or production data was used. See the
 [adapter boundary and operation contract](../SQLITE.md).
+
+`test_authority.py` covers explicit v1 migration/DDL fault rollback, closed trusted
+service and SQL gates, realm persistence, bounded epochs, legacy inactive grants
+and runtime-import exclusion for the test-only identity simulation. The fixture
+is not a supported transition implementation or last-admin/operator proof.

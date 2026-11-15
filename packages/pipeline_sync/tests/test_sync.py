@@ -7,6 +7,7 @@ import json
 import socket
 import sqlite3
 import tempfile
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import Mock, patch
 
@@ -240,7 +241,7 @@ class SyncTests(unittest.TestCase):
     def test_identity_rebinding_during_request_prevents_publish(self):
         def hook():
             with sqlite3.connect(self.path) as db:
-                db.execute("UPDATE principals SET subject='unbound' WHERE id='developer'")
+                simulate_identity(db, "UPDATE principals SET subject='unbound' WHERE id='developer'")
         self.fake.hook = hook
         with self.assertRaises(AuthenticationError):
             self.refresh()

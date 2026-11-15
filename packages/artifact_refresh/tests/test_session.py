@@ -13,6 +13,7 @@ from packages.artifact_sync import ArtifactSynchronizer,ProviderError
 from packages.artifact_sync.tests.fixtures import credential
 from packages.session_api.application import _SESSION,_CSRF
 from packages.session_api.tests.test_application import cookie_header
+from packages.workspaces.tests.identity_fixture import simulate_identity
 from fixtures import setup
 
 BASE='/api/workspaces/alpha/artifact-admin/source/bucket/'
@@ -34,6 +35,8 @@ class RefreshTests(unittest.TestCase):
         result['body']=json.loads(b''.join((app or self.app)(env,start)));return result
     def sql(self,query,args=()):
         with sqlite3.connect(self.path) as db:return db.execute(query,args).fetchall()
+    def identity(self, statement):
+        with sqlite3.connect(self.path) as db:simulate_identity(db, statement)
     def state(self):return self.sql('SELECT revision,candidate,published,published_revision FROM artifact_indexes_v1 WHERE workspace=?',('alpha',))[0]
     def leases(self):return self.sql('SELECT actor,state,result_revision FROM artifact_refresh_leases_v1 ORDER BY rowid')
     def revoke(self):self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
@@ -83,7 +86,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(self.sql('SELECT count(*) FROM artifact_index_events_v1')[0][0],0)
     def test_page_logout_expiry_rebind_module_archive_grant_policy_and_revision(self):
         mutations=(lambda t:t.login.logout(t.s.token,t.s.csrf),lambda t:setattr(t,'now',t.s.expires_at),
-            lambda t:t.sql("UPDATE principals SET subject='changed' WHERE id='admin'"),
+            lambda t:t.identity("UPDATE principals SET subject='changed' WHERE id='admin'"),
             lambda t:t.sql("UPDATE modules SET state='disabled' WHERE workspace_id='alpha' AND key='artifacts'"),
             lambda t:t.policy.set_workspace_state('admin','alpha',state='archived',expected_revision=1),
             lambda t:t.sql("UPDATE artifact_indexes_v1 SET policy=replace(policy,'\"refreshers\":[\"admin\"]','\"refreshers\":[\"second\"]') WHERE workspace='alpha'"),
@@ -98,6 +101,21 @@ class RefreshTests(unittest.TestCase):
                     before=self.state();pages.page_hook=lambda:change(self);r=self.call()
                     self.assertIn(r['status'],(401,403,404,409,412),r);self.assertEqual(self.state()[1:3],before[1:3]);self.assertEqual(self.leases()[0][1],'failed')
                 finally:self.app,self.policy,self.login,self.s,self.path,self.pages,self.now=old
+    def test_page_identity_aba_rejects_original_session_and_cleans_lease(self):
+        before=self.state()
+        subject=self.sql("SELECT subject FROM principals WHERE id='admin'")[0][0]
+        def change():
+            with sqlite3.connect(self.path) as db:
+                simulate_identity(db, "UPDATE principals SET subject='synthetic-replacement' WHERE id='admin'")
+                simulate_identity(db, "UPDATE principals SET subject=? WHERE id='admin'", (subject,))
+        self.pages.page_hook=change
+        self.assertEqual(self.call()['status'],401)
+        self.assertEqual(self.state(),before)
+        self.assertEqual(self.leases(),[('admin','failed',None)])
+        self.assertEqual(self.sql('SELECT count(*) FROM artifact_index_events_v1')[0][0],0)
+        self.assertEqual(len(self.pages.loads),1);self.assertEqual(len(self.pages.calls),1)
+        self.assertEqual(self.sql("SELECT generation FROM principals WHERE id='admin'")[0][0],3)
+
     def test_final_commit_deadline_and_session_expiry_roll_back_candidate_audit_lease(self):
         original=self.policy._persist
         def persist(db,policy,**kw):

@@ -59,3 +59,5 @@
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.
 
 - [Configured session artifact refresh](../packages/artifact_refresh/README.md)：显式可信 provider、同会话持续授权、共享并发租约、有界采集到私有候选，再完整审批与展示；仅合成 HTTPS 验证，真实云/部署另行验收。
+- [Configured service runtime](../packages/service_runtime/README.md): strict installation/configuration, cold backup/new-directory restore and fixed loopback TLS; real login remains disabled and no production deployment is asserted.
+- [Principal authority foundation](principal-authority.md)：realm/代次、显式 schema 升级及失效栅栏；身份变更服务和数据库门禁仍强制关闭，附未迁移消费者矩阵。

@@ -28,6 +28,7 @@ class SessionPolicyStore:
         if type(policy) is not SQLiteWorkspaceService or type(login) is not SQLiteLoginStore:
             raise ValueError("explicit initialized policy and login stores required")
         self.policy, self.login = policy, login
+        self.login._bind_policy(policy)
         with closing(self._connect()) as db:
             self.policy._check_schema(db)
             self._metadata(db)
@@ -56,6 +57,7 @@ class SessionPolicyStore:
                 raise AuthenticationUnavailable()
 
     def _metadata(self, db):
+        self.login._schema(db, "login")
         if (db.execute("PRAGMA login.application_id").fetchone()[0] != _APP
                 or db.execute("PRAGMA login.user_version").fetchone()[0] != _VERSION):
             raise AuthenticationUnavailable()
@@ -102,7 +104,9 @@ class SessionPolicyStore:
                             session = self.login._session(db, now, request.token, request.csrf, schema="login")
                             principal = next((p for p in policy._principals.values()
                                 if (p.issuer, p.subject) == (session.issuer, session.subject)), None)
-                            if principal is None or not principal.active:
+                            if (principal is None or not principal.active
+                                    or (principal.id, principal.generation, policy._realm) !=
+                                       (session.principal_id, session.principal_generation, session.policy_realm)):
                                 raise AuthenticationError()
                             return principal.id
 

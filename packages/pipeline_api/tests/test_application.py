@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from threading import Event, Thread
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import WSGIRequestHandler, make_server
@@ -229,7 +230,7 @@ class ApplicationTests(unittest.TestCase):
     def test_principal_rebinding_after_verify_rejected(self):
         def rebind():
             with sqlite3.connect(self.path) as connection:
-                connection.execute("UPDATE principals SET subject='rebound' WHERE id='reader'")
+                simulate_identity(connection, "UPDATE principals SET subject='rebound' WHERE id='reader'")
         self.verifier.hook = rebind
         self.error(401, "authentication_required")
 
