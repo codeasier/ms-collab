@@ -19,9 +19,9 @@ class PipelineApplication(WorkspaceApplication):
     'pipelines' capability grants access to the approved snapshot resources in
     that workspace, not to external CI credentials or arbitrary live pipelines.
     """
-    def __init__(self, *, store, providers, provider_key,
-                 clock=lambda: datetime.now(timezone.utc)):
-        super().__init__(store=store, providers=providers, provider_key=provider_key, clock=clock)
+    def __init__(self, *, store=None, providers=None, provider_key=None,
+                 clock=lambda: datetime.now(timezone.utc), session_boundary=None):
+        super().__init__(store=store, providers=providers, provider_key=provider_key, clock=clock, session_boundary=session_boundary)
         self._clock = clock
 
     def _dispatch(self, environ):

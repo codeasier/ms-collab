@@ -19,3 +19,14 @@ replay, addressed identity Join, revoked membership/old invitation denial,
 stale-revision revoke race, late inbox after disconnect with ineffective abort,
 mixed-scope rejection and pagehide/storage cleanup. It produces
 `invitations-desktop.png` and `invitations-mobile.png` beside the lifecycle images.
+
+Invitation acceptance uses one context routing dispatcher. Per-scenario rules are
+snapshotted for each request; removing/replacing a rule cannot transfer an active
+request to a second handler. All active handlers drain before routing teardown;
+errors are not ignored. Node regression tests cover single ownership and a rule
+replacement while an old request waits. CI executes three fresh invitation runs
+as a regression gate, not retries: any failed run fails the job.
+
+This addresses the overlapping page/context route lifecycle failure observed on
+main `63196b3` (run `43706014212`); application authorization checks and every
+existing invitation assertion remain unchanged. See [Playwright routing lifecycle](https://playwright.dev/docs/api/class-page#page-unroute-all).
