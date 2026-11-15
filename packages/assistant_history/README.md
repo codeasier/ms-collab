@@ -125,7 +125,7 @@ python3 -m unittest discover -s packages/assistant_history/tests -v
 
 Coverage includes owner/workspace/operator isolation, explicit audience, literal
 malicious-looking text, current permission/dependency loss and restoration, persisted scope misplacement,
-and the explicit current-value-only principal limitation,
+principal-generation ABA/legacy-fence denial,
 revision-fixed pagination, archive/restore, concurrent lifecycle CAS, schema and
 record corruption, transactional append and credential-expiry rollback, bounds,
 and a loopback WSGI HTTP read/PATCH with a test verifier. No test starts an ACP

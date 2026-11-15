@@ -147,7 +147,7 @@ notification recipient or source repository is contacted by these tests.
 Not implemented: a network adapter, provider authentication/ownership, resource-
 level source provenance/redaction, live synchronization, isolated task execution,
 submission/cancellation/retry/reproduction, scheduling/notifications, file/log
-access, independent report origin, browser UI, production login/deployment or a
-new principal epoch. These are separate reviewed prerequisites, not disabled
+access, independent report origin, browser UI, production login/deployment or executable
+identity administration. These are separate reviewed prerequisites, not disabled
 buttons or implicit promises of compatibility. Do not expose the synthetic
 verifier or turn the trusted ingress into a user-controlled HTTP endpoint.
