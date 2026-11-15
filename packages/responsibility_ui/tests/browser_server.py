@@ -1,0 +1,31 @@
+"""Isolated synthetic verifier + real configured API; never a deployable server."""
+from datetime import timedelta
+from wsgiref.simple_server import make_server,WSGIRequestHandler
+from packages.community_board.model import Snapshot,BoardItem
+from packages.community_api.tests.test_application import call
+from packages.community_api.records import fingerprint
+from packages.responsibility import normalize_paths
+from packages.responsibility_api.tests.test_application import ResponsibilityTests,SCOPE,DIFF
+from packages.responsibility_ui import ResponsibilityUI
+
+class Quiet(WSGIRequestHandler):
+    def log_message(self,*args):pass
+
+def main():
+    fixture=ResponsibilityTests();fixture.setUp()
+    try:
+        fixture.provider.observe=lambda connection,credential,observed_at:Snapshot(connection.scope,observed_at,tuple(
+            [BoardItem('issue',1,'<img src=x onerror=alert(1)> Synthetic issue','open','2026-01-01T01:00:00Z')]+
+            [BoardItem('pull',n,'Synthetic UI change '+str(n),'open','2026-01-01T01:00:00Z') for n in range(2,34)]))
+        fixture.now+=timedelta(seconds=1)
+        assert call(fixture.community,'/refresh',method='POST',token='test-admin',revision=3,body={})['status']==200
+        assert call(fixture.community,'/approve',method='POST',token='test-admin',revision=4,body={'fingerprints':[fingerprint(SCOPE,i) for i in fixture.cstate().snapshot.items if i.number!=33]})['status']==200
+        assert fixture.save()['status']==200
+        observations=[{'fingerprint':fingerprint(SCOPE,i),'paths':normalize_paths(DIFF,[[{'filename':'ui/file-'+str(i.number),'status':'modified'}]],DIFF).as_dict()} for i in fixture.cstate().snapshot.items if i.kind=='pull' and i.number not in (32,33)]
+        fixture.publish(observations)
+        with make_server('127.0.0.1',0,None,handler_class=Quiet) as server:
+            origin=f'http://127.0.0.1:{server.server_port}'
+            server.set_app(ResponsibilityUI(api=fixture.app,origin=origin));print(origin,flush=True);server.serve_forever()
+    finally:fixture.doCleanups()
+
+if __name__=='__main__':main()

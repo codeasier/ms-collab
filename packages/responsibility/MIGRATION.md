@@ -53,3 +53,7 @@ A user-facing configuration/candidate page, real scoped provider acquisition,
 explicit path-content review UX, authoritative identity mapping and production
 acceptance are still required. No new UI is claimed in this PR. Existing browser
 workflows run as regression gates, not evidence of a responsibility UI.
+
+A subsequent [authorized UI slice](../responsibility_ui/README.md) adds structured
+editing and observed-candidate views. It does not turn this foundation into live
+path acquisition, authoritative Issue assignment or a review/merge workflow.
