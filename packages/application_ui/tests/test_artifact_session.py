@@ -41,7 +41,7 @@ class ArtifactSessionTests(unittest.TestCase):
         for path in ('/artifacts/','/artifact-admin/'):
             r=self.read(path,cookies='');self.assertEqual(r['status'],200)
             self.assertNotIn(b'id="credential"',r['raw']);self.assertNotIn(b'type="password"',r['raw']);self.assertNotIn(b'/entry.mjs',r['raw'])
-        self.assertEqual(self.read('/app/bootstrap')['body']['data']['ui_modules'],['workspaces','responsibility','pipelines','community','artifacts','artifact-admin'])
+        self.assertEqual(self.read('/app/bootstrap')['body']['data']['ui_modules'],['workspaces','responsibility','pipelines','community','assistant','artifacts','artifact-admin'])
         for path in ('/artifacts/entry.mjs','/artifact-admin/entry.mjs'):
             self.assertEqual(self.read(path)['status'],404)
         with tempfile.TemporaryDirectory() as d:

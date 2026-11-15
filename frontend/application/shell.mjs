@@ -1,3 +1,5 @@
+import {mountAssistantPage} from '/assistant/history.mjs'
+import {createAssistantSessionClient} from '/assistant/client.mjs'
 import {mountCommunityPage} from '../community/board.mjs'
 import {createCommunitySessionClient} from './community-client.mjs'
 import {createSessionClient,createResponsibilitySessionClient,createPipelineSessionClient,validateBootstrap,authorizationTarget} from './client.mjs'
@@ -63,12 +65,17 @@ async function start(){
   el('app-login-note').textContent=bootstrap.login_configured?'Sign-in uses only the explicitly configured identity provider. No provider protocol or production readiness is implied.':'Sign-in is unavailable: no reviewed bound-code identity provider is configured. Existing valid sessions may be rechecked; no default identity is supplied.'
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
   const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
+  const assistant=el('app-assistant-link');if(assistant)assistant.hidden=!bootstrap.ui_modules.includes('assistant')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
   for(const module of ['artifacts','artifact-admin']){const link=el('app-'+module+'-link');if(link)link.hidden=!bootstrap.ui_modules.includes(module)}
   if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
   else if(document.body.dataset.page==='responsibility'){
    if(!bootstrap.ui_modules.includes('responsibility'))throw new Error('Responsibility is not configured on this service.')
    page=mountResponsibilityPage({client:createResponsibilitySessionClient(session),sessionMode:true,onSignOut:signOut})
+  }
+  else if(document.body.dataset.page==='assistant'){
+   if(!bootstrap.ui_modules.includes('assistant'))throw new Error('Saved history is not configured on this service.')
+   page=mountAssistantPage({client:createAssistantSessionClient(session)})
   }
   else if(document.body.dataset.page==='community'){
    if(!bootstrap.ui_modules.includes('community'))throw new Error('Community is not configured on this service.')

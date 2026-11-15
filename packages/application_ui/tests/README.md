@@ -18,3 +18,5 @@ Return to [composition](../README.md).
 The explicit `pipelines` browser fixture mode provisions only synthetic stored
 runs for cookie-UI acceptance; it is not provider ingestion or production setup.
 The standalone pipeline workflow separately retains provider-to-UI coverage.
+
+- `test_assistant.py` and opt-in `assistant_browser_server.py`: current-owner cookie/CSRF/CAS, fixed-revision history and lifecycle cleanup, without real ACP or execution.

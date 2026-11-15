@@ -145,3 +145,13 @@ exercises synthetic HTTPS and writes only three synthetic screenshots.
   double submission, ineffective abort and late writes, pagehide/restoration,
   computed text contrast and five desktop/mobile screenshots. These are not live
   OBS, real identity-provider, deployment or download acceptance evidence.
+
+## Saved assistant history
+
+The optional `/assistant/` page is a current-owner reader over the already mounted
+assistant history API, with revision-fixed event pages and explicit reversible
+archive/restore confirmation. It shares only the configured cookie session and
+fresh CSRF, not a token or actor override. The existing ownership, dependency
+fences and revocation semantics are unchanged. It does not enable ACP transport,
+agent execution, prompts, MCP, resume, cancellation, ingestion or export.
+See the [UI contract and synthetic acceptance](../../frontend/assistant/README.md).

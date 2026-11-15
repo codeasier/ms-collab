@@ -28,3 +28,5 @@ Return to [frontend](../README.md).
   detail screenshots. No live provider compatibility or production deployment.
 - Run `node frontend/application/tests/pipeline-browser.cjs` with the locked
   browser tooling, via [CI](../../../.github/workflows/pipeline-cookie-ui.yml).
+
+- `assistant-browser.cjs`: synthetic HTTPS saved-owner history, 105 events, archive/restore and interrupted lifecycle coverage; four screenshots, no execution.
