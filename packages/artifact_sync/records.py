@@ -1,7 +1,7 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
 """Versioned index and publication records in the authorization database."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 import json
 import re
@@ -9,6 +9,7 @@ import re
 from packages.artifacts import Artifact, Scope, Snapshot
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
 from packages.workspace_api.application import _object
+from packages.workspaces.authority import capture_authority, validate_authority, authority_current, principal_pin
 from .provider import Connection, MAX_OBJECTS, object_key
 
 _TABLE = 'artifact_indexes_v1'
@@ -27,6 +28,8 @@ _EVENT_CREATE = f'''CREATE TABLE {_EVENTS} (
  digest TEXT NOT NULL, FOREIGN KEY(workspace,connection,bucket)
  REFERENCES {_TABLE}(workspace,connection,bucket)) STRICT'''
 _MAX_BYTES = 1048576
+MAX_REVISION = 9007199254740991
+PUBLICATION_RESERVE = 16384
 
 
 def dump(value):
@@ -82,6 +85,103 @@ def decode_policy(raw, scope):
     if result.connection.scope != scope or policy_text(result) != raw:
         raise ValueError('invalid policy')
     return result
+
+
+def recipients(config):
+    return set(config.readers + config.refreshers + config.approvers)
+
+
+def bound_policy_text(config, authority, grant_revision):
+    validate_authority(authority, recipients(config))
+    if type(grant_revision) is not int or not 1 <= grant_revision <= MAX_REVISION:
+        raise ValueError('invalid grant revision')
+    raw = dump({'schema':2, 'policy':_json(policy_text(config)),
+                'authority':authority, 'grant_revision':grant_revision})
+    if len(raw) > _MAX_BYTES:
+        raise ValueError('policy too large')
+    return raw
+
+
+def _bound_policy(raw, scope, *, legacy=False):
+    value = _json(raw)
+    if legacy and type(value) is dict and value.get('schema') == 1:
+        return decode_policy(raw, scope), None, 0
+    if (type(value) is not dict or set(value) != {'schema','policy','authority','grant_revision'}
+            or type(value['schema']) is not int or value['schema'] != 2):
+        raise ValueError('unbound index authority')
+    config = decode_policy(dump(value['policy']), scope)
+    if bound_policy_text(config,value['authority'],value['grant_revision']) != raw:
+        raise ValueError('invalid bound policy')
+    return config,value['authority'],value['grant_revision']
+
+
+def flow_pin(policy, actor, scope):
+    return (principal_pin(policy,actor),
+            policy._memberships[(scope.workspace_id,actor)].revision,
+            policy._workspaces[scope.workspace_id].revision,
+            policy._modules[(scope.workspace_id,'artifacts')].revision)
+
+
+def _proof(value):
+    if (type(value) is not dict or set(value) != {'actor','authority','membership_revision','policy_digest','snapshot_digest'}
+            or type(value['actor']) is not str
+            or type(value['membership_revision']) is not int or not 1 <= value['membership_revision'] <= MAX_REVISION
+            or any(type(value[k]) is not str or not re.fullmatch(r'[0-9a-f]{64}',value[k]) for k in ('policy_digest','snapshot_digest'))):
+        raise ValueError('invalid publication proof')
+    validate_authority(value['authority'],(value['actor'],))
+
+
+def publication_text(snapshot, provenance):
+    _proof(provenance)
+    if provenance['snapshot_digest'] != digest(snapshot):
+        raise ValueError('misbound publication proof')
+    raw = dump({'schema':2,'snapshot':_json(snapshot),'provenance':provenance})
+    if len(raw) > _MAX_BYTES:
+        raise ValueError('publication too large')
+    return raw
+
+
+def _publication(raw, config, *, legacy=False):
+    if raw is None:
+        return None,None
+    value = _json(raw)
+    if legacy:
+        # A recognizable v2 publication beside a plain v1 config is mixed data,
+        # not a known legacy record whose grant counter may start at one.
+        if type(value) is not dict or type(value.get('schema')) is not int or value['schema'] != 1:
+            raise ValueError('mixed publication authority')
+        decode_snapshot(raw,config)
+        return raw,None
+    if (type(value) is not dict or set(value) != {'schema','snapshot','provenance'}
+            or type(value['schema']) is not int or value['schema'] != 2):
+        raise ValueError('unbound publication')
+    snapshot = dump(value['snapshot'])
+    decode_snapshot(snapshot,config)
+    if publication_text(snapshot,value['provenance']) != raw:
+        raise ValueError('invalid bound publication')
+    return snapshot,value['provenance']
+
+
+def capture_publication(policy, actor, record, candidate):
+    member = policy._admin(actor,record.policy.connection.scope.workspace_id)
+    if actor not in record.policy.approvers or not authority_current(policy,actor,record.authority):
+        raise PolicyError(404,'not_found')
+    return {'actor':actor,'authority':capture_authority(policy,(actor,)),
+            'membership_revision':member.revision,'policy_digest':digest(record.policy_raw),
+            'snapshot_digest':digest(candidate)}
+
+
+def publication_current(policy, record):
+    if record.published_raw is None:
+        return True
+    proof = record.provenance
+    actor = proof['actor']
+    member = policy._memberships.get((record.policy.connection.scope.workspace_id,actor))
+    return (actor in record.policy.approvers and authority_current(policy,actor,record.authority)
+            and authority_current(policy,actor,proof['authority'])
+            and member is not None and member.state == 'active' and member.role == 'admin'
+            and member.revision == proof['membership_revision']
+            and proof['policy_digest'] == digest(record.policy_raw))
 
 
 def snapshot_text(snapshot):
@@ -147,10 +247,12 @@ def initialize_indexes(store, policies):
             if ((scope.workspace_id, 'artifacts') not in policy._modules
                     or any(v not in policy._principals for v in p.readers + p.refreshers + p.approvers)):
                 raise ValueError('unprovisioned policy reference')
-            raw = policy_text(p)
+            authority = capture_authority(policy,recipients(p))
+            raw = bound_policy_text(p,authority,1)
             existing = connection.execute(f'SELECT policy FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?', scope_key(scope)).fetchone()
             if existing is not None:
-                if existing[0] != raw:
+                current, stored, _ = _bound_policy(existing[0],scope)
+                if current != p or stored != authority:
                     raise ValueError('existing policy cannot be replaced')
             else:
                 connection.execute(f'INSERT INTO {_TABLE} VALUES (?,?,?,1,?,NULL,NULL,NULL)', (*scope_key(scope), raw))
@@ -163,23 +265,33 @@ class Record:
     revision: int
     policy_raw: str
     candidate: str | None
-    published: str | None
+    published_raw: str | None
     published_revision: int | None
+    authority: dict | None
+    grant_revision: int
+
+    @property
+    def published(self):
+        return _publication(self.published_raw,self.policy.connection)[0]
+
+    @property
+    def provenance(self):
+        return _publication(self.published_raw,self.policy.connection)[1]
 
 
-def load(connection, scope):
+def load(connection, scope, *, allow_legacy=False):
     check_schema(connection)
     row = connection.execute(f'SELECT revision,policy,candidate,published,published_revision FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?', scope_key(scope)).fetchone()
     if row is None:
         raise PolicyError(404, 'not_found')
     try:
         revision, raw, candidate, published, published_revision = row
-        if type(revision) is not int or not 1 <= revision <= 9007199254740991:
+        if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
             raise ValueError()
-        policy = decode_policy(raw, scope)
+        policy,authority,grant_revision = _bound_policy(raw,scope,legacy=allow_legacy)
         if (published is None) != (published_revision is None) or (published_revision is not None and (type(published_revision) is not int or not 1 <= published_revision <= revision)):
             raise ValueError()
-        return Record(policy, revision, raw, candidate, published, published_revision)
+        return Record(policy,revision,raw,candidate,published,published_revision,authority,grant_revision)
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
         raise StorageError('invalid_artifact_index') from None
 
@@ -190,7 +302,7 @@ def authorized(policy, actor, connection, scope, action):
         policy._admin(actor, scope.workspace_id)
     record = load(connection, scope)
     allowed = record.policy.readers if action == 'read' else record.policy.refreshers if action == 'refresh' else record.policy.approvers
-    if actor not in allowed:
+    if actor not in allowed or not authority_current(policy,actor,record.authority):
         raise PolicyError(404, 'not_found')
     try:
         # Do not parse private candidate metadata for readers or denied actors.
@@ -200,17 +312,61 @@ def authorized(policy, actor, connection, scope, action):
                 decode_snapshot(raw, record.policy.connection)
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
         raise StorageError('invalid_artifact_index') from None
+    if action == 'read' and not publication_current(policy,record):
+        return replace(record,published_raw=None,published_revision=None)
     return record
 
 
-def save(connection, actor, scope, record, candidate, published, published_revision, action, value_digest):
+def save(connection, actor, scope, record, candidate, published, published_revision, action, value_digest, *, provenance=None):
     revision = record.revision + 1
-    if revision > 9007199254740991:
-        raise StorageError('invalid_artifact_index')
+    if revision > MAX_REVISION:
+        raise PolicyError(409,'index_revision_exhausted')
+    try:
+        if action == 'approve':
+            if published is None:
+                raise ValueError('approval requires publication')
+            persisted = publication_text(published,provenance)
+        else:
+            if provenance is not None or published != record.published or published_revision != record.published_revision:
+                raise ValueError('refresh cannot replace publication')
+            persisted = record.published_raw
+    except (ValueError, TypeError, KeyError, RecursionError):
+        raise PolicyError(409,'invalid_publication') from None
     changed = connection.execute(f'UPDATE {_TABLE} SET revision=?,candidate=?,published=?,published_revision=? WHERE workspace=? AND connection=? AND bucket=? AND revision=? AND policy=?',
-                                 (revision, candidate, published, published_revision, *scope_key(scope), record.revision, record.policy_raw)).rowcount
+                                 (revision, candidate, persisted, published_revision, *scope_key(scope), record.revision, record.policy_raw)).rowcount
     if changed != 1:
         raise PolicyError(412, 'stale_revision')
     connection.execute(f'INSERT INTO {_EVENTS}(actor,workspace,connection,bucket,action,revision,digest) VALUES (?,?,?,?,?,?,?)',
                        (actor, *scope_key(scope), action, revision, value_digest))
     return revision
+
+
+def regrant_index(store, config, *, actor_id, expected_revision, expected_grant_revision):
+    """Explicit destructive authority replacement; never called by initializer."""
+    if type(store) is not SQLiteWorkspaceService or type(config) is not IndexPolicy:
+        raise ValueError('configured index regrant required')
+    scope = config.connection.scope
+    def operation(policy, connection):
+        policy._admin(actor_id,scope.workspace_id)
+        record = load(connection,scope,allow_legacy=True)
+        policy._match(expected_revision,record.revision)
+        if type(expected_grant_revision) is not int or expected_grant_revision != record.grant_revision:
+            raise PolicyError(412,'stale_grant_revision')
+        try:
+            if record.candidate is not None:
+                decode_snapshot(record.candidate,record.policy.connection)
+            _publication(record.published_raw,record.policy.connection,legacy=record.authority is None)
+            authority = capture_authority(policy,recipients(config))
+        except (ValueError,TypeError,KeyError,AttributeError,RecursionError):
+            raise PolicyError(400,'invalid_index_regrant') from None
+        if record.revision >= MAX_REVISION or record.grant_revision >= MAX_REVISION:
+            raise PolicyError(409,'index_revision_exhausted')
+        raw = bound_policy_text(config,authority,record.grant_revision+1)
+        changed = connection.execute(f'UPDATE {_TABLE} SET policy=?,revision=revision+1,candidate=NULL,published=NULL,published_revision=NULL WHERE workspace=? AND connection=? AND bucket=? AND revision=? AND policy=?',
+            (raw,*scope_key(scope),record.revision,record.policy_raw)).rowcount
+        if changed != 1:
+            raise PolicyError(412,'stale_revision')
+        policy._changed(actor_id,scope.workspace_id,'resource.update',
+            'artifact-grant:'+digest(dump(scope_key(scope))),record.revision+1)
+        return load(connection,scope)
+    return store._transaction(operation,write=True,with_connection=True)

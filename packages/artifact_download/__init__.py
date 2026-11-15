@@ -2,8 +2,8 @@
 from .application import ArtifactDownloadAPI
 from .session import ArtifactSessionDownloadAPI, ArtifactDownloadConfiguration
 from .provider import OBSObjectTransport
-from .records import ContentBinding, DownloadPolicy, initialize_downloads
+from .records import ContentBinding, DownloadPolicy, initialize_downloads, regrant_downloads
 from .service import ArtifactDownloader, DownloadInterrupted
 
 __all__ = ['ArtifactDownloadAPI', 'ArtifactSessionDownloadAPI', 'ArtifactDownloadConfiguration', 'OBSObjectTransport', 'ContentBinding', 'DownloadPolicy',
-           'initialize_downloads', 'ArtifactDownloader', 'DownloadInterrupted']
+           'initialize_downloads', 'regrant_downloads', 'ArtifactDownloader', 'DownloadInterrupted']

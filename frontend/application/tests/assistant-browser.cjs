@@ -1,3 +1,4 @@
+const {stopSyntheticFixture}=require('./fixture-process.cjs')
 // Real same-origin session policy, synthetic saved history and local HTTPS only.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
@@ -59,6 +60,6 @@ async function main(){
   await router.drain();await context.unrouteAll({behavior:'wait'});await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#history-session').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
   console.log('Assistant saved-history acceptance passed: owner-only current cookies, 105 fixed-revision literal events, user-visible report labeling, readonly owner, explicit CAS archive/restore, stale-read/accepted-write cleanup, revocation and four responsive screenshots. No agent execution.')
- }finally{await browser?.close();if(child&&child.exitCode===null){child.kill();await within(new Promise(resolve=>child.once('exit',resolve)))}fs.rmSync(temp,{recursive:true,force:true})}
+ }finally{await browser?.close();await stopSyntheticFixture(child);fs.rmSync(temp,{recursive:true,force:true})}
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

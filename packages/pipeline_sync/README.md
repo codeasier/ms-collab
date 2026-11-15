@@ -42,10 +42,15 @@ safe to share publicly; a host needs an explicit data publication policy.
 1. Verify the user's opaque credential through the configured identity verifier.
 2. In one SQLite snapshot, check current identity binding, active membership,
    `pipelines.write`, the read-only connection module and exact stored binding,
-   and the expected target snapshot revision. Viewer/disabled/archived access
+   and the expected target snapshot revision. Capture this flow's exact policy
+   realm, local principal ID, issuer, subject and generation, plus this workspace,
+   caller membership and both module revisions. Viewer/disabled/archived access
    fails before any upstream request.
 3. Immediately before **each** GET, recheck those same current conditions and the
-   pinned binding revision. Network I/O occurs outside the database lock. A
+   pinned identity, scoped authorization revisions and binding revision. A changed
+   realm or principal pin fails authentication; changed scoped policy revisions
+   fail with a value-free `refresh_changed`, even when authority was revoked then
+   restored between checks. Network I/O occurs outside the database lock. A
    request that passed this local check may still be sent or finish after a
    revocation commits, including during DNS/TLS setup before any HTTP bytes were
    sent. The next check and final publication revalidate authority; already sent
@@ -53,9 +58,25 @@ safe to share publicly; a host needs an explicit data publication policy.
 4. List a bounded current subset, then read each exact run. Require explicit
    matching pipeline/run IDs; missing legacy IDs fail rather than guessing.
 5. In `BEGIN IMMEDIATE`, recheck identity/assertion validity, membership, modules,
-   binding and snapshot revision, then publish the whole validated result with
+   all flow pins, binding and snapshot revision, then publish the whole validated result with
    one audit event. A race, revocation, expiry or failed/malformed read leaves the
    previous snapshot intact. Equal/older observations for a retained run fail.
+
+The pin is local to one `refresh` call, captured only after its first successful
+complete authorization. It is not a bearer credential, persistent grant or cache.
+A new call must verify the credential and current policy again; it cannot inherit
+an old flow's permission. Unrelated principals/memberships do not cancel a flow:
+there is no global policy-epoch equality test. The scoped revisions intentionally
+invalidate even harmless edits to those same records rather than guessing their
+intent. The final writer reservation fences local concurrent policy changes, CAS,
+resource update and audit together, with assertion expiry still checked before
+commit. Provider dispatch and database authorization are **not** one transaction.
+
+This closes this consumer's in-flight identity ABA gap, not every grant in the
+platform. [Identity administration](../../docs/principal-authority.md) remains
+unconditionally closed in service and SQL. Existing workspace memberships still
+need the platform-wide transition/regrant safeguards before identity mutations
+can be implemented. Whole-policy backup rollback is not solved by flow pins.
 
 This replaces the **current observed subset**, not full execution history.
 Upstream list/detail reads are not one transactional snapshot. A missing run is
@@ -109,7 +130,9 @@ python3 -m unittest discover -s packages/pipeline_api/tests -v
 
 Tests use fabricated responses, intercepted sockets and temporary SQLite only.
 They exercise credential/connection scope, DNS pinning, TLS hostname, exact GETs,
-redaction, projection, revocation/expiry during acquisition, CAS races and serving
+redaction, projection, revocation/expiry during acquisition, identity and scoped-policy ABA, cross-realm
+replacement, multi-run traversal, lock-wait revalidation, atomic CAS/audit rollback
+and serving
 published data through the existing authorized API. They do not authenticate a
 real adapter. A reviewed real identity verifier, approved connection/token,
 upstream schema acceptance, visibility policy, whole-job budget and host UI/route

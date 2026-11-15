@@ -88,9 +88,10 @@ class ArtifactSessionTests(unittest.TestCase):
         body=self.approval();stage(self.tmp.name)
         self.assertEqual(self.write(BASE+'approve',body=body)['status'],412)
         self.assertNotIn('private-candidate',str(self.query()['body']))
-        with sqlite3.connect(Path(self.tmp.name)/'policy.sqlite') as db:
-            old=decode_policy(db.execute("SELECT policy FROM artifact_indexes_v1 WHERE workspace='alpha'").fetchone()[0],Scope('alpha','source','bucket'))
-            db.execute("UPDATE artifact_indexes_v1 SET policy=? WHERE workspace='alpha'",(policy_text(replace(old,readers=('admin',))),))
+        from packages.artifact_sync.records import load
+        from packages.artifact_sync.tests.authority_fixtures import configure_index_fixture
+        old=self.policy._transaction(lambda p,c:load(c,Scope('alpha','source','bucket')).policy,write=False,with_connection=True)
+        configure_index_fixture(self.policy,replace(old,readers=('admin',)),actor='admin')
         self.assertEqual(self.write(BASE+'approve',body=body,revision='"3"')['status'],412)
 
     def test_cross_scope_and_membership_revoke_deny_old_cookie(self):

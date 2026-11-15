@@ -11,7 +11,7 @@ from packages.identity import Credential
 from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import PolicyError
 from .provider import collect, ProviderError
-from .records import authorized, decode_snapshot, digest, save, snapshot_text
+from .records import authorized, decode_snapshot, digest, save, snapshot_text, flow_pin, capture_publication, MAX_REVISION, PUBLICATION_RESERVE, _MAX_BYTES
 
 
 class ArtifactSynchronizer(WorkspaceApplication):
@@ -38,15 +38,17 @@ class ArtifactSynchronizer(WorkspaceApplication):
         def inspect(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'refresh')
             policy._match(expected_revision, record.revision)
+            if record.revision >= MAX_REVISION:
+                raise PolicyError(409,'index_revision_exhausted')
             if lifecycle is not None:
                 lifecycle.guard(policy, actor, connection)
-            return actor, record
-        actor, original = self._authenticated_transaction(assertion, inspect, with_connection=True)
+            return actor, flow_pin(policy,actor,scope), record
+        actor, original_pin, original = self._authenticated_transaction(assertion, inspect, with_connection=True)
 
         def current(policy, current_actor, connection):
             record = authorized(policy, current_actor, connection, scope, 'refresh')
             policy._match(expected_revision, record.revision)
-            if actor != current_actor or record.policy_raw != original.policy_raw:
+            if flow_pin(policy,current_actor,scope) != original_pin or record.policy_raw != original.policy_raw:
                 raise PolicyError(412, 'stale_revision')
             if lifecycle is not None:
                 lifecycle.guard(policy, current_actor, connection)
@@ -61,7 +63,7 @@ class ArtifactSynchronizer(WorkspaceApplication):
         try:
             observation = collect(original.policy.connection, credential, before_read=before_read,
                 clock=self._clock, transport=self._transport if lifecycle is None else lifecycle.transport,
-                after_read=None if lifecycle is None else before_read)
+                after_read=before_read)
         except ProviderError:
             if lifecycle is not None:
                 lifecycle.remaining()
@@ -81,6 +83,8 @@ class ArtifactSynchronizer(WorkspaceApplication):
         try:
             candidate = snapshot_text(Snapshot(scope, observation.observed_at,
                 tuple(rows[k] for k in sorted(rows)), original.policy.connection.offset_minutes))
+            if len(candidate) > _MAX_BYTES - PUBLICATION_RESERVE:
+                raise ValueError('candidate lacks publication budget')
         except ValueError:
             raise ProviderError('index_limit_or_invalid_result') from None
         def publish(policy, current_actor, connection):
@@ -134,6 +138,7 @@ class ArtifactSynchronizer(WorkspaceApplication):
             if not hmac.compare_digest(candidate_digest, digest(record.candidate)):
                 raise PolicyError(412, 'candidate_changed')
             revision = save(connection, actor, scope, record, None, record.candidate,
-                            record.revision + 1, 'approve', candidate_digest)
+                            record.revision + 1, 'approve', candidate_digest,
+                            provenance=capture_publication(policy,actor,record,record.candidate))
             return {'revision': revision, 'publication': 'approved'}
         return self._authenticated_transaction(assertion, operation, write=True, with_connection=True)
