@@ -1,5 +1,6 @@
 // Synthetic HTTPS + real unified cookies only. No real provider, task or runner.
 const {chromium}=require('playwright');
+const {stopSyntheticFixture}=require('../../application/tests/fixture-process.cjs');
 const {spawn,execFileSync}=require('node:child_process');
 const {mkdtempSync,rmSync,mkdirSync}=require('node:fs');
 const {tmpdir}=require('node:os');const {join}=require('node:path');
@@ -99,7 +100,7 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     throw error;
   } finally {
     if(browser)await browser.close();
-    if(server&&server.exitCode===null){server.kill('SIGTERM');await new Promise(resolve=>{server.once('exit',resolve);setTimeout(()=>{if(server.exitCode===null)server.kill('SIGKILL');resolve();},3000);});}
+    await stopSyntheticFixture(server);
     rmSync(temp,{recursive:true,force:true});
   }
 })().catch(error=>{console.error(error);process.exitCode=1;});

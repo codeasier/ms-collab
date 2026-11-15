@@ -1,6 +1,7 @@
 // Synthetic HTTPS and actual unified cookie session. No live provider or runner.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright'),{createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
+const {stopSyntheticFixture}=require('./fixture-process.cjs')
 async function within(p){let timer;try{return await Promise.race([p,new Promise((_,r)=>timer=setTimeout(()=>r(new Error('synthetic GUI barrier timeout')),15000))])}finally{clearTimeout(timer)}}
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'gui-entry-'));let server,browser
@@ -54,6 +55,6 @@ async function main(){
   await router.drain();await context.unrouteAll({behavior:'wait'});assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[])
   assert.ok(requests.every(r=>[startup.origin,new URL(startup.provider).origin].includes(new URL(r.url).origin)));assert.ok(!requests.some(r=>r.url.includes('/api/')&&r.method!=='GET'))
   console.log('GUI entry PASS: same-session navigation, fixed snapshots, unknown evidence, read-only scope, filter clear, ignored abort, explicit logout, pagehide, current policy/session revocation, four responsive screenshots. Synthetic HTTPS only.')
- }finally{await browser?.close();if(server&&server.exitCode===null){server.kill();await within(new Promise(r=>server.once('exit',r)))}fs.rmSync(temp,{recursive:true,force:true})}
+ }finally{await browser?.close();await stopSyntheticFixture(server);fs.rmSync(temp,{recursive:true,force:true})}
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

@@ -23,10 +23,30 @@ class GuiFixtureStartupTests(unittest.TestCase):
                 '-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],check=True,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             for module,opt in (('packages.gui_smoke_ui.tests.browser_server','MS_COLLAB_SYNTHETIC_GUI_UI_TEST'),('packages.application_ui.tests.gui_browser_server','MS_COLLAB_SYNTHETIC_GUI_ENTRY_TEST')):
-                self.check_fixture(module,opt,cert,key)
+                for active in (False,True):
+                    with self.subTest(module=module,active=active):self.check_fixture(module,opt,cert,key,active)
 
-    def check_fixture(self,module,opt,cert,key):
-        child=subprocess.Popen([sys.executable,'-m',module,str(cert),str(key)],
+    def check_fixture(self,module,opt,cert,key,active):
+        args=[sys.executable,'-m',module,str(cert),str(key)]
+        if active:
+            # Inject SIGTERM inside the real fixture's WSGI request, not a mock
+            # server lifecycle. Old SystemExit handlers were swallowed here.
+            target='packages.gui_smoke_ui.GuiSmokeUI' if 'gui_smoke_ui.' in module else 'packages.application_ui.ApplicationUI'
+            package,kind=target.rsplit('.',1)
+            probe=f"""import os,signal,runpy,sys
+from {package} import {kind}
+original={kind}.__call__
+def stopped(self,env,start):
+    if env.get('PATH_INFO')=='/synthetic-stop':
+        os.kill(os.getpid(),signal.SIGTERM)
+        start('204 No Content',[('Content-Length','0')]);return [b'']
+    return original(self,env,start)
+{kind}.__call__=stopped
+sys.argv=[{module!r},{str(cert)!r},{str(key)!r}]
+runpy.run_module({module!r},run_name='__main__')
+"""
+            args=[sys.executable,'-c',probe]
+        child=subprocess.Popen(args,
             cwd=Path(__file__).resolve().parents[3],env={**os.environ,opt:'1'},
             stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
@@ -47,7 +67,11 @@ class GuiFixtureStartupTests(unittest.TestCase):
                 with opener.open(request,timeout=5) as response:
                     self.assertEqual(response.status,200)
                     self.assertEqual(response.read(65536),b'')
-            child.terminate();out,error=child.communicate(timeout=5)
+            if active:
+                with opener.open(startup['origin']+'/synthetic-stop',timeout=5) as response:
+                    self.assertEqual(response.status,204);self.assertEqual(response.read(),b'')
+            else:child.terminate()
+            out,error=child.communicate(timeout=5)
             self.assertEqual(child.returncode,0,error[-8192:])
             self.assertEqual(out,'');self.assertEqual(error,'')
         finally:

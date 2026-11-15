@@ -2,7 +2,6 @@
 from datetime import datetime, timezone
 import json
 import os
-import signal
 import ssl
 import sys
 import tempfile
@@ -53,9 +52,7 @@ def main():
         server.set_app(fixture)
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(sys.argv[1],sys.argv[2])
         server.socket=context.wrap_socket(server.socket,server_side=True)
-        signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(SystemExit()))
-        print(json.dumps({'origin':origin,'provider':provider}),flush=True)
-        try: server.serve_forever()
-        finally: server.server_close()
+        from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
+        serve_synthetic(server,on_ready=lambda:print(json.dumps({'origin':origin,'provider':provider}),flush=True))
 
 if __name__=='__main__':main()
