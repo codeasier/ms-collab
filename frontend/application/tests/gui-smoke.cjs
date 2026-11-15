@@ -26,6 +26,10 @@ async function main(){
   await page.getByRole('button',{name:'Inspect task task-1',exact:true}).click();await page.locator('#detail h3').waitFor();assert.ok((await text('detail')).includes('a'.repeat(40)));assert.ok((await text('detail')).includes('b'.repeat(40)));await page.screenshot({path:path.join(folder,'desktop-detail.png'),fullPage:true})
   await page.locator('#back').click();await page.locator('#next').click();await page.waitForFunction(()=>document.querySelector('#page-label').textContent==='Page 2 of 7')
   await control('/synthetic-republish');await page.locator('#next').click();await notice('snapshot changed');assert.equal(await page.locator('.task').count(),0)
+  // Explicit trusted regrant clears content without resetting its public counter.
+  await control('/synthetic-regrant');await load();assert.match(await text('snapshot-label'),/No published snapshot/);assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('.stat').count(),0);
+  assert.equal(await page.evaluate(async()=>{const base='/api/workspaces/alpha/gui-smoke/panel/repo';const list=await (await fetch(base+'/tasks')).json();const summary=await (await fetch(base+'/summary?revision=3')).json();return !list.data.available&&list.data.source.revision===3&&summary.data.source.revision===3&&summary.data.total===0&&(await fetch(base+'/tasks?offset=5&revision=2')).status===412;}),true);
+  await control('/synthetic-republish');
   await load();await page.locator('#status-filter').selectOption('pending');assert.equal(await page.locator('.task').count(),0);await page.getByRole('button',{name:'Apply filters'}).click();await page.waitForFunction(()=>document.querySelectorAll('.task').length===6)
   await page.getByRole('button',{name:'Inspect task task-3',exact:true}).click();await page.locator('#detail h3').waitFor();assert.match(await text('detail'),/Missing counts are not zero/)
   await load('empty');assert.match(await text('empty'),/No published tasks/);assert.equal(await page.locator('.stat').count(),6)

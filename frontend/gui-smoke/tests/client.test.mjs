@@ -261,3 +261,18 @@ test('transport never supplies a Client receiver to the native fetch function',a
   const client=new Client(async function(path){assert.equal(this,undefined);assert.equal(path,'/auth/session');return response({principal_id:'alice'});});
   assert.equal(await client.session(),'alice');
 });
+
+test('cleared scopes retain a nonzero counter without fabricating an observation',async()=>{
+  const rows=list(scope,options,0,7),counts=summary(scope,0,7);
+  for(const value of [rows,counts]){value.available=false;value.source.observed_at=null;}
+  assert.equal(validateList(rows,scope,options).source.revision,7);
+  assert.equal(validateSummary(counts,scope,7).source.revision,7);
+  const {view}=controller({list:async()=>rows,summary:async()=>counts});
+  assert.equal(await view.load(scope),true);assert.equal(view.view.list.available,false);
+  const bad=clone(rows);bad.source.observed_at='2026-01-02T12:00:00Z';assert.throws(()=>validateList(bad,scope,options),ViewError);
+  const populated=clone(rows);populated.total=1;assert.throws(()=>validateList(populated,scope,options),ViewError);
+  assert.throws(()=>validateSummary(counts,scope,6),ViewError);
+  const mismatch=clone(counts);mismatch.source.revision=8;
+  const wrong=controller({list:async()=>rows,summary:async()=>mismatch}).view;
+  assert.equal(await wrong.load(scope),false);assert.equal(wrong.view,null);
+});

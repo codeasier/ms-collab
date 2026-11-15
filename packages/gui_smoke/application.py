@@ -33,8 +33,7 @@ class GuiSmokeApplication(WorkspaceApplication):
         if configured is None:
             raise PolicyError(404, "not_found")
         def read(policy, actor, connection):
-            record = read_snapshot(policy, connection, actor, configured, _now(self._clock))
-            revision = record["revision"] if record else 0
+            record,revision = read_snapshot(policy, connection, actor, configured, _now(self._clock))
             if options.get("offset", 0) and "revision" not in options:
                 raise PolicyError(428, "precondition_required")
             if "revision" in options and options["revision"] != revision:

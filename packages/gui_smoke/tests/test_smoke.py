@@ -15,7 +15,7 @@ from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 from packages.gui_smoke import (GuiSmokeApplication, SmokeScope, SmokeConnection,
-                                initialize, project_task, publish_snapshot, reported_state)
+                                initialize, initialize_connections, migrate_v1, regrant_connection, project_task, publish_snapshot, reported_state)
 from packages.identity import AuthenticationError, Provider, VerifiedIdentity
 from packages.workspaces import (Membership, ModuleInstance, PolicyError, Principal,
                                  SQLiteWorkspaceService, StorageError, Workspace)
@@ -76,6 +76,7 @@ class SmokeTests(unittest.TestCase):
         initialize(self.store)
         self.scope = SmokeScope("alpha", "panel", "repo")
         self.configured = SmokeConnection(self.scope, frozenset({"alice", "bob"}), frozenset({"writer"}))
+        initialize_connections(self.store,(self.configured,))
         self.now = NOW
         self.app = self.application((self.configured,))
         self.publish()
@@ -87,7 +88,7 @@ class SmokeTests(unittest.TestCase):
 
     def publish(self, **overrides):
         args = dict(actor="writer", tasks=(task(),), observed_at=(NOW - timedelta(minutes=1)).isoformat(),
-                    expected_revision=0, clock=lambda: NOW)
+                    expected_revision=0, expected_grant_revision=1, clock=lambda: NOW)
         args.update(overrides)
         return publish_snapshot(self.store, self.configured, **args)
 
@@ -95,19 +96,23 @@ class SmokeTests(unittest.TestCase):
         with sqlite3.connect(self.path) as connection:
             return simulate_identity(connection,statement,parameters) if statement.startswith("UPDATE principals SET ") else connection.execute(statement, parameters).fetchall()
 
-    def test_legacy_snapshot_requires_explicit_new_publication(self):
-        record = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
-        record['version'] = 1; record.pop('policy_realm')
-        for binding in record['readers'].values(): binding.pop('generation')
-        self.sql("UPDATE gui_smoke_snapshots SET record=?", (json.dumps(record),))
-        before = self.sql("SELECT * FROM gui_smoke_snapshots")
-        self.assertEqual(request(self.app)["status"], 404)
-        self.assertEqual(self.sql("SELECT * FROM gui_smoke_snapshots"), before)
-        self.publish(expected_revision=1, observed_at=NOW.isoformat())
-        self.assertEqual(request(self.app)["status"], 200)
-        current = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
-        self.assertEqual(current['version'], 2)
-        self.assertEqual(current['readers']['alice']['generation'], 1)
+    def test_legacy_snapshot_requires_explicit_migration_and_destructive_regrant(self):
+        record=json.loads(self.sql('SELECT record FROM gui_smoke_snapshots')[0][0])
+        record['version']=2;record.pop('grant_revision');record.pop('grant_digest')
+        self.sql('UPDATE gui_smoke_snapshots SET record=?',(json.dumps(record),))
+        self.sql('DROP TABLE gui_smoke_grants')
+        before=self.sql('SELECT * FROM gui_smoke_snapshots')
+        with self.assertRaises(StorageError):initialize(self.store)
+        migrate_v1(self.store)
+        self.assertEqual(request(self.app)['status'],404)
+        with self.assertRaises(PolicyError):initialize_connections(self.store,(self.configured,))
+        self.assertEqual(before,self.sql('SELECT * FROM gui_smoke_snapshots'))
+        regrant_connection(self.store,self.configured,actor='admin',expected_grant_revision=0,expected_snapshot_revision=1,clock=lambda:NOW)
+        self.publish(expected_revision=2,observed_at=NOW.isoformat())
+        self.assertEqual(request(self.app)['status'],200)
+        current=json.loads(self.sql('SELECT record FROM gui_smoke_snapshots')[0][0])
+        self.assertEqual(current['version'],3)
+        self.assertEqual(current['readers']['alice']['generation'],1)
 
     def test_foreign_realm_snapshot_denied(self):
         record = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
@@ -133,11 +138,11 @@ class SmokeTests(unittest.TestCase):
         result = request(self.app)["body"]["data"]
         self.assertFalse(result["available"])
         self.assertEqual(result["items"], [])
-        self.assertEqual(result["source"]["revision"], 0)
+        self.assertEqual(result["source"]["revision"], 1)
         self.assertIsNone(result["source"]["observed_at"])
         self.assertFalse(result["source"]["execution_enabled"])
         self.assertEqual(request(self.app, "/tasks/task-1")["status"], 404)
-        self.publish(tasks=())
+        self.publish(tasks=(),expected_revision=1)
         self.assertTrue(request(self.app)["body"]["data"]["available"])
 
     def test_safe_detail_does_not_forge_execution_or_requested_commit(self):
@@ -258,17 +263,21 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(request(self.application((expanded,)), token="synthetic-outsider")["status"], 404)
         removed = SmokeConnection(self.scope, frozenset({"bob"}), self.configured.publishers)
         self.assertEqual(request(self.application((removed,)))["status"], 404)
-        self.assertEqual(request(self.application((removed,)), token="synthetic-bob")["status"], 200)
+        self.assertEqual(request(self.application((removed,)), token="synthetic-bob")["status"], 404)
 
-    def test_configuration_is_per_instance_but_published_audience_is_shared(self):
-        narrowed = SmokeConnection(self.scope, frozenset({"bob"}), self.configured.publishers)
-        fresh = self.application((narrowed,))
-        self.assertEqual(request(fresh)["status"], 404)
-        self.assertEqual(request(self.app)["status"], 200)  # No pretend hot reload.
-        publish_snapshot(self.store, narrowed, actor="writer", tasks=(task(),), expected_revision=1,
-                         observed_at=NOW.isoformat(), clock=lambda: NOW)
-        self.assertEqual(request(self.app)["status"], 404)  # New persisted audience.
-        self.assertEqual(request(self.app, token="synthetic-bob")["status"], 200)
+    def test_persistent_regrant_invalidates_old_instance_configuration(self):
+        narrowed=SmokeConnection(self.scope,frozenset({'bob'}),self.configured.publishers)
+        fresh=self.application((narrowed,))
+        self.assertEqual(request(fresh)['status'],404)
+        self.assertEqual(request(self.app)['status'],200)
+        with self.assertRaises(PolicyError):
+            publish_snapshot(self.store,narrowed,actor='writer',tasks=(task(),),expected_revision=1,expected_grant_revision=1,
+                observed_at=NOW.isoformat(),clock=lambda:NOW)
+        regrant_connection(self.store,narrowed,actor='admin',expected_grant_revision=1,expected_snapshot_revision=1,clock=lambda:NOW)
+        publish_snapshot(self.store,narrowed,actor='writer',tasks=(task(),),expected_revision=2,expected_grant_revision=2,
+                observed_at=NOW.isoformat(),clock=lambda:NOW)
+        self.assertEqual(request(self.app,token='synthetic-bob')['status'],404)
+        self.assertEqual(request(fresh,token='synthetic-bob')['status'],200)
 
     def test_unapproved_snapshot_reader_does_not_interpret_task_payloads(self):
         raw = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
@@ -302,7 +311,8 @@ class SmokeTests(unittest.TestCase):
     def test_shared_workspace_is_not_public_or_aggregate(self):
         scope = SmokeScope("commons", "panel", "repo")
         configured = SmokeConnection(scope, frozenset({"alice"}), frozenset({"writer"}))
-        publish_snapshot(self.store, configured, actor="writer", tasks=(task(),), expected_revision=0,
+        initialize_connections(self.store,(configured,))
+        publish_snapshot(self.store, configured, actor="writer", expected_grant_revision=1, tasks=(task(),), expected_revision=0,
                          observed_at=NOW.isoformat(), clock=lambda: NOW)
         app = self.application((configured,))
         base = BASE.replace("alpha", "commons")
@@ -377,7 +387,7 @@ class SmokeTests(unittest.TestCase):
         self.assertNotIn("synthetic-private-marker", str(response))
         self.sql("UPDATE gui_smoke_snapshots SET record=?,workspace_id='beta'", (record,))
         configured = SmokeConnection(SmokeScope("beta", "panel", "repo"), self.configured.readers, self.configured.publishers)
-        self.assertEqual(request(self.application((configured,)), base=BASE.replace("alpha", "beta"))["status"], 503)
+        self.assertEqual(request(self.application((configured,)), base=BASE.replace("alpha", "beta"))["status"], 404)
 
     def test_duplicate_keys_and_revision_corruption_fail_closed(self):
         record = self.sql("SELECT record FROM gui_smoke_snapshots")[0][0]

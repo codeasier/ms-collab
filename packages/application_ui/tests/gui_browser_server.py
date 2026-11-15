@@ -22,21 +22,24 @@ def main():
         origin='https://127.0.0.1:'+str(server.server_port)
         provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
         from packages.gui_smoke_ui.tests.fixtures import setup,tasks
-        from packages.gui_smoke import publish_snapshot
+        from packages.gui_smoke import publish_snapshot, regrant_connection
         clock=lambda:datetime.now(timezone.utc)
         app,policy,login,exchange,connections=setup(temp,origin=origin,clock=clock,authorization_endpoint=provider)
         from packages.application_ui import ApplicationUI
         app=ApplicationUI(host=app._host)
-        revision=1
+        revision=1;grant_revision=1
         def fixture(env,start):
-            nonlocal revision
+            nonlocal revision,grant_revision
             path=env.get('PATH_INFO')
-            if path in {'/synthetic-republish','/synthetic-revoke','/synthetic-policy-revoke'}:
+            if path in {'/synthetic-republish','/synthetic-regrant','/synthetic-revoke','/synthetic-policy-revoke'}:
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
                 if path=='/synthetic-republish':
-                    publish_snapshot(policy,connections[0],actor='writer',tasks=tasks(),observed_at=clock().isoformat(),expected_revision=revision,clock=clock)
+                    publish_snapshot(policy,connections[0],actor='writer',tasks=tasks(),observed_at=clock().isoformat(),expected_revision=revision,expected_grant_revision=grant_revision,clock=clock)
                     revision+=1
+                elif path=='/synthetic-regrant':
+                    regrant_connection(policy,connections[0],actor='admin',expected_grant_revision=grant_revision,expected_snapshot_revision=revision,clock=clock)
+                    grant_revision+=1;revision+=1
                 elif path=='/synthetic-policy-revoke':
                     policy.set_membership('admin','alpha','alice',role='viewer',state='revoked',expected_revision=1)
                 else: login.revoke_subject('alice-sub')

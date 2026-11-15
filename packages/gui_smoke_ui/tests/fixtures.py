@@ -4,7 +4,7 @@ from pathlib import Path
 
 from packages.application_host import ApplicationHost, HostConfig
 from packages.application_host.tests.fixtures import SyntheticExchange, session
-from packages.gui_smoke import SmokeScope, SmokeConnection, initialize, publish_snapshot
+from packages.gui_smoke import SmokeScope, SmokeConnection, initialize, initialize_connections, publish_snapshot
 from packages.gui_smoke.tests.test_smoke import task
 from packages.gui_smoke_ui import GuiSmokeUI
 from packages.login_state import LoginBinding, SQLiteLoginStore
@@ -47,10 +47,11 @@ def setup(directory, *, origin=ORIGIN, clock=lambda:NOW, enabled=True, authoriza
         modules=tuple(ModuleInstance(w,'gui_smoke',('read','write')) for w in spaces))
     initialize_administration(policy); initialize_invitations(policy); initialize(policy)
     connections=tuple(SmokeConnection(SmokeScope(w,'panel','repo'),frozenset({'bob' if w=='commons' else 'alice'}),frozenset({'writer'})) for w in spaces)
+    initialize_connections(policy,connections)
     for c in connections:
         if c.scope.workspace_id != 'unpublished':
             publish_snapshot(policy,c,actor='writer',tasks=() if c.scope.workspace_id=='empty' else tasks(c.scope.workspace_id),
-                observed_at=(clock()-timedelta(seconds=20)).isoformat(),expected_revision=0,clock=clock)
+                observed_at=(clock()-timedelta(seconds=20)).isoformat(),expected_revision=0,expected_grant_revision=1,clock=clock)
     binding=LoginBinding(ISSUER,'synthetic-gui-client',origin+'/auth/callback')
     login=SQLiteLoginStore.initialize(Path(directory)/'login.sqlite',binding=binding,clock=clock)
     sessions=SessionPolicyStore(policy=policy,login=login)
