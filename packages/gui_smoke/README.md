@@ -50,8 +50,14 @@ The stored envelope binds the exact workspace/connection/repository coordinates,
 revision and observation time. It also captures workspace/module revisions and,
 for each explicitly approved reader, issuer/subject and membership revision.
 Read access requires those fences to match current policy. Removing a configured
-reader takes effect immediately; adding one does **not** expose older snapshots
-until explicit republication. Membership changes or module/workspace revision
+reader applies only to a request-serving instance that has loaded the new frozen
+configuration; an old process retains its old allowlist during a partial rollout.
+Shared SQLite membership/module revocation does not depend on that rollout. A
+republished narrower audience also gates old readers of that snapshot, but old
+publishers must be drained/reconfigured for a lasting configuration-only removal:
+a still-authorized publisher with old configuration and the current revision can
+explicitly republish its original audience. Adding a configured reader
+does **not** expose older snapshots until explicit republication. Membership changes or module/workspace revision
 changes likewise need an explicit new publication, not automatic resurrection.
 
 Principal issuer/subject and active state are current-value checks, **not a

@@ -239,6 +239,16 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(request(self.application((removed,)))["status"], 404)
         self.assertEqual(request(self.application((removed,)), token="synthetic-bob")["status"], 200)
 
+    def test_configuration_is_per_instance_but_published_audience_is_shared(self):
+        narrowed = SmokeConnection(self.scope, frozenset({"bob"}), self.configured.publishers)
+        fresh = self.application((narrowed,))
+        self.assertEqual(request(fresh)["status"], 404)
+        self.assertEqual(request(self.app)["status"], 200)  # No pretend hot reload.
+        publish_snapshot(self.store, narrowed, actor="writer", tasks=(task(),), expected_revision=1,
+                         observed_at=NOW.isoformat(), clock=lambda: NOW)
+        self.assertEqual(request(self.app)["status"], 404)  # New persisted audience.
+        self.assertEqual(request(self.app, token="synthetic-bob")["status"], 200)
+
     def test_unapproved_snapshot_reader_does_not_interpret_task_payloads(self):
         raw = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
         raw["tasks"][0]["log"] = "synthetic-private-marker"
