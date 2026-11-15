@@ -20,7 +20,7 @@ class UITests(unittest.TestCase):
         result["body"]=b"".join(self.ui(environ,start));return result
 
     def test_static_allowlist_security_and_head(self):
-        for path in ("/community/","/community/board.mjs","/community/client.mjs","/community/style.css"):
+        for path in ("/community/","/community/entry.mjs","/community/board.mjs","/community/client.mjs","/community/style.css"):
             result=self.call(path);self.assertEqual(result["status"],200)
             self.assertEqual(result["headers"]["Cache-Control"],"no-store")
             self.assertIn("frame-ancestors 'none'",result["headers"]["Content-Security-Policy"])
