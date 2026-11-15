@@ -41,9 +41,9 @@ async function load(){
 }
 async function showDetail(runID){
  if(!snapshot||!scope)return
- closeDetail();detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision
+ closeDetail();detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
  el('detail-title').textContent=runID;el('detail-status').textContent='Reading current authorized run details…';el('detail').showModal()
- try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID);if(token!==epoch||detailToken!==detailEpoch)return
+ try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID,summary);if(token!==epoch||detailToken!==detailEpoch)return
   const run=data.run;el('detail-status').textContent=`${run.status} · snapshot version ${version} · observed ${run.observed_at}`
   if(run.stages===null)el('detail-body').append(text('p','Stage and job details were not available in this observation.'))
   else if(!run.stages.length)el('detail-body').append(text('p','This observation contains no stage entries.'))

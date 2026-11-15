@@ -24,21 +24,24 @@ export function validateList(data,scope){
  }
  return data
 }
-export function validateDetail(data,scope,version,runID){
+export function validateDetail(data,scope,version,runID,summary){
  source(data,scope,version)
  const run=data.run
  if(!run||!sameScope(run,scope)||run.id!==runID||!id(run.id)||!states.has(run.status)||!time(run.observed_at)||(run.stages!==null&&(!Array.isArray(run.stages)||run.stages.length>40)))invalid()
+ if(!summary||summary.id!==runID||run.status!==summary.status||run.observed_at!==summary.observed_at||(run.stages!==null)!==summary.details_available||(run.stages?.length??0)!==summary.stage_count)invalid()
  let jobs=0
  for(const stage of run.stages||[]){
   if(!stage||!label(stage.name)||!Array.isArray(stage.jobs))invalid()
   jobs+=stage.jobs.length;if(jobs>200)invalid()
   for(const job of stage.jobs)if(!job||!id(job.id)||!label(job.name)||!states.has(job.status)||![job.started_at,job.finished_at].every(t=>t===null||time(t)))invalid()
  }
+ if(jobs!==summary.job_count)invalid()
  return data
 }
 function validGroupKey(group){try{const pair=JSON.parse(group.key);return Array.isArray(pair)&&pair.length===2&&pair[0]===group.stage_name&&pair[1]===group.job_name}catch{return false}}
-export function validateDurations(data,scope,version,total){
+export function validateDurations(data,scope,version,items){
  source(data,scope,version)
+ const total=items.length,byID=new Map(items.map(item=>[item.id,item]))
  const c=data.coverage
  const counters=['supplied_runs','nonterminal_or_unknown_runs','observed_terminal_runs','selected_runs','runs_with_details','runs_with_samples','missing_details','malformed_entries','excluded_jobs','invalid_duration_jobs','ambiguous_jobs']
  if(!c||c.source!=='supplied_snapshots'||c.full_history_complete!==false||c.limit!==100||c.supplied_runs!==total||c.observed_terminal_runs+c.nonterminal_or_unknown_runs!==total||c.selected_runs>total||counters.some(k=>!integer(c[k]))||typeof c.selection_truncated!=='boolean'||!Array.isArray(data.groups)||data.groups.length>200)invalid()
@@ -46,7 +49,13 @@ export function validateDurations(data,scope,version,total){
  for(const group of data.groups){
   if(!group||!label(group.stage_name)||!label(group.job_name)||!validGroupKey(group)||keys.has(group.key)||!integer(group.count,100)||!group.count||!Array.isArray(group.samples)||group.samples.length!==group.count||['average_seconds','min_seconds','max_seconds','latest_seconds'].some(k=>typeof group[k]!=='number'||!Number.isFinite(group[k])||group[k]<0)||group.min_seconds>group.max_seconds||group.average_seconds<group.min_seconds||group.average_seconds>group.max_seconds)invalid()
   keys.add(group.key);samples+=group.samples.length;if(samples>200)invalid()
-  for(const sample of group.samples)if(!sample||!id(sample.run_id)||!id(sample.job_id)||!states.has(sample.run_status)||![sample.observed_at,sample.started_at,sample.finished_at].every(time)||typeof sample.duration_seconds!=='number'||!Number.isFinite(sample.duration_seconds)||sample.duration_seconds<0)invalid()
+  const sampled=new Set()
+  for(const sample of group.samples){
+   if(!sample||!id(sample.run_id)||!id(sample.job_id)||!states.has(sample.run_status)||![sample.observed_at,sample.started_at,sample.finished_at].every(time)||typeof sample.duration_seconds!=='number'||!Number.isFinite(sample.duration_seconds)||sample.duration_seconds<0)invalid()
+   const run=byID.get(sample.run_id)
+   if(!run||sampled.has(sample.run_id)||!run.details_available||run.status!==sample.run_status||run.observed_at!==sample.observed_at||!['success','failure','cancelled','timed_out','skipped'].includes(run.status))invalid()
+   sampled.add(sample.run_id)
+  }
  }
  return data
 }
@@ -70,6 +79,6 @@ export function createClient({fetcher=fetch}={}){
 }
 export async function loadSnapshot(client,scope,signal){
  const list=validateList(await client.request(scope,'runs',{signal}),scope)
- const durations=validateDurations(await client.request(scope,'durations',{signal}),scope,list.source.revision,list.total)
+ const durations=validateDurations(await client.request(scope,'durations',{signal}),scope,list.source.revision,list.items)
  return {list,durations,revision:list.source.revision}
 }
