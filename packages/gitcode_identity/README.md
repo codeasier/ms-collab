@@ -84,3 +84,10 @@ python3 -m unittest discover -s packages/gitcode_identity/tests -v
 
 All [tests](tests/README.md) are offline synthetic fixtures. The HTTPS transport
 is tested through mocked connections, not live TLS/provider acceptance.
+
+## Callback/session groundwork
+
+The [login-state core](../login_state/README.md) supplies persistent one-use state,
+browser binding, S256 material and session lifecycle primitives. It intentionally
+does not enable this protocol client as a login verifier: a securely bound-code
+adapter and HTTP/policy transaction integration remain required.
