@@ -1,0 +1,2 @@
+# Official PyPI wheel, reviewed 2026-11-15. No extras or dynamic server plugins.
+gunicorn==27.0.1 --hash=sha256:378b26b9a38adcf4592f28828233c1716acc55e833ea06bf48719782efaa0d10
