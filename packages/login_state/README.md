@@ -77,11 +77,13 @@ mutations need method/Origin/CSRF validation, not just session existence. `check
 checks a token pair only, and does not authorize a later mutation. Logout must not
 be exposed as a GET. `revoke_subject` is trusted administration, not a public route.
 
-Session storage and [workspace policy](../workspace_api/README.md) are not yet a
-single transaction. Do **not** cache a snapshot as a verifier assertion or claim
-that revocation is atomic with protected writes: a future adapter must coordinate
-current session and policy checks with the operation's commit. This package
-provides no `Provider.verify` implementation that would obscure that boundary.
+This standalone package does not coordinate workspace commits. Do **not** cache
+its snapshot as a verifier assertion. The optional
+[session/policy HTTP composition](../session_api/README.md) adds a shared local
+SQLite transaction for current session, identity and policy checks; its strict
+rollback-journal/storage limits must be met. Other callers still need explicit
+coordination. This package provides no `Provider.verify` implementation that
+would obscure that boundary.
 Subject-wide revocation deletes existing sessions only. It is not an account
 disable or login-generation barrier: a verified login already in flight, or a
 new login, can create another session. Local identity binding/enrollment, current
