@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from packages.artifact_sync import ArtifactSynchronizer
 from packages.artifact_sync.provider import _now, ProviderError
-from packages.artifact_sync.records import authorized, check_schema as check_indexes, digest, scope_key
+from packages.artifact_sync.records import authorized, check_schema as check_indexes, digest, scope_key, flow_pin, MAX_REVISION
 from packages.workspaces import SQLiteWorkspaceService, PolicyError, StorageError
 from .transport import BoundedOBSReadTransport, RefreshCleanupError
 
@@ -76,6 +76,8 @@ class ConfiguredArtifactRefresh:
         def admit(policy, actor, db):
             record = authorized(policy, actor, db, scope, 'refresh')
             policy._match(expected_revision, record.revision)
+            if record.revision >= MAX_REVISION:
+                raise PolicyError(409,'index_revision_exhausted')
             check_schema(db)
             rows = db.execute(f'SELECT actor,workspace,connection,bucket FROM {_TABLE} WHERE state=?', ('active',)).fetchall()
             if len(rows) >= 2 or any(r[0] == actor or tuple(r[1:]) == scope_key(scope) for r in rows):
@@ -85,12 +87,12 @@ class ConfiguredArtifactRefresh:
                 raise PolicyError(504, 'refresh_deadline')
             db.execute(f'INSERT INTO {_TABLE} VALUES (?,?,?,?,?,?,?,?,?,?,NULL)',
                 (ident, actor, *scope_key(scope), expected_revision, digest(record.policy_raw), now, now + TTL_SECONDS, 'active'))
-            return actor
+            return actor, flow_pin(policy,actor,scope)
         def deadline():
             if not 0 <= self._tick() - started < TTL_SECONDS:
                 raise PolicyError(504, 'refresh_deadline')
-        actor = self.service._authenticated_transaction(assertion, admit, write=True, with_connection=True, before_commit=deadline)
-        lease = _Lease(self, ident, actor, scope, expected_revision, started)
+        actor, authority = self.service._authenticated_transaction(assertion, admit, write=True, with_connection=True, before_commit=deadline)
+        lease = _Lease(self, ident, actor, scope, expected_revision, started, authority)
         try:
             return self.service._refresh_verified(assertion, scope, expected_revision=expected_revision, lifecycle=lease)
         except RefreshCleanupError:
@@ -109,9 +111,9 @@ class ConfiguredArtifactRefresh:
 
 
 class _Lease:
-    def __init__(self, owner, ident, actor, scope, revision, started):
+    def __init__(self, owner, ident, actor, scope, revision, started, authority):
         self.owner, self.ident, self.actor, self.scope = owner, ident, actor, scope
-        self.revision, self.started = revision, started
+        self.revision, self.started, self.authority = revision, started, authority
         self.transport = self
         self.cleanup_uncertain = False
 
@@ -127,7 +129,7 @@ class _Lease:
         record = authorized(policy, actor, db, self.scope, 'refresh')
         now = _now(self.owner.service._clock).timestamp()
         expected = (self.actor, *scope_key(self.scope), self.revision, digest(record.policy_raw))
-        if row is None or tuple(row[:6]) != expected or actor != self.actor or row[8] != 'active':
+        if row is None or tuple(row[:6]) != expected or flow_pin(policy,actor,self.scope) != self.authority or row[8] != 'active':
             raise PolicyError(412, 'refresh_changed')
         if not row[6] <= now < row[7]:
             raise PolicyError(504, 'refresh_deadline')

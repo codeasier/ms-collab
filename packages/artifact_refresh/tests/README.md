@@ -14,3 +14,5 @@ Return to [package navigation](../README.md).
   same cookie across refresh/review/approval/catalog, canceled and stale actions,
   genuine concurrent logout/revoke, responsive synthetic screenshots. The fixture
   requires explicit environment opt-in and temporary certificates.
+
+- [Generation authority regressions](test_authority.py)

@@ -12,6 +12,7 @@ import unittest
 from packages.artifact_admin import ArtifactAdministrationAPI, ArtifactAdministrationUI
 from packages.artifact_sync import ArtifactSynchronizer, IndexedArtifactApplication, initialize_indexes
 from packages.artifact_sync.records import policy_text
+from packages.artifact_sync.tests.authority_fixtures import configure_index_fixture
 from packages.artifact_sync.tests.fixtures import NOW, POLICY, SCOPE, Transport, Verifier, call as read_call, credential, initialize, provider, user
 
 BASE='/api/workspaces/alpha/artifact-admin/source/bucket'
@@ -93,7 +94,7 @@ class Tests(unittest.TestCase):
         self.refresh();preview=self.preview();body=self.body(preview)
         for readers in ([],['reader'],['reader','admin'],['admin','reader','reader'],None,'reader'):
             altered={**body,'readers':readers};self.assertIn(self.call('approve',who='approver',method='POST',revision=2,body=altered)['status'],(400,412))
-        with sqlite3.connect(self.path) as c:c.execute('UPDATE artifact_indexes_v1 SET policy=?',(policy_text(replace(POLICY,readers=('reader',))),))
+        configure_index_fixture(self.store,replace(POLICY,readers=('reader',)))
         before=self.state()
         result=self.call('approve',who='approver',method='POST',revision=2,body=body)
         self.assertEqual(result['status'],412);self.assertEqual(self.state(),before)

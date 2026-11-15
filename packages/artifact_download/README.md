@@ -6,6 +6,7 @@ setup or production migration is included. The legacy catalog remains metadata-o
 host can mount the [confirmed-byte browser interaction](SESSION-DESIGN.md);
 metadata access never enables it or grants byte access.
 
+- [Generation-bound grants and reviewed-parent regrant](../artifact_sync/GRANTS.md)
 - [Policy and persistent leases](records.py)
 - [Fixed OBS GetObject transport](provider.py)
 - [Acquisition, integrity and output lifecycle](service.py)
@@ -24,8 +25,9 @@ object: exact literal key, size, whole-second zoned modified time, quoted strong
 ETag, and independently approved SHA-256. These are not client inputs or inferred
 from an untrusted listing. They must be reviewed before initialization; this
 package provides no HTTP grant or hash-approval endpoint. A changed existing
-policy is rejected by additive/idempotent `initialize_downloads`; rotation is an
-explicit host migration that must invalidate old active work.
+policy is rejected by additive/idempotent `initialize_downloads`; rotation requires explicit `regrant_downloads` with both old-byte and reviewed
+current-parent CAS. It advances the independent grant revision and invalidates
+old active work without reclaiming its leases.
 
 Every download requires all of: current verified principal binding, an active
 (non-archived) workspace, active workspace membership, enabled artifacts.read, explicit index-reader grant,

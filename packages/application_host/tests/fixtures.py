@@ -83,9 +83,8 @@ def initialize(path):
             snapshot=Snapshot(s,'2026-01-01T00:00:00Z',(BoardItem('issue',1,'Approved synthetic issue','open','2026-01-01T00:00:00Z'),BoardItem('issue',2,'Private synthetic issue','open','2026-01-01T00:00:00Z')))
             db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?',
                        (encode(snapshot_data(snapshot)),approval_text([fingerprint(s,snapshot.items[0])],capture_approval(current_policy,community_state(db,s),"admin")) if s.workspace_id=="alpha" else approval_text([],None),s.workspace_id))
-        for s in artifacts:
-            db.execute('UPDATE artifact_indexes_v1 SET published=?,published_revision=1 WHERE workspace=?',
-                       (snapshot_text(ArtifactSnapshot(s,'2026-01-01T00:00:00Z',())),s.workspace_id))
+    from packages.artifact_sync.tests.authority_fixtures import seed_publication
+    seed_publication(store,artifacts[0],ArtifactSnapshot(artifacts[0],'2026-01-01T00:00:00Z',()))
     return store
 
 
