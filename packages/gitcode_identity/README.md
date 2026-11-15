@@ -8,7 +8,7 @@ not connected to the demo or [workspace API](../workspace_api/README.md).
 
 - Explicit trusted client configuration and authorization URL formatting.
 - Authorization-code exchange followed by an authenticated current-user lookup.
-- Minimized `GitCodeIdentityEvidence`: stable upstream `id`, observation time and
+- Minimized `GitCodeIdentityEvidence`: upstream string `id`, observation time and
   grant expiry only. No profile, email, login name, role, token or refresh token
   is returned or persisted. It proves no local enrollment or workspace access.
 - Direct system-CA HTTPS to fixed GitCode endpoints, bounded responses and socket
@@ -33,7 +33,9 @@ Reviewed 2026-11-15 against official documentation:
   code/client ID in the query, secret in multipart form data; token lifetime,
   creation timestamp and scopes in the response.
 - [Current user API](https://docs.gitcode.com/docs/apis/get-api-v-5-user/): string
-  `id` is the identity key. Mutable profile fields are not binding keys.
+  `id` is the chosen identity key, not a mutable profile field. The schema alone
+  does not establish lifetime stability or non-reassignment; confirm those
+  semantics before creating durable real-account bindings.
 
 The client implements this documented wire shape with synthetic fixtures only.
 No real account, app registration, provider request or production callback was
@@ -90,4 +92,10 @@ is tested through mocked connections, not live TLS/provider acceptance.
 The [login-state core](../login_state/README.md) supplies persistent one-use state,
 browser binding, S256 material and session lifecycle primitives. It intentionally
 does not enable this protocol client as a login verifier: a securely bound-code
-adapter and HTTP/policy transaction integration remain required.
+adapter remains required; [session/policy integration](../session_api/README.md)
+and the [unified host](../application_host/README.md) are now available as explicit
+composition, without enabling this client.
+
+See the [evidence ledger and staged acceptance plan](../../docs/gitcode-login-acceptance.md)
+for the unresolved provider contract, controlled negative cases and activation
+criteria. Offline gate regressions must not be reported as live GitCode acceptance.
