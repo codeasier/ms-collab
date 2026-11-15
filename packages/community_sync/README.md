@@ -32,6 +32,11 @@ least-privilege GitCode token with only the required repository read access.
 redacts its representation; this is routing protection, **not** a secret vault.
 The same upstream repository in another connection or workspace is independent.
 A public workspace is an ordinary explicit scope, never a union of private data.
+Snapshots contain records visible to the supplied token. This adapter does not
+implement per-record public-visibility filtering (for example GitCode
+`visibility_reason`); a public upstream repository or a workspace named public
+does **not** make its token-visible records safe to publish. Sharing requires
+separate explicit data approval and a visibility policy in the host application.
 
 The library is **not an authorization boundary**. A process able to call `load`
 or read the database can access the selected scope. The host must enforce

@@ -74,11 +74,14 @@ class HTTPSReadTransport:
     """
     def get(self, path: str, credential: BoundCredential, connection: Connection):
         prefix = f"/api/v5/repos/{connection.scope.repository}/"
-        parsed = urllib.parse.urlsplit(path)
+        try:
+            parsed = urllib.parse.urlsplit(path)
+            query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+        except (TypeError, ValueError):
+            raise ProviderError("invalid request parameters") from None
         if (credential.scope != connection.scope or parsed.scheme or parsed.netloc
                 or parsed.fragment or parsed.path not in (prefix + "issues", prefix + "pulls")):
             raise ProviderError("request scope mismatch")
-        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
         if (set(query) != {"state", "sort", "direction", "page", "per_page"}
                 or any(len(values) != 1 for values in query.values())
                 or query["state"] != ["all"] or query["sort"] != ["updated"]
@@ -149,12 +152,12 @@ class GitCodeProvider:
                     if not isinstance(raw, list) or len(raw) > connection.page_size:
                         raise ValueError("invalid page")
                     items.extend(_normalize(kind, item) for item in raw)
-                except (TypeError, ValueError, KeyError):
+                except (TypeError, ValueError, KeyError, OverflowError):
                     raise ProviderError("provider records violate snapshot contract") from None
                 if len(raw) < connection.page_size:
                     break
         try:
             # Duplicate IDs / future timestamps fail the whole refresh, not just a row.
             return Snapshot(connection.scope, observed_at, tuple(items))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ProviderError("provider snapshot is inconsistent") from None

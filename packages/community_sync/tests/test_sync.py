@@ -98,7 +98,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_bad_rows_fail_whole_observation(self):
         for bad in (row(number=True), row(number="I123"), row(title=""), row(state="locked"),
-                    row(updated_at="2026-01-01"), row(updated_at=LAST), row(labels=["plain"]),
+                    row(updated_at="2026-01-01"), row(updated_at="0001-01-01T00:00:00+14:00"), row(updated_at=LAST), row(labels=["plain"]),
                     row(labels=[{}]), row(labels=[{"name": ""}]), row(state=None), "not an object"):
             with self.subTest(bad=bad), self.assertRaises(ProviderError):
                 self.observe(FakeTransport({("issues", 1): [bad], ("pulls", 1): []}))
@@ -159,6 +159,11 @@ class TransportTests(unittest.TestCase):
                 with self.assertRaises(ProviderError) as error:
                     HTTPSReadTransport().get(self.path, self.credential, self.connection)
                 self.assertNotIn(TOKEN, str(error.exception))
+
+    def test_malformed_query_error_is_sanitized(self):
+        with self.assertRaises(ProviderError) as error:
+            HTTPSReadTransport().get(self.path + "&" + TOKEN, self.credential, self.connection)
+        self.assertNotIn(TOKEN, str(error.exception))
 
     def test_payload_errors(self):
         for response in (Response(b"x" * 257), Response(b"not-json"), Response(b"\xff"),
@@ -275,6 +280,17 @@ class StoreTests(unittest.TestCase):
             refresh(Connection(SCOPE), BoundCredential(SCOPE, TOKEN), self.store,
                     provider=provider, observed_at=LAST)
         self.assertEqual(self.store.load(SCOPE), first)
+
+    def test_injected_provider_scope_mismatch_not_published(self):
+        other = Scope("team-b", SCOPE.connection_id, SCOPE.repository)
+        class WrongProvider:
+            def observe(self, *args, **kwargs):
+                return snapshot(scope=other)
+        with self.assertRaises(ProviderError):
+            refresh(Connection(SCOPE), BoundCredential(SCOPE, TOKEN), self.store,
+                    provider=WrongProvider(), observed_at=LATER)
+        self.assertIsNone(self.store.load(SCOPE))
+        self.assertIsNone(self.store.load(other))
 
     def test_overlapping_refresh_rejected(self):
         store = self.store

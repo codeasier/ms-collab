@@ -11,7 +11,7 @@ import sqlite3
 
 from packages.community_board.delta import compare_snapshots
 from packages.community_board.model import BoardItem, Scope, Snapshot, utc_time
-from .provider import Connection, BoundCredential, GitCodeProvider
+from .provider import Connection, BoundCredential, GitCodeProvider, ProviderError
 
 _MAX_PAYLOAD = 16 * 1024 * 1024
 
@@ -98,7 +98,7 @@ class SnapshotStore:
             if type(row[0]) is not int or row[0] < 1 or len(row[1]) > _MAX_PAYLOAD:
                 raise ValueError("invalid stored revision or size")
             return StoredSnapshot(row[0], _decode(scope, row[1]))
-        except (TypeError, ValueError, KeyError, RecursionError):
+        except (TypeError, ValueError, KeyError, RecursionError, OverflowError):
             raise StoreError("stored snapshot is invalid") from None
 
     def load(self, scope: Scope) -> StoredSnapshot | None:
@@ -158,4 +158,6 @@ def refresh(connection: Connection, credential: BoundCredential, store: Snapshot
     """
     previous = store.load(connection.scope)
     snapshot = (provider or GitCodeProvider()).observe(connection, credential, observed_at=observed_at)
+    if not isinstance(snapshot, Snapshot) or snapshot.scope != connection.scope:
+        raise ProviderError("provider returned a different snapshot scope")
     return store.publish(snapshot, expected_revision=previous.revision if previous else 0)
