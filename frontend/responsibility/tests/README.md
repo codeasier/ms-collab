@@ -48,3 +48,8 @@ this setup, removes its TLS files and awaits clean fixture shutdown.
 Four additional synthetic-only screenshots per mode show historical desktop,
 mobile, explicit confirmation and reconfirmed state. The responsibility workflow
 runs both modes and uploads only those PNGs, never certificates or credentials.
+
+The legacy bearer browser and reference browser use `stopSyntheticFixture` for
+bounded, verified child cleanup. A forced reap remains a test failure, not a
+retry. Both fixture entrypoints share `serve_synthetic`; real HTTP/HTTPS active
+request and idle SIGTERM regressions run in the Python composition suite.

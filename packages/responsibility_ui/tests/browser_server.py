@@ -1,8 +1,8 @@
 """Isolated synthetic verifier + real configured API; never a deployable server."""
 from datetime import timedelta
 import os
-import signal
 from .reference_fixture import identity_aba, membership_change
+from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 from wsgiref.simple_server import make_server,WSGIRequestHandler
 from packages.community_board.model import Snapshot,BoardItem
 from packages.community_api.tests.test_application import call
@@ -38,8 +38,8 @@ def main():
                     else:membership_change(fixture.store,fixture.path,'dev','revoked' if path.endswith('revoke-target') else 'active')
                     start('200 OK',[('Content-Length','0'),('Cache-Control','no-store')]);return [b'']
                 return app(env,start)
-            signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(SystemExit()))
-            server.set_app(synthetic);print(origin,flush=True);server.serve_forever()
+            server.set_app(synthetic)
+            serve_synthetic(server,on_ready=lambda:print(origin,flush=True))
     finally:fixture.doCleanups()
 
 if __name__=='__main__':main()
