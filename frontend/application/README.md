@@ -15,6 +15,7 @@ Only their separate legacy `entry.mjs` scripts create bearer clients. New sessio
 pages never import those entry scripts and never copy or fabricate a credential.
 The server is [ApplicationUI](../../packages/application_ui/README.md).
 
+The `/community/` page mounts the reviewed community board with `createCommunitySessionClient`, preserving full-snapshot explicit approval and current session CSRF/CAS. No legacy bearer entry is mounted; upstream refresh remains unconfigured. See the [sharing boundary](../../packages/application_ui/README.md#community-sharing-boundary).
 - `pipelines.html`: credential-free pipeline scope, runs, details and durations.
   Its adapter uses the same session client, never a bearer or upstream token.
 - [Pipeline cookie acceptance](tests/README.md): independent synthetic HTTPS flow.

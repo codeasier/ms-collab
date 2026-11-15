@@ -13,6 +13,11 @@ _FILES = {
     '/pipelines/style.css': ('pipelines/style.css', 'text/css'),
     '/': ('application/index.html', 'text/html'),
     '/manage/': ('application/manage.html', 'text/html'),
+    '/community/': ('application/community.html', 'text/html'),
+    '/community/board.mjs': ('community/board.mjs', 'text/javascript'),
+    '/community/client.mjs': ('community/client.mjs', 'text/javascript'),
+    '/community/style.css': ('community/style.css', 'text/css'),
+    '/app/community-client.mjs': ('application/community-client.mjs', 'text/javascript'),
     '/responsibility/': ('application/responsibility.html', 'text/html'),
     '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),
     '/app/client.mjs': ('application/client.mjs', 'text/javascript'),
@@ -55,7 +60,7 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (path in {'/', '/manage/', '/responsibility/', '/pipelines/'}
+            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/community/'}
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -71,10 +76,10 @@ class ApplicationUI:
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + (['responsibility'] if enabled else []) + (['pipelines'] if pipelines else []),
+                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community') if name in self._host._config.modules],
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
-        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines):
+        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/community/' and 'community' not in self._host._config.modules):
             return respond('404 Not Found', b'not_found')
         filename, media = _FILES[path]
         return respond('200 OK', (_ROOT / filename).read_bytes(), media)

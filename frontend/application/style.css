@@ -13,6 +13,22 @@ body[data-page="manage"] #status,body[data-page="manage"] #state,body[data-page=
 body[data-page="manage"] dialog{background:#fff;color:#173044;border-color:#adc4d1}
 body[data-page="manage"] :focus-visible{outline-color:#327993}
 @media(max-width:600px){body[data-page="manage"] main{padding:22px 16px}body[data-page="manage"] #operator-panel{padding:16px}}
+/* Community is the same safe controller in the shared shell, not the legacy
+   credential entry. Its light theme includes modal content and focused fields. */
+body[data-page="community"]{max-width:none;margin:0;padding:0;color:#173044;color-scheme:light}
+body[data-page="community"] main{max-width:1320px;margin:0 auto;padding:32px}
+body[data-page="community"] .eyebrow,body[data-page="community"] .badge{color:#245e68}
+body[data-page="community"] .notice{background:#fff9eb;border-color:#d9c49c;color:#173044}
+body[data-page="community"] #panel{background:#fff;border-color:#cbdbe4}
+body[data-page="community"] .boundary{background:#eaf3f1;border-color:#337f72;color:#234f52}
+body[data-page="community"] input,body[data-page="community"] select,body[data-page="community"] button{background:#fff;color:#21485c;border-color:#adc4d1}
+body[data-page="community"] button:hover:not(:disabled){background:#e3eef0}
+body[data-page="community"] .toolbar button[aria-pressed=true]{background:#d8eeeb;border-color:#337f72;color:#164c42}
+body[data-page="community"] li,body[data-page="community"] #approval-panel{border-color:#cbdbe4}
+body[data-page="community"] li p,body[data-page="community"] #status,body[data-page="community"] #revision,body[data-page="community"] #summary,body[data-page="community"] #approval-summary{color:#526a7c}
+body[data-page="community"] dialog{background:#fff;color:#173044;border-color:#adc4d1}
+body[data-page="community"] :focus-visible{outline-color:#327993}
+@media(max-width:700px){body[data-page="community"] main{padding:24px 16px}}
 
 /* Pipeline standalone dark theme stays standalone; cookie entry is light. */
 body[data-page="pipelines"]{max-width:none;padding:0;color:#173044;color-scheme:light}

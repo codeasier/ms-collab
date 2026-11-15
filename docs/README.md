@@ -46,4 +46,5 @@
 - [Unified cookie-only frontend](../packages/application_ui/README.md): workspace and responsibility pages on one current session; real provider remains fail-closed.
 - [GUI smoke session UI](../packages/gui_smoke_ui/README.md)：统一 HTTPS Cookie/session 下的已发布任务、状态摘要与详情；无 Token 输入、外部面板、执行或下载，真实登录仍 fail-closed。
 
+- [Community sharing in the unified session entry](../packages/application_ui/README.md#community-sharing-boundary)：同一 Cookie/session 下的授权共享、完整候选集精确审批与版本冲突处理；无 Bearer 转换或上游刷新。
 - [Cookie-only pipeline entry](../packages/application_ui/README.md#pipeline-lifecycle)：同一 session 下读取准确作用域的运行、详情和耗时；取消/版本一致性，不含日志、执行或上游刷新。

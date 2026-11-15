@@ -6,6 +6,7 @@ from packages.community_api import CommunityApplication
 
 _ROOT = Path(__file__).resolve().parents[2] / "frontend" / "community"
 _FILES = {"/community/": ("index.html", "text/html"),
+          "/community/entry.mjs": ("entry.mjs", "text/javascript"),
           "/community/board.mjs": ("board.mjs", "text/javascript"),
           "/community/client.mjs": ("client.mjs", "text/javascript"),
           "/community/style.css": ("style.css", "text/css")}
