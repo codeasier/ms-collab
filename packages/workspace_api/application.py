@@ -105,9 +105,10 @@ class WorkspaceApplication:
             return result
 
         def commit_guard():
-            self._verifier.validate_current(self._provider_key, assertion)
             if before_commit is not None:
                 before_commit()  # Trusted adapters may only ADD a commit guard.
+            # Remain the last guard: adapter work may itself consume validity.
+            self._verifier.validate_current(self._provider_key, assertion)
         return self._store._transaction(operation, write=write, with_connection=with_connection,
                                         before_commit=commit_guard)
 

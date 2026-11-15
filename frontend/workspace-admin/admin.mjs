@@ -32,7 +32,7 @@ function busy(value, ticket) {
   return saveGeneration
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
-  cancelRequests(); client.clear(); clearPanel(); workspaces = []; selection = undefined
+  cancelRequests(); client.clear(); clearPanel(); busy(false); workspaces = []; selection = undefined
   managementAvailable = false; pendingCreations.clear(); pendingInvitations.clear()
   el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
   el('workspace').replaceChildren(); el('control-spaces').replaceChildren(); el('operator-panel').hidden = true

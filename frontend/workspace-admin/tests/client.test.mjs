@@ -54,3 +54,10 @@ test('invitation responses and routes are bounded, scoped, and non-secret',async
  assert.equal(calls[1].options.headers['If-Match'],'"1"');assert.equal(calls[1].options.credentials,'omit');assert.equal(calls[1].options.redirect,'error')
  for(const path of ['/api/invitations?token=secret','/api/invitations/id/accept','https://bad.invalid/api/invitations'])await assert.rejects(()=>client.request(path))
 })
+
+test('control characters cannot alter canonical IDs or same-origin routes',async()=>{
+ const {validId}=await import('../client.mjs')
+ for(const value of ['alpha\n','alpha\r','alpha\u0000','alpha\t','alpha\u007f'])assert.equal(validId(value),false)
+ const client=createClient({fetcher:async()=>{throw new Error('must not fetch')}});client.connect('synthetic-only')
+ for(const value of ['/api/invitations\n','/api/workspaces/alpha/invitations\r'])await assert.rejects(()=>client.request(value),/Invalid service path/)
+})

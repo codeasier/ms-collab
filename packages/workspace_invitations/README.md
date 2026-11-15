@@ -85,7 +85,8 @@ accepted write. Acceptance retries must refresh; they never create another grant
 The management page has separate in-app inbox and workspace-admin invitation
 controls, explicit confirm/cancel, safe text rendering, same-origin requests,
 revision errors, no automatic write retries and disconnect/pagehide cleanup.
-No credential or invitation is placed in URLs, cookies or browser storage.
+No credential or invitation secret is placed in URLs, cookies or browser storage;
+API route IDs are non-secret references and never authorize a request.
 No notification or third-party message is sent by this slice.
 
 Successful invitation changes and `membership.join` add metadata audit records.

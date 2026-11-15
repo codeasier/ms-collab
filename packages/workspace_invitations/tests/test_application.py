@@ -257,3 +257,21 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(self.request(path,**kwargs)['status'],status,(path,kwargs))
         result=self.request(LIST,method='POST',raw=b'{"principal_id":"other","role":"viewer","role":"admin"}',extra={'HTTP_IDEMPOTENCY_KEY':str(uuid4())})
         self.assertEqual(result['status'],400)
+
+    def test_added_commit_guard_cannot_extend_credential_validity(self):
+        item=self.item();counts=self.counts();calls=0
+        def advancing_clock():
+            nonlocal calls
+            calls+=1
+            if calls==2:self.now+=timedelta(minutes=1)
+            return self.invitation_now
+        self.app._clock=advancing_clock
+        self.assertEqual(self.respond(item)['status'],401)
+        self.assertEqual(self.counts(),counts)
+        with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT state FROM workspace_invitations_v1').fetchone()[0],'pending')
+
+    def test_inviter_binding_replacement_invalidates_old_grant(self):
+        item=self.item()
+        with sqlite3.connect(self.path) as db:db.execute("UPDATE principals SET subject='replacement' WHERE id='admin'")
+        self.assertEqual(self.respond(item)['status'],409)
+        self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])

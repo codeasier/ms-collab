@@ -1,5 +1,5 @@
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
-export const validId = value => typeof value === 'string' && idPattern.test(value)
+export const validId = value => typeof value === 'string' && !/[\u0000-\u0020\u007f]/.test(value) && idPattern.test(value)
 const revision = value => Number.isSafeInteger(value) && value > 0
 export function validateWorkspaces(data) {
   if (!Array.isArray(data) || data.some(w => !w || !validId(w.id) || typeof w.name !== 'string' || w.name.length > 200 || !['product', 'shared'].includes(w.kind) || !['active', 'suspended', 'archived'].includes(w.state) || !revision(w.revision)) || new Set(data.map(w => w.id)).size !== data.length) throw new Error('Invalid service response.')
@@ -35,7 +35,7 @@ export function createClient({fetcher = fetch} = {}) {
     clear() { credential = '' },
     async request(path, {method='GET', body, revision, requestKey, signal} = {}) {
       if (!credential) throw new Error('Disconnected.')
-      if (!['GET','POST','PATCH'].includes(method) || (path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?)$/.test(path))) throw new Error('Invalid service path.')
+      if (typeof path !== 'string' || /[\u0000-\u0020\u007f]/.test(path) || !['GET','POST','PATCH'].includes(method) || (path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?)$/.test(path))) throw new Error('Invalid service path.')
       const headers = {Authorization: `Bearer ${credential}`}
       if (body !== undefined) headers['Content-Type'] = 'application/json'
       if (revision !== undefined) headers['If-Match'] = `"${revision}"`

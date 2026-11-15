@@ -8,7 +8,11 @@ async function main(){
  try{
   const origin=await within(new Promise((resolve,reject)=>{let s='';child.stdout.on('data',c=>{s+=c;const m=s.match(/http:\/\/127\.0\.0\.1:\d+/);if(m)resolve(m[0])});child.once('exit',()=>reject(new Error('server stopped')))}))
   browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000}})
-  await context.addInitScript(()=>{AbortController.prototype.abort=function(){}})
+  await context.addInitScript(()=>{
+    AbortController.prototype.abort=function(){}
+    const original=window.fetch.bind(window);window.finishedInvitationWrites=[]
+    window.fetch=async(...args)=>{const response=await original(...args);if(args[1]?.method==='POST')window.finishedInvitationWrites.push(String(args[0]));return response}
+  })
   const errors=[],external=[],writes=[]
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();external.push(route.request().url());return route.abort()})
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{assert.ok(!r.url().includes('synthetic-'));if(['POST','PATCH'].includes(r.method()))writes.push({path:new URL(r.url()).pathname,key:r.headers()['idempotency-key']})})
@@ -60,7 +64,23 @@ async function main(){
   await page.route('**/api/workspaces/alpha/invitations',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:[{...old,workspace_id:'hidden',workspace_name:'must-not-display'}]})}))
   await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#invitation-status').textContent.includes('Unable to load valid'))
   assert.equal(await page.locator('#invitations').textContent(),'');await page.unroute('**/api/workspaces/alpha/invitations')
-  await page.locator('#reload').click();await page.locator('#invite-open:not([hidden])').waitFor();await invite('newcomer')
+  await page.locator('#reload').click();await page.locator('#invite-open:not([hidden])').waitFor()
+  // Pending old write cannot wedge a reconnect or unlock a newer write. The
+  // real server may still accept the old request; disconnect is not rollback.
+  let seenA,releaseA,doneA,seenB,releaseB,doneB
+  const startedA=new Promise(r=>seenA=r),gateA=new Promise(r=>releaseA=r),handledA=new Promise(r=>doneA=r)
+  const startedB=new Promise(r=>seenB=r),gateB=new Promise(r=>releaseB=r),handledB=new Promise(r=>doneB=r)
+  await page.route('**/api/workspaces/alpha/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenA();await gateA;const response=await route.fetch();await route.fulfill({response});doneA()})
+  await invite();await page.locator('#invite-save').click();await within(startedA)
+  await page.locator('#disconnect').click();await connect('synthetic-admin');await page.locator('#workspace').selectOption('commons');await page.waitForFunction(()=>document.querySelector('#title').textContent==='Shared collaboration'&&!document.querySelector('#invite-open').hidden)
+  await page.route('**/api/workspaces/commons/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenB();await gateB;const response=await route.fetch();await route.fulfill({response});doneB()})
+  await invite();assert.equal(await page.locator('#invite-save').isDisabled(),false);await page.locator('#invite-save').click();await within(startedB)
+  const completed=await page.evaluate(()=>window.finishedInvitationWrites.length);releaseA();await within(handledA)
+  await page.waitForFunction(n=>window.finishedInvitationWrites.length>n,completed)
+  assert.equal(await page.locator('#invite-save').isDisabled(),true)
+  releaseB();await within(handledB);await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
+  await page.unroute('**/api/workspaces/alpha/invitations');await page.unroute('**/api/workspaces/commons/invitations')
+  await page.locator('#invite-open:not([hidden])').waitFor();await invite('newcomer')
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
   assert.equal(await page.locator('#invite-dialog').isVisible(),false);assert.equal(await page.locator('#invite-principal').inputValue(),'');assert.equal(await page.locator('#invitations').textContent(),'');assert.equal(await page.locator('#inbox').textContent(),'')
   assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length,cookie:document.cookie})),{local:0,session:0,cookie:''})
