@@ -15,7 +15,8 @@ The existing public catalog and approval packages remain backward compatible.
 Approval of catalog metadata does not become implicit approval of object bytes.
 New content bindings and downloader grants are trusted setup, separate from
 catalog readers and approvers. No change is made to the existing metadata UI's
-`download_available: false` source flag because that UI is not a download client.
+`download_available: false` source flag because that API is metadata-only. The optional unified session UI obtains byte
+authority separately through the new availability endpoint.
 
 ## Verified scope
 
@@ -31,8 +32,8 @@ There is no production data movement, private endpoint, live secret or deploymen
   cloud credentials, plus actual provider/identity compatibility acceptance.
 - Deployable composition with resolver/worker/proxy deadlines, disconnect
   propagation, protected temp storage and audited crash-reservation recovery.
-- A browser download interaction integrated into the reader UI, with explicit
-  availability/size/hash presentation and cancellation handling.
+- The optional cookie-session browser interaction is implemented and exercised
+  with synthetic bytes. Real browser-to-cloud/deployment acceptance remains open.
 - Larger objects, ranges/resume, bucket version IDs, customer-key encryption,
   content-approval management and retention automation are not implemented.
 - A successful small-object synthetic test is not whole-OBS migration completion

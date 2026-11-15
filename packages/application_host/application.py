@@ -6,6 +6,7 @@ from packages.assistant_history import AssistantHistoryApplication
 from packages.gui_smoke import GuiSmokeApplication, SmokeConnection
 from packages.artifact_sync import IndexedArtifactApplication, ArtifactSynchronizer, ProviderError
 from packages.artifact_admin import ArtifactAdministrationAPI
+from packages.artifact_download import ArtifactDownloader, ArtifactDownloadConfiguration, ArtifactSessionDownloadAPI
 from packages.community_api import CommunityApplication
 from packages.pipeline_api import PipelineApplication
 from packages.research_assets import AssetApplication
@@ -27,6 +28,7 @@ class HostConfig:
     module_catalog: tuple[ModuleTemplate, ...] = ()
     gui_smoke_connections: tuple[SmokeConnection, ...] = ()
     artifact_administration: bool = False
+    artifact_downloads: bool = False
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
@@ -42,6 +44,8 @@ class HostConfig:
             raise ValueError("explicit GUI smoke configuration requires its hosted module")
         if type(self.artifact_administration) is not bool or (self.artifact_administration and "artifacts" not in self.modules):
             raise ValueError("artifact administration requires its explicit hosted module")
+        if type(self.artifact_downloads) is not bool or (self.artifact_downloads and "artifacts" not in self.modules):
+            raise ValueError("artifact downloads require the explicit hosted module")
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -55,9 +59,12 @@ class ApplicationHost:
     """
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
-                 clock=lambda: datetime.now(timezone.utc)):
+                 clock=lambda: datetime.now(timezone.utc), artifact_downloads=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
+        if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
+                or not config.artifact_downloads and artifact_downloads is not None):
+            raise ValueError('explicit download switch and trusted configuration required together')
         self._config = config
         self._boundary = SessionWorkspaceApplication(sessions=sessions, origin=config.origin,
             exchange=exchange, authorization_endpoint=authorization_endpoint,
@@ -80,11 +87,25 @@ class ApplicationHost:
             sync = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,
                                         credential_loader=unavailable_provider)
             self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=False)
+        self._artifact_downloads = None
+        if config.artifact_downloads:
+            download_service = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,
+                credential_loader=artifact_downloads.credential_loader)
+            self._artifact_downloads = ArtifactSessionDownloadAPI(boundary=self._boundary,
+                downloader=ArtifactDownloader(service=download_service, transport=artifact_downloads.transport))
+
 
 
     def __call__(self, environ, start_response):
         # The same HTTPS/Host/Cookie/CSRF and error/response envelope protects all
         # mounted routes; module WSGI handlers cannot introduce bearer fallback.
+        path = environ.get('PATH_INFO', '')
+        parts = path.split('/') if type(path) is str else []
+        if (self._artifact_downloads is not None and len(parts) >= 5
+                and parts[:3] == ['', 'api', 'workspaces'] and parts[4] == 'artifact-download'):
+            # The session-only adapter owns binary response/cleanup, not JSON
+            # dispatch. It reuses the same strict request/transaction boundary.
+            return self._artifact_downloads(environ, start_response)
         return self._boundary._respond(environ, start_response, dispatch=self._dispatch)
 
     def _dispatch(self, environ):

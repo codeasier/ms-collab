@@ -12,7 +12,7 @@ from packages.artifact_sync import ArtifactSynchronizer, ProviderError
 from packages.artifact_sync.provider import _bound, _now, object_key
 from packages.artifact_sync.records import authorized, decode_snapshot, scope_key
 from packages.artifacts.catalog import instant
-from packages.workspaces import PolicyError, StorageError
+from packages.workspaces import PolicyError, StorageError, SQLiteWorkspaceService
 from . import records
 from .provider import OBSObjectTransport
 
@@ -28,6 +28,13 @@ class ArtifactDownloader:
         if type(service) is not ArtifactSynchronizer or not callable(monotonic):
             raise ValueError('configured synchronizer and monotonic clock required')
         self._service = service
+        # Derive cleanup authority from this exact configured identity boundary.
+        # A revoked user must not block cleanup of its already admitted lease;
+        # no independent store/actor can be supplied by a host or HTTP caller.
+        boundary = service._session_boundary
+        self._lease_store = boundary._sessions.policy if boundary is not None else service._store
+        if type(self._lease_store) is not SQLiteWorkspaceService:
+            raise ValueError('configured lease policy store required')
         self._transport = OBSObjectTransport() if transport is None else transport
         self._monotonic = monotonic
 
@@ -58,17 +65,35 @@ class ArtifactDownloader:
             return value, binding, index
         return operation
 
-    def _prepare_verified(self, assertion, scope, key, *, expected_revision):
+    def _availability_verified(self, assertion, scope, key, *, expected_revision):
+        """Current exact byte binding only. No lease, provider or credential I/O."""
+        try:
+            object_key(key)
+        except (ValueError, TypeError, UnicodeError):
+            raise PolicyError(400, 'invalid_request') from None
+        _, binding, _ = self._service._authenticated_transaction(assertion,
+            self._current(assertion, scope, key, expected_revision), with_connection=True)
+        return {'scope': scope.as_dict(), 'key': key, 'size': binding.size,
+                'sha256': binding.sha256, 'published_revision': expected_revision}
+
+    def _prepare_verified(self, assertion, scope, key, *, expected_revision, expected_sha256=None):
         # Trusted adapter seam only: assertion must come from the configured
         # verifier, never a decoded client field or self-reported principal.
         try:
             object_key(key)
         except (ValueError, TypeError, UnicodeError):
             raise PolicyError(400, 'invalid_request') from None
+        if expected_sha256 is not None and (type(expected_sha256) is not str
+                or re.fullmatch(r'[0-9a-f]{64}', expected_sha256) is None):
+            raise PolicyError(400, 'invalid_request')
         ident = str(uuid4())
         deadline = self._monotonic() + records.TTL_SECONDS
         def admit(policy, actor, connection):
             pinned, binding, index = self._current(assertion, scope, key, expected_revision)(policy, actor, connection)
+            if expected_sha256 is not None and not hmac.compare_digest(expected_sha256, binding.sha256):
+                # A client constraint is never byte authority. Bind the exact
+                # confirmed bytes before leases, credentials or provider work.
+                raise PolicyError(412, 'download_changed')
             now = _now(self._service._clock).timestamp()
             # Shared persistent admission, not a per-process semaphore. Expiry
             # revokes output but MUST NOT release capacity while an old blocked
@@ -99,7 +124,7 @@ class ArtifactDownloader:
                     (state, offered, ident, pinned[0], 'active')).rowcount
                 if changed != 1:
                     raise StorageError('download_lease_changed')
-            self._service._store._transaction(operation, write=True, with_connection=True)
+            self._lease_store._transaction(operation, write=True, with_connection=True)
         spool = None
         upstream = None
         try:

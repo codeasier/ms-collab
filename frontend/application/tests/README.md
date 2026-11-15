@@ -10,6 +10,12 @@
   Cancel/Escape/double submit, delayed accepted write after pagehide/recheck,
   ineffective abort, delayed review across explicit logout, workspace/session revoke and computed contrast. Five images
   are uploaded by the [artifact session workflow](../../../.github/workflows/artifact-session-ui.yml).
+- `artifact-downloads.test.mjs`: bounded bytes/headers/hash, same-session CSRF,
+  late response cleanup, ignored abort, 401 epoch and digest/read timeouts.
+- `artifact-downloads.cjs`: real synthetic HTTPS and native browser save with full
+  byte/hash verification, explicit confirmation, binding TOCTOU, duplicate clicks,
+  late response/digest suppression, real logout during acquisition, current revoke,
+  responsive layouts and five screenshots. [Dedicated workflow](../../../.github/workflows/artifact-download-session.yml).
 - `browser.cjs`: actual product pages over temporary HTTPS, synthetic provider and
   SQLite policy, explicit sign-in/out, management/invitation writes, responsibility
   save/conflict, no bearer, XSS text, cross-space/session revocation, interrupted

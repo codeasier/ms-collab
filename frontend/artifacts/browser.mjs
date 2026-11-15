@@ -1,11 +1,11 @@
 import {validateScope} from './client.mjs'
-export function mountArtifactCatalogPage({client,sessionMode=false,onSignOut=()=>{}}){
+export function mountArtifactCatalogPage({client,sessionMode=false,onSignOut=()=>{},onDownload,clearDownload=()=>{}}){
 if(!client||typeof client.quarters!=='function'||typeof client.query!=='function'||typeof client.clear!=='function')throw new Error('Explicit catalog client required.')
 const $=id=>document.getElementById(id)
 let generation=0, controller, scope=null, path='', view='', page=1, total=0, connected=false
 const queryControls=['sort','order','keyword','recursive','files-only','apply']
 function clearResults(){ $('results').replaceChildren();$('evidence').textContent='';$('page-label').textContent='';$('previous').disabled=true;$('next').disabled=true;total=0 }
-function cancel(){generation++;controller?.abort();controller=null;clearResults();return generation}
+function cancel(){clearDownload();generation++;controller?.abort();controller=null;clearResults();return generation}
 function clearCatalog(){cancel();scope=null;path='';view='';page=1;$('catalog').hidden=true;$('quarter').replaceChildren();$('scope-title').textContent='';$('path-label').textContent='';$('view-id').value='';$('keyword').value='';$('recursive').checked=false;$('files-only').checked=false;$('sort').value='name';$('order').value='asc';setMode()}
 function disconnect(message='Disconnected. Local catalog data and the credential were cleared.'){
   client.clear();connected=false;clearCatalog();if($('connect'))$('connect').hidden=false;$('session').hidden=true;if($('credential'))$('credential').value='';for(const id of ['workspace','connection','bucket'])$(id).value='';$('status').textContent=message
@@ -20,7 +20,12 @@ function render(data){
     const name=document.createElement(row.is_dir&&!view?'button':'p');name.textContent=row.name+(row.is_dir?'/':'');name.className=row.is_dir&&!view?'folder':'entry-name'
     if(name.tagName==='BUTTON'){name.type='button';name.addEventListener('click',()=>{path=row.key;page=1;run()})}
     const meta=document.createElement('div');meta.className='entry-meta';meta.textContent=`${row.key} · ${row.is_dir?'Directory':row.size.toLocaleString()+' bytes'} · ${row.modified_at||'Virtual parent; no modification time'}`
-    text.append(name,meta);const badge=document.createElement('span');badge.className='type';badge.textContent=row.virtual?'VIRTUAL':row.is_dir?'FOLDER':'FILE';li.append(text,badge);list.append(li)
+    text.append(name,meta)
+    if(onDownload&&!row.is_dir&&!row.virtual){
+      const selected={scope:{...scope},key:row.key,revision:data.catalog_revision,size:row.size}
+      const download=document.createElement('button');download.type='button';download.className='secondary';download.textContent='Check download';download.addEventListener('click',()=>onDownload(selected));text.append(download)
+    }
+    const badge=document.createElement('span');badge.className='type';badge.textContent=row.virtual?'VIRTUAL':row.is_dir?'FOLDER':'FILE';li.append(text,badge);list.append(li)
   }
   if(!data.items.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=data.quarter_available?'No items match this query.':'This quarter is absent from the stored observation. No fallback was used.';$('results').replaceChildren(empty)}else $('results').replaceChildren(list)
   total=data.total;$('evidence').textContent=`Observed ${data.observed_at} · Catalog revision ${data.catalog_revision}${view?' · View revision '+data.view_revision:''} · Stored metadata, not live synchronization`

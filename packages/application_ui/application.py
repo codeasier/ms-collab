@@ -25,6 +25,8 @@ _FILES = {
     '/responsibility/': ('application/responsibility.html', 'text/html'),
     '/artifacts/': ('application/artifacts.html', 'text/html'),
     '/artifact-admin/': ('application/artifact-admin.html', 'text/html'),
+    '/app/artifact-download-ui.mjs': ('application/artifact-download-ui.mjs', 'text/javascript'),
+    '/app/artifact-downloads.mjs': ('application/artifact-downloads.mjs', 'text/javascript'),
     '/app/artifacts-session.mjs': ('application/artifacts-session.mjs', 'text/javascript'),
     '/app/artifacts.css': ('application/artifacts.css', 'text/css'),
     '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),
@@ -91,7 +93,7 @@ class ApplicationUI:
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant') if name in self._host._config.modules] + artifact_pages,
+                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant') if name in self._host._config.modules] + artifact_pages + (['artifact-downloads'] if self._host._config.artifact_downloads else []),
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
         if type(path) is str and path in {'/artifacts/', '/artifact-admin/'} and path.strip('/') not in artifact_pages:
