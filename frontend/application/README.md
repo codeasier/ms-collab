@@ -13,7 +13,7 @@
 - `style.css`: responsive shared navigation/account boundary.
 - [Tests](tests/README.md): contract and actual synthetic HTTPS acceptance.
 
-Business controllers are reused from [workspace administration](../workspace-admin/README.md)
+Business controllers are reused from [workspace administration](../workspace-admin/README.md),
 [responsibility](../responsibility/README.md), [artifact catalog](../artifacts/README.md)
 and [artifact administration](../artifact-admin/README.md), with an explicit supplied client.
 Only their separate legacy `entry.mjs` scripts create bearer clients. New session

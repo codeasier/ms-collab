@@ -101,6 +101,9 @@ request or rendering after logout/recheck/Back. A new view requires explicit
 scope submission; no cached connection discovery or upstream acquisition occurs.
 The separate [cookie pipeline workflow](../../.github/workflows/pipeline-cookie-ui.yml)
 exercises synthetic HTTPS and writes only three synthetic screenshots.
+
+### Artifact lifecycle verification
+
 - [Artifact session workflow](../../.github/workflows/artifact-session-ui.yml):
   actual HTTPS catalog/approval pages with synthetic index and provider. It checks
   cross-space/session revocation, CSRF, whole-set approval/CAS, Cancel/Escape,
