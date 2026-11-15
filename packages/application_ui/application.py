@@ -7,6 +7,10 @@ from packages.identity import AuthenticationError
 
 _ROOT = Path(__file__).resolve().parents[2] / 'frontend'
 _FILES = {
+    '/research-assets/': ('application/research-assets.html', 'text/html'),
+    '/research-assets/browser.mjs': ('research-assets/browser.mjs', 'text/javascript'),
+    '/research-assets/client.mjs': ('research-assets/client.mjs', 'text/javascript'),
+    '/research-assets/style.css': ('research-assets/style.css', 'text/css'),
     '/assistant/': ('application/assistant.html', 'text/html'),
     '/assistant/history.mjs': ('assistant/history.mjs', 'text/javascript'),
     '/assistant/client.mjs': ('assistant/client.mjs', 'text/javascript'),
@@ -74,7 +78,7 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/'}
+            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/', '/research-assets/'}
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -91,12 +95,12 @@ class ApplicationUI:
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant') if name in self._host._config.modules] + artifact_pages,
+                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant', 'research-assets') if name in self._host._config.modules] + artifact_pages,
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
         if type(path) is str and path in {'/artifacts/', '/artifact-admin/'} and path.strip('/') not in artifact_pages:
             return respond('404 Not Found', b'not_found')
-        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/assistant/' and 'assistant' not in self._host._config.modules) or (path == '/community/' and 'community' not in self._host._config.modules):
+        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/assistant/' and 'assistant' not in self._host._config.modules) or (path == '/community/' and 'community' not in self._host._config.modules) or (path == '/research-assets/' and 'research-assets' not in self._host._config.modules):
             return respond('404 Not Found', b'not_found')
         filename, media = _FILES[path]
         return respond('200 OK', (_ROOT / filename).read_bytes(), media)

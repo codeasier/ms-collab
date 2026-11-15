@@ -19,7 +19,7 @@ def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_APPLICATION_UI') != '1' or len(sys.argv) not in (3,4):
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
     mode=sys.argv[3] if len(sys.argv)==4 else ''
-    if mode not in {'','closed','pipelines'}:raise SystemExit('unknown synthetic mode')
+    if mode not in {'','closed','pipelines','assets'}:raise SystemExit('unknown synthetic mode')
     enabled=mode!='closed'
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
@@ -48,8 +48,17 @@ def main():
                 rows.append(row)
             with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
                 db.execute("UPDATE resources SET text=? WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(encode_snapshots(scope,rows),resource_id(scope)))
+        if mode=='assets':
+            from .research_asset_fixtures import provision
+            provision(policy)
         def fixture(env,start):
             path=env.get('PATH_INFO')
+            if path=='/synthetic/advance-assets' and mode=='assets':
+                if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
+                    start('403 Forbidden',[('Content-Length','0')]);return [b'']
+                with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
+                    db.execute("UPDATE research_catalog SET revision=revision+1 WHERE workspace_id='alpha' AND catalog_id='knowledge'")
+                start('200 OK',[('Content-Length','0')]);return [b'']
             if path in {'/synthetic/revoke-membership','/synthetic/revoke-session'}:
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
