@@ -7,3 +7,5 @@ API. No credentials, identity provider or server are bundled. See the
 - `admin.mjs`: page lifecycle, edit dialog and stale-request guards.
 - `client.mjs`: strict response validation and memory-only request client.
 - [Tests](tests/README.md): unit and hosted browser acceptance.
+
+Optional lifecycle/module controls require the explicitly configured [administration extension](../../packages/workspace_admin_api/README.md); the UI never supplies operator authority or module capabilities.

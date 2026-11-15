@@ -173,7 +173,7 @@ class SQLiteWorkspaceService:
                     identifier(value)
                 revision(event.revision)
                 if event.action not in {"workspace.create", "workspace.state", "membership.update",
-                                        "membership.promote", "membership.demote", "module.state", "resource.update"}:
+                                        "membership.promote", "membership.demote", "module.state", "module.install", "resource.update"}:
                     raise ValueError("invalid audit action")
             if [event.sequence for event in service._audit] != list(range(1, len(service._audit) + 1)):
                 raise ValueError("invalid audit sequence")
@@ -235,6 +235,16 @@ class SQLiteWorkspaceService:
 
     def transfer_admin(self, actor_id, workspace_id, replacement_id, *, expected_revision, replacement_revision):
         return self._call("transfer_admin", actor_id, workspace_id, replacement_id, expected_revision=expected_revision, replacement_revision=replacement_revision, write=True)
+
+    def list_control_workspaces(self, actor_id):
+        return self._call("list_control_workspaces", actor_id)
+
+    def list_modules(self, actor_id, workspace_id):
+        return self._call("list_modules", actor_id, workspace_id)
+
+    def install_module(self, actor_id, workspace_id, module_key, *, capabilities):
+        return self._call("install_module", actor_id, workspace_id, module_key,
+                          capabilities=capabilities, write=True)
 
     def set_module_state(self, actor_id, workspace_id, module_key, *, state, expected_revision):
         return self._call("set_module_state", actor_id, workspace_id, module_key, state=state, expected_revision=expected_revision, write=True)
