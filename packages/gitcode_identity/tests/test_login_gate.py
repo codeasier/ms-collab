@@ -144,8 +144,8 @@ class LoginGateTests(unittest.TestCase):
         self.assertEqual(self.counts(), (1, 0))
 
     def test_environment_credentials_and_capability_flags_are_not_activation(self):
-        # Synthetic values replace just these keys; no environment value is read
-        # or printed by the test, and the host must not import credentials.
+        # Synthetic values replace just these keys; no preexisting credential
+        # value is used or printed, and the host must not import credentials.
         with patch.dict(os.environ, {"GC_TOKEN": "synthetic-not-used",
                 "GITCODE_TOKEN": "synthetic-not-used", "GITCODE_CLIENT_ID": "synthetic-client",
                 "GITCODE_CLIENT_SECRET": "synthetic-not-used", "GITCODE_PKCE_SUPPORTED": "true"}):

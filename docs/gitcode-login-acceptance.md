@@ -12,7 +12,7 @@ a configured shell, but an absent bound-code adapter keeps login unavailable.
 | --- | --- | --- |
 | [Official OAuth guide](https://docs.gitcode.com/en/docs/apis/oauth/) and [Chinese guide](https://docs.gitcode.com/docs/apis/oauth/) | Authorization request, returned state/code, token exchange and current-user lookup | S256 parameters, verifier enforcement, downgrade rejection or OIDC nonce validation |
 | [Official token API](https://docs.gitcode.com/docs/apis/post-oauth-token-grant-type-authorization-code-code-code-client-id-client-id-client-secret-client-secret/) | Documented query fields and multipart client secret; token lifetime and scopes | PKCE request encoding, redirect binding at redemption, atomic code replay handling and concrete error semantics |
-| [Official current-user API](https://docs.gitcode.com/docs/apis/get-api-v-5-user/) | String `id` suitable for an upstream identity binding | That an arbitrary bearer token was issued for this application, a signed audience claim or a workspace role |
+| [Official current-user API](https://docs.gitcode.com/docs/apis/get-api-v-5-user/) | Documents an `id` field of type string | Identifier stability/non-reassignment semantics; that an arbitrary bearer token was issued for this application, a signed audience claim or a workspace role |
 | [GitCode's documentation repository](https://gitcode.com/GitCode/GitCode-Docs) | The old documentation repository is marked deprecated and points to the current documentation site | Authorization-server implementation or deployment provenance |
 | [A third-party Go client's `oauth.go`, pinned at `aa5c85c`](https://github.com/yi-nology/go-gitcode/blob/aa5c85ca3f2a5e05643c0a79d0b77cf970adf584/oauth.go) | This source constructs authorization URLs and sends code-exchange requests | Server-side checks: a client implementation is not evidence of the deployed authorization server |
 
@@ -80,8 +80,9 @@ authenticated maintainer answer for the target app type and endpoint version:
 3. How are codes bound to the client and exact registered callback? What exact
    redirect value, if any, must be sent during redemption? What is the code TTL,
    and is single use atomic under concurrent redemption?
-4. Which minimal scopes expose the stable user ID? How are expired/revoked tokens
-   rejected, and what trusted evidence can bound the local session lifetime?
+4. Which minimal scopes expose the user ID, and what guarantees its stability and
+   non-reassignment after rename/deletion/recreation? How are expired/revoked
+   tokens rejected, and what trusted evidence bounds the local session lifetime?
 5. Are equivalent security properties available through an authoritative OIDC or
    other transaction-bound flow? If proposed, provide the full validation contract;
    equivalence requires a separate design/review, not an automatic fallback.
