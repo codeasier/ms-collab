@@ -17,3 +17,7 @@ acceptance. It verifies Secure/HttpOnly/SameSite behavior, CSRF rejection, prote
 mutation, revoked-cookie recovery through explicit re-login, cookie deletion
 and post-logout denial. No browser screenshots contain
 real users or data, and the fixture suppresses request logs.
+
+`test_authority.py` exercises synthetic realm/generation session fences, pending
+exchange ABA, explicit login schema migration with legacy NULL authority, corrupt
+record rejection and rollback at every migration DDL. No live provider is used.

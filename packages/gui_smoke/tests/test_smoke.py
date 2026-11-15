@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from threading import Barrier, Thread
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
@@ -92,7 +93,27 @@ class SmokeTests(unittest.TestCase):
 
     def sql(self, statement, parameters=()):
         with sqlite3.connect(self.path) as connection:
-            return connection.execute(statement, parameters).fetchall()
+            return simulate_identity(connection,statement,parameters) if statement.startswith("UPDATE principals SET ") else connection.execute(statement, parameters).fetchall()
+
+    def test_legacy_snapshot_requires_explicit_new_publication(self):
+        record = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
+        record['version'] = 1; record.pop('policy_realm')
+        for binding in record['readers'].values(): binding.pop('generation')
+        self.sql("UPDATE gui_smoke_snapshots SET record=?", (json.dumps(record),))
+        before = self.sql("SELECT * FROM gui_smoke_snapshots")
+        self.assertEqual(request(self.app)["status"], 404)
+        self.assertEqual(self.sql("SELECT * FROM gui_smoke_snapshots"), before)
+        self.publish(expected_revision=1, observed_at=NOW.isoformat())
+        self.assertEqual(request(self.app)["status"], 200)
+        current = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
+        self.assertEqual(current['version'], 2)
+        self.assertEqual(current['readers']['alice']['generation'], 1)
+
+    def test_foreign_realm_snapshot_denied(self):
+        record = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
+        record['policy_realm'] = '0' * 32
+        self.sql("UPDATE gui_smoke_snapshots SET record=?", (json.dumps(record),))
+        self.assertEqual(request(self.app)["status"], 404)
 
     def test_explicit_current_reader_and_workspace_isolation(self):
         for token in ("synthetic-writer", "synthetic-admin", "synthetic-outsider", "synthetic-operator"):
@@ -270,11 +291,11 @@ class SmokeTests(unittest.TestCase):
         self.store.set_workspace_state("operator", "alpha", state="active", expected_revision=2)
         self.assertEqual(request(self.app)["status"], 404)
 
-    def test_current_principal_binding_not_unimplemented_monotonic_epoch(self):
+    def test_simulated_principal_aba_cannot_restore_snapshot(self):
         self.sql("UPDATE principals SET subject='other' WHERE id='alice'")
         self.assertEqual(request(self.app)["status"], 401)
         self.sql("UPDATE principals SET subject='alice' WHERE id='alice'")
-        self.assertEqual(request(self.app)["status"], 200)
+        self.assertEqual(request(self.app)["status"], 404)
         self.sql("UPDATE principals SET active=0 WHERE id='alice'")
         self.assertEqual(request(self.app)["status"], 401)
 

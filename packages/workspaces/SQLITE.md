@@ -122,3 +122,12 @@ current issuer/subject bindings from this store and invokes protected operations
 in that same transaction. No callback or actor identifier comes from request
 data. This does not install a provider, create a listener, modify the local demo,
 or make these low-level raw-ID methods suitable as public HTTP endpoints.
+
+## Authority schema v2
+
+Exact core definitions and closed directory/metadata guards are checked on every
+operation. Explicit `SQLiteWorkspaceService.migrate_v1(path)` upgrades only the
+known v1 schema under a writer lock; ordinary construction never upgrades. It
+retains unrelated module records and old memberships/operators without granting
+identity mutation. See the [migration contract and consumer matrix](../../docs/principal-authority.md)
+for rollback tests, old-grant invalidation boundaries and remaining work.

@@ -52,6 +52,22 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(schema_digest(db),LOGIN_DIGEST)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM sessions').fetchone()[0],0)
         self.assertFalse(check(self.config)['production_ready'])
+    def test_authority_v2_layout_and_closed_insert_survive_restore(self):
+        self.init()
+        with sqlite3.connect(self.directory/'policy.sqlite') as db:
+            realm = db.execute('SELECT realm FROM metadata').fetchone()[0]
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("INSERT INTO principals VALUES('blocked','https://identity.example.invalid','blocked',1,1,1)")
+        with sqlite3.connect(self.directory/'login.sqlite') as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+        backup(self.config,self.root/'backup');self.restored_config();restore(self.config,self.root/'backup')
+        with sqlite3.connect(self.root/'restored'/'policy.sqlite') as db:
+            self.assertEqual(db.execute('SELECT realm FROM metadata').fetchone()[0],realm)
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("INSERT INTO principals VALUES('blocked','https://identity.example.invalid','blocked',1,1,1)")
+        self.assertFalse(check(self.config)['login_enabled'])
+
     def test_check_is_read_only_and_no_network_no_auto_creation(self):
         with self.assertRaises(RuntimeFailure): check(self.config)
         self.assertFalse(self.directory.exists()); self.init(); before=self.hashes()
@@ -173,8 +189,8 @@ class RuntimeTests(unittest.TestCase):
     def test_backup_does_not_modify_source_and_excludes_pending_secret(self):
         self.init()
         with sqlite3.connect(self.directory/'login.sqlite') as db:
-            db.execute("INSERT INTO attempts VALUES('state','browser','PRIVATE_VERIFIER_MARKER',1,2)")
-            db.execute("INSERT INTO sessions VALUES('session','csrf','synthetic-subject',1,2)")
+            db.execute("INSERT INTO attempts VALUES('state','browser','PRIVATE_VERIFIER_MARKER',1,2,NULL,NULL)")
+            db.execute("INSERT INTO sessions VALUES('session','csrf','synthetic-subject',1,2,NULL,NULL,NULL)")
         before=self.hashes();backup(self.config,self.root/'backup');self.assertEqual(before,self.hashes())
         self.assertEqual({p.name for p in (self.root/'backup').iterdir()},{'policy.sqlite','backup.json'})
         self.assertNotIn(b'PRIVATE_VERIFIER_MARKER',(self.root/'backup'/'policy.sqlite').read_bytes())
@@ -184,8 +200,13 @@ class RuntimeTests(unittest.TestCase):
     def test_round_trip_validates_new_schema_and_preserves_business_rows(self):
         self.init()
         with sqlite3.connect(self.directory/'policy.sqlite') as db:
-            db.execute("INSERT INTO principals VALUES('member','https://identity.example.invalid','fictional-subject',0)")
-            db.execute("INSERT INTO principals VALUES('admin','https://identity.example.invalid','fictional-admin',1)")
+            # TEST-ONLY synthetic legacy business data. Production provisioning
+            # is closed; never turn this schema bypass into a runtime entry.
+            from packages.workspaces.sqlite import _PRINCIPAL_GUARDS
+            db.execute('DROP TRIGGER principal_replace_closed')
+            db.execute("INSERT INTO principals VALUES('member','https://identity.example.invalid','fictional-subject',0,1,1)")
+            db.execute("INSERT INTO principals VALUES('admin','https://identity.example.invalid','fictional-admin',1,1,1)")
+            db.execute(_PRINCIPAL_GUARDS[2])
             db.execute("INSERT INTO workspaces VALUES('alpha','Synthetic team','product','suspended',2)")
             db.execute("INSERT INTO memberships VALUES('alpha','admin','admin','active',1)")
         backup(self.config,self.root/'backup');self.assertTrue(verify_backup(self.config,self.root/'backup')['backup_valid'])

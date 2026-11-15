@@ -18,12 +18,17 @@ class Principal:
     issuer: str
     subject: str
     active: bool = True
+    generation: int = 1
+    authority_epoch: int = 1
 
     def __post_init__(self):
         for value in (self.id, self.issuer, self.subject):
             identifier(value)
         if type(self.active) is not bool:
             raise ValueError("invalid principal state")
+        for value in (self.generation, self.authority_epoch):
+            if type(value) is not int or not 1 <= value <= 9007199254740991:
+                raise ValueError("invalid principal authority generation")
 
 
 @dataclass(frozen=True)

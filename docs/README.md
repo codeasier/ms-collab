@@ -59,3 +59,4 @@
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.
 
 - [Configured service runtime](../packages/service_runtime/README.md): strict installation/configuration, cold backup/new-directory restore and fixed loopback TLS; real login remains disabled and no production deployment is asserted.
+- [Principal authority foundation](principal-authority.md)：realm/代次、显式 schema 升级及失效栅栏；身份变更服务和数据库门禁仍强制关闭，附未迁移消费者矩阵。

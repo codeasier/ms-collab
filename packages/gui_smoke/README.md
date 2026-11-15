@@ -64,13 +64,15 @@ explicitly republish its original audience. Adding a configured reader
 does **not** expose older snapshots until explicit republication. Membership changes or module/workspace revision
 changes likewise need an explicit new publication, not automatic resurrection.
 
-Principal issuer/subject and active state are current-value checks, **not a
-monotonic principal generation**. Restoring an identical binding or reactivating
-the same principal can restore reads if all persistent revisions still match.
-A real identity-rebinding workflow needs a separately designed monotonic epoch
-before promising to detect every intermediate change. Policy reads linearize at
-one SQLite snapshot: later revocation cannot retract already authorized/read
-bytes. This is not instantaneous cancellation or a tamper-evident database.
+V2 snapshots capture policy realm and each reader's principal generation, as well
+as issuer/subject and membership revision. Binding A→B→A or disable/reenable no
+longer restores an older snapshot in synthetic transition tests. V1 snapshots are
+retained but unreadable until an explicit newer publication recaptures authority.
+The publisher/configured local-ID grants are not yet fully generation-aware;
+actual identity transitions remain code-level closed. See the [authority consumer
+matrix](../../docs/principal-authority.md). Policy reads linearize at one SQLite
+snapshot; later revocation cannot retract already authorized/read bytes. This is
+not instantaneous cancellation or a tamper-evident database.
 HTTP assertion expiry is checked after the read and before transaction completion.
 
 ## HTTP contract
@@ -145,7 +147,7 @@ notification recipient or source repository is contacted by these tests.
 Not implemented: a network adapter, provider authentication/ownership, resource-
 level source provenance/redaction, live synchronization, isolated task execution,
 submission/cancellation/retry/reproduction, scheduling/notifications, file/log
-access, independent report origin, browser UI, production login/deployment or a
-new principal epoch. These are separate reviewed prerequisites, not disabled
+access, independent report origin, browser UI, production login/deployment or executable
+identity administration. These are separate reviewed prerequisites, not disabled
 buttons or implicit promises of compatibility. Do not expose the synthetic
 verifier or turn the trusted ingress into a user-controlled HTTP endpoint.

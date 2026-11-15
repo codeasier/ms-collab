@@ -53,7 +53,7 @@ class ArtifactDownloader:
                     or instant(row.modified_at) != instant(binding.modified_at)):
                 raise PolicyError(404, 'not_found')
             policy._match(revision, index.published_revision)
-            value = (actor, index.policy_raw, index.published, index.published_revision, raw)
+            value = (actor, index.policy_raw, index.published, index.published_revision, raw, policy._realm, policy._principals[actor].generation)
             if pinned is not None and value != pinned:
                 raise PolicyError(412, 'download_changed')
             if lease is not None:

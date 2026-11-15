@@ -77,7 +77,7 @@ checks the session again. Logout clears the local view immediately but only says
 This is not real-time revocation push: already-authorized bytes on screen cannot
 be retracted remotely. Policy and session are checked at each read; the next
 failed read clears the display. The saved-observation fences, per-instance config
-rollout limits, principal same-value ABA limitation and SQLite snapshot semantics
+rollout limits, code-level closed identity transitions and SQLite snapshot semantics
 remain those of the [GUI read model](../gui_smoke/README.md).
 
 ## Synthetic acceptance and remaining boundary
