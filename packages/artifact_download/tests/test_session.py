@@ -61,7 +61,8 @@ class SessionDownloadTests(unittest.TestCase):
     def test_confirmation_digest_is_transactional_before_admission_and_upstream(self):
         self.assertEqual(self.call('availability')['status'],200)
         changed=replace(GRANT,bindings=(replace(BINDING,sha256='a'*64),))
-        with sqlite3.connect(Path(self.tmp.name)/'policy.sqlite') as db:db.execute('UPDATE artifact_download_policies_v1 SET policy=?',(records.policy_text(changed),))
+        from packages.artifact_sync.tests.authority_fixtures import configure_bytes_fixture
+        configure_bytes_fixture(self.policy,changed)
         self.assertEqual(self.call()['status'],412);self.assertEqual(self.leases(),[]);self.assertEqual(self.objects.calls,[]);self.assertEqual(self.objects.loads,[])
     def test_digest_is_constraint_not_authority_and_required_for_session(self):
         for body in ({'key':KEY},{'key':KEY,'expected_sha256':None},{'key':KEY,'expected_sha256':'A'*64},{'key':KEY,'expected_sha256':'0'*64}):

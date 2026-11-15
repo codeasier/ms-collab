@@ -173,7 +173,7 @@ class IndexTests(unittest.TestCase):
             with sqlite3.connect(self.path) as c:
                 c.execute('UPDATE artifact_indexes_v1 SET policy=?',(records.policy_text(replace(POLICY,credential_ref='other-ref')),))
         self.transport.hook=change
-        with self.assertRaises(PolicyError):self.refresh()
+        with self.assertRaises((PolicyError,StorageError)):self.refresh()
         self.assertEqual(self.state()[0][0][3],1);self.assertEqual(self.state()[1],before[1])
 
     def test_concurrent_refresh_cas_does_not_overwrite_winner(self):

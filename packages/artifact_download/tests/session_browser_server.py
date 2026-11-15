@@ -16,6 +16,7 @@ from dataclasses import replace
 from packages.application_ui import ApplicationUI
 from packages.artifact_download.tests.session_fixtures import setup_download,KEY,DATA,BINDING,GRANT
 from packages.artifact_download import records
+from packages.artifact_sync.tests.authority_fixtures import configure_bytes_fixture
 
 
 def main():
@@ -43,10 +44,10 @@ def main():
                         rows=db.execute('SELECT state,offered FROM artifact_download_leases_v1 ORDER BY rowid').fetchall()
                     result={'calls':len(objects.calls),'loads':len(objects.loads),'leases':rows,'active':sum(r[0]=='active' for r in rows)}
                 elif action=='rotate-binding':
-                    with sqlite3.connect(Path(directory)/'policy.sqlite') as db:db.execute('UPDATE artifact_download_policies_v1 SET policy=?',(records.policy_text(replace(GRANT,bindings=(replace(BINDING,sha256='a'*64),))),))
+                    configure_bytes_fixture(policy,replace(GRANT,bindings=(replace(BINDING,sha256='a'*64),)))
                 elif action=='reset':
                     release.set();paused[0]=False;objects.data=DATA
-                    with sqlite3.connect(Path(directory)/'policy.sqlite') as db:db.execute('UPDATE artifact_download_policies_v1 SET policy=?',(records.policy_text(GRANT),))
+                    configure_bytes_fixture(policy,GRANT)
                 elif action=='pause-acquire':release.clear();paused[0]=True
                 elif action=='release-acquire':release.set()
                 elif action=='revoke-member':policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)

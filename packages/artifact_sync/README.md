@@ -6,6 +6,9 @@ metadata index, and a read-only API compatible with the existing
 authorization and browser tests. **No real cloud account, production dataset or
 live provider compatibility has been verified. Downloads remain unimplemented.**
 
+See [persistent authority, publication and regrant](GRANTS.md) for the current
+versioned payload and legacy-data contract. DTO serialization is not a grant.
+
 ## Trusted integration, not an anonymous sync endpoint
 
 1. Provision the existing SQLite workspace policy, reviewed identity verifier,
@@ -19,8 +22,8 @@ live provider compatibility has been verified. Downloads remain unimplemented.**
    `initialize_indexes(store, (policy,))` from trusted host setup. It creates two
    additive versioned tables in the **same authorization database**, never a
    second authorization cache. Identical setup repeats are safe; replacing an
-   existing policy is rejected. Grant/binding changes need an explicit trusted
-   migration and invalidation policy, not generic resource editing.
+   existing policy is rejected. Grant/binding changes require explicit reviewed `regrant_index` CAS, which
+   clears old content and invalidates child byte grants, not generic resource editing.
 4. Construct `ArtifactSynchronizer` with that store, trusted identity providers,
    one fixed provider key and a `credential_loader(ref, scope, origin)` supplied
    by an approved secret provider. It must return a `BoundCredential` matching

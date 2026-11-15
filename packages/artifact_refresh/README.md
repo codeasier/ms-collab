@@ -1,6 +1,7 @@
 # Configured artifact refresh
 
 - [Security and lifecycle contract](DESIGN.md)
+- [Generation-bound admission and index authority](../artifact_sync/GRANTS.md)
 - [Persistent admission and bounded refresh](service.py)
 - [Fixed bounded OBS page transport](transport.py)
 - [Synthetic verification](tests/README.md)
