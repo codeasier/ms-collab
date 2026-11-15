@@ -25,3 +25,5 @@
 - [Scoped pipeline provider acquisition](../packages/pipeline_sync/README.md)：读取适配服务的有界 GET 协议、逐次当前授权与原子快照发布；真实服务兼容未验，不含上游写操作。
 
 - [Authorized artifact browser](../packages/artifacts_ui/README.md)：目录、季度、分页与命名视图的受权只读界面；真实同步与下载尚未实现。
+
+- [Owner-scoped assistant saved history](../packages/assistant_history/README.md)：当前身份与权限隔离的只读事件、固定版本分页和可逆归档；不含 ACP 执行、真实网络或会话恢复。
