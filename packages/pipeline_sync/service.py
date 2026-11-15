@@ -2,11 +2,12 @@
 import json
 from datetime import datetime, timezone
 
-from packages.identity import Credential
+from packages.identity import AuthenticationError, Credential
 from packages.pipeline_api import decode_snapshots, resource_id
 from packages.pipelines import timestamp
 from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import PolicyError
+from packages.workspaces.authority import principal_pin
 from .provider import Connection, BoundCredential, ProviderError, collect, _pairs, _bound
 
 
@@ -44,6 +45,11 @@ class PipelineSynchronizer:
         baseline = {}
 
         def check(policy, actor):
+            # This pin belongs to ONE refresh, never a durable credential or a
+            # grant. Current authorization still runs in every SQLite snapshot.
+            identity = principal_pin(policy, actor)
+            if baseline and identity != baseline["identity"]:
+                raise AuthenticationError()
             policy.authorize(actor, scope.workspace_id, "pipelines", "write")
             # Configuration is a separate, explicitly enabled module, never an
             # arbitrary request URL. Reject writable connection configuration.
@@ -61,10 +67,17 @@ class PipelineSynchronizer:
             record = policy.read_resource(actor, scope.workspace_id, "pipelines", resource_id(scope))
             if record.revision != expected_revision:
                 raise PolicyError(412, "revision_mismatch")
-            if baseline and (config.revision != baseline["config"] or record.text != baseline["text"]):
+            # Pin only this actor/scope's authorization revisions, not the
+            # global epoch: unrelated users/spaces must not cancel this flow.
+            authority = (policy._workspaces[scope.workspace_id].revision,
+                         policy._memberships[(scope.workspace_id, actor)].revision,
+                         policy.get_module(actor, scope.workspace_id, "pipelines").revision,
+                         module.revision)
+            if baseline and (authority != baseline["authority"]
+                             or config.revision != baseline["config"] or record.text != baseline["text"]):
                 raise PolicyError(409, "refresh_changed")
             if not baseline:
-                baseline.update(config=config.revision, text=record.text)
+                baseline.update(identity=identity, authority=authority, config=config.revision, text=record.text)
             return record
 
         def before_read():
