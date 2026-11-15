@@ -8,3 +8,5 @@ an application factory or use it with real credentials/data.
 Hosted Chromium runs `frontend/workspace-admin/tests/browser.cjs` through actual
 HTTP, checks interrupted/repeated/error flows and emits only two synthetic PNGs.
 It does not prove real login or production deployment. [Parent](../README.md).
+
+The synthetic operator has no workspace memberships. Lifecycle/module tests use the explicitly configured administration extension and initialized retry schema, with catalog templates limited to test data.

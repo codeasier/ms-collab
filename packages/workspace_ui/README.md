@@ -1,6 +1,7 @@
 # Workspace administration integration
 
-A credential-driven management page for the configured [transactional API](../workspace_api/README.md).
+A credential-driven management page for the configured [transactional API](../workspace_api/README.md)
+and optional [lifecycle/module extension](../workspace_admin_api/README.md).
 It **is not a login flow, default identity provider, session or production deployment**.
 The original read-only local demo is untouched and has no link to this management
 page. All synthetic verification remains under [tests](tests/README.md).
@@ -43,9 +44,24 @@ in the synthetic acceptance harness.
 - Revoked memberships are not editable; the backend intentionally does not
   re-enroll them. Archived workspaces allow only backend-authorized reductions.
 
-The UI does not implement member creation, workspace creation, module management,
-admin transfer, sharing grants or provider enrollment because those endpoints
-are not yet exposed. Client controls are UX, never authorization. Shared spaces
+When explicitly configured with `WorkspaceAdministrationApplication`, the same
+page discovers the server's control capability and supports:
+
+- Operator-only minimal lifecycle metadata, explicit initial-admin creation,
+  suspend/recovery and irreversible archive with a confirmation dialog.
+- Workspace-admin module list, approved catalog installation (initially disabled),
+  revision-checked state changes and read-only archived module metadata.
+- Creation retry keys retained in page memory across an uncertain response; the
+  identical request can be retried without creating another workspace. Keys are
+  cleared on disconnect/pagehide. After leaving the page, verify platform control
+  metadata before creating again. An accepted mutation cannot be cancelled by
+  closing the dialog or aborting its request.
+
+The base API alone still supports member administration; new controls stay hidden
+when the extension is not configured. No UI flag grants backend authority.
+Member creation, admin transfer, sharing grants and provider enrollment remain
+unimplemented. The module controls only change local policy, not external jobs,
+providers, credentials or installed software. Client controls are UX, never authorization. Shared spaces
 are not a union of private data. API failures do not display provider/SQL bodies.
 
 ## Verification and remaining requirements
@@ -58,7 +74,10 @@ node --test frontend/workspace-admin/tests/*.test.mjs
 The separate hosted workflow launches a test-only verifier and temporary SQLite
 store and performs real browser-to-WSGI requests. It checks edits, cancel, last
 administrator protection, stale revisions, scope changes during pending reads,
-malformed cross-scope data, 401 clearing and viewer denial. Only two screenshots
+malformed cross-scope data, 401 clearing and viewer denial. It also covers operator
+separation, creation with a lost-response retry, product/shared spaces, lifecycle
+conflicts, irreversible archive, module install/disable/enable and wrong-scope
+module response rejection. Only two screenshots
 of synthetic data are uploaded. Real provider login, TLS/reverse-proxy behavior,
 server limits, enrollment/revocation operations and production usability remain
 unverified. All [API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)

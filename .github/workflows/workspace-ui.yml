@@ -48,6 +48,7 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
         run: |
           python3 -m unittest discover -s packages/workspace_ui/tests -v
+          python3 -m unittest discover -s packages/workspace_admin_api/tests -v
           node --test frontend/workspace-admin/tests/*.test.mjs
           node frontend/workspace-admin/tests/browser.cjs
       - name: Upload only the synthetic acceptance screenshots

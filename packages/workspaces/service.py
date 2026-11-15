@@ -190,6 +190,32 @@ class WorkspaceService:
             self._changed(actor_id, workspace_id, "membership.demote", actor_id, demoted.revision)
             return demoted, promoted
 
+    def list_control_workspaces(self, actor_id):
+        """Minimal operator lifecycle metadata, never membership or module data."""
+        with self._lock:
+            self._operator(actor_id)
+            return tuple(sorted(self._workspaces.values(), key=lambda w: w.id))
+
+    def list_modules(self, actor_id, workspace_id):
+        with self._lock:
+            self._admin(actor_id, workspace_id, allow_archived=True)
+            return tuple(sorted((m for m in self._modules.values()
+                                 if m.workspace_id == workspace_id), key=lambda m: m.key))
+
+    def install_module(self, actor_id, workspace_id, module_key, *, capabilities):
+        """Trusted catalog capabilities only; new instances start denied/disabled."""
+        with self._lock:
+            self._admin(actor_id, workspace_id)
+            if (workspace_id, module_key) in self._modules:
+                raise PolicyError(409, "module_exists")
+            try:
+                module = ModuleInstance(workspace_id, module_key, capabilities, "disabled")
+            except (ValueError, TypeError):
+                raise PolicyError(400, "invalid_module") from None
+            self._modules[(workspace_id, module_key)] = module
+            self._changed(actor_id, workspace_id, "module.install", module_key, 1, policy=True)
+            return module
+
     def set_module_state(self, actor_id, workspace_id, module_key, *, state, expected_revision):
         with self._lock:
             self._admin(actor_id, workspace_id)
