@@ -57,6 +57,9 @@ async function main() {
     await page.locator('#workspace-panel:not([hidden])').waitFor()
     assert.equal(await page.locator('#workspace-title').textContent(), 'Product Alpha')
     assert.equal(await page.locator('#open-items').textContent(), '5')
+    await page.waitForFunction(() => document.querySelector('#board-items').children.length === 2)
+    assert.match(await page.locator('#board-items').textContent(), /Improve compiler diagnostics/)
+    assert.equal(await page.locator('#board-items a').count(), 0)
     assert.equal(await page.locator('#workspace option').count(), 2)
     assert.equal(await page.locator('#workspace option[value="product-beta"]').count(), 0)
     await page.locator('#workspace').selectOption('commons')
@@ -92,6 +95,84 @@ async function main() {
     assert.equal(await page.locator('#workspace-title').textContent(), 'Shared collaboration')
     assert.equal(await page.locator('#open-items').textContent(), '1')
 
+    // Query filtering, empty state and pagination use real local HTTP.
+    await page.locator('#workspace').selectOption('product-alpha')
+    await page.waitForFunction(() => document.querySelector('#board-items').children.length === 2)
+    await page.locator('#board-limit').selectOption('1')
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-page').textContent === '1–1 of 2')
+    assert.match(await page.locator('#board-items').textContent(), /Improve compiler/)
+    // Unapplied draft filters must not change the next-page request.
+    await page.locator('#board-query').fill('not-yet-applied')
+    await page.locator('#board-next').click()
+    await page.waitForFunction(() => document.querySelector('#board-page').textContent === '2–2 of 2')
+    assert.match(await page.locator('#board-items').textContent(), /Add synthetic parser fixtures/)
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-status').textContent === 'No matching observed items.')
+    assert.equal(await page.locator('#board-items').textContent(), '')
+    assert.equal(await page.locator('#board-next').isDisabled(), true)
+    await page.locator('#board-query').fill('synthetic')
+    await page.locator('#board-kind').selectOption('pull')
+    await page.locator('#board-state').selectOption('merged')
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-page').textContent === '1–1 of 1')
+    assert.match(await page.locator('#board-items').textContent(), /Add synthetic parser fixtures/)
+
+    // Late board responses may not repopulate a newer workspace.
+    let boardSeenResolve, boardRelease, boardHandledResolve
+    const boardSeen = new Promise(resolve => { boardSeenResolve = resolve })
+    const boardGate = new Promise(resolve => { boardRelease = resolve })
+    const boardHandled = new Promise(resolve => { boardHandledResolve = resolve })
+    await page.route('**/api/workspaces/product-alpha/community-board?*', async route => {
+      boardSeenResolve()
+      await boardGate
+      await route.continue().catch(() => {})
+      boardHandledResolve()
+    })
+    await page.locator('#board-filters button').click()
+    await within(boardSeen, 'Old board was not intercepted')
+    await page.locator('#workspace').selectOption('commons')
+    await page.waitForFunction(() => document.querySelector('#board-items').textContent.includes('Document contribution workflow'))
+    boardRelease()
+    await within(boardHandled, 'Old board was not released')
+    assert.equal(await page.locator('#board-items').textContent().then(value => value.includes('compiler')), false)
+    assert.equal(await page.locator('#board-kind').inputValue(), '')
+    await page.unroute('**/api/workspaces/product-alpha/community-board?*')
+
+    // A failed board load clears old rows, preserves the shell, and retries.
+    await page.route('**/api/workspaces/commons/community-board?*', route => route.fulfill({ status: 503, body: '{}' }))
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-status').textContent.includes('retry'))
+    assert.equal(await page.locator('#board-items').textContent(), '')
+    assert.equal(await page.locator('#workspace-panel').isVisible(), true)
+    await page.unroute('**/api/workspaces/commons/community-board?*')
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-items').textContent.includes('Document contribution workflow'))
+
+    // Untrusted titles are text; a wrong workspace envelope is rejected entirely.
+    await page.route('**/api/workspaces/commons/community-board?*', async route => {
+      const response = await route.fetch()
+      const data = await response.json()
+      data.items[0].title = '<img src=x onerror=alert(1)>'
+      await route.fulfill({ response, json: data })
+    })
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-items').textContent.includes('<img'))
+    assert.equal(await page.locator('#board-items img').count(), 0)
+    await page.unroute('**/api/workspaces/commons/community-board?*')
+    await page.route('**/api/workspaces/commons/community-board?*', async route => {
+      const response = await route.fetch()
+      const data = await response.json()
+      data.items[0].workspace_id = 'product-beta'
+      await route.fulfill({ response, json: data })
+    })
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-status').textContent.includes('Invalid scoped board'))
+    assert.equal(await page.locator('#board-items').textContent(), '')
+    await page.unroute('**/api/workspaces/commons/community-board?*')
+    await page.locator('#board-filters button').click()
+    await page.waitForFunction(() => document.querySelector('#board-items').textContent.includes('Document contribution workflow'))
+
     const output = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'ms-collab-browser')
     fs.mkdirSync(output, { recursive: true })
     await page.screenshot({ path: path.join(output, 'desktop.png'), fullPage: true })
@@ -106,12 +187,13 @@ async function main() {
     await page.reload()
     await page.locator('#workspace-panel:not([hidden])').waitFor()
     assert.equal(await page.locator('#workspace-title').textContent(), 'Product Alpha')
+    await page.waitForFunction(() => document.querySelector('#board-items').children.length === 2)
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await page.screenshot({ path: path.join(output, 'mobile.png'), fullPage: true })
     assert.deepEqual(errors, [])
     assert.deepEqual(externalRequests, [])
-    console.log('PASS: desktop/narrow layout, membership-visible spaces, repeated reload, stale response suppression, error recovery; no external requests or page errors.')
+    console.log('PASS: desktop/narrow layout, membership-visible spaces, repeated reload, stale response suppression, error recovery; board filtering, pagination, stale requests, escaped text and scope envelope; no external requests or page errors.')
   } finally {
     try { if (browser) await browser.close() } finally { child.kill() }
   }

@@ -2,7 +2,9 @@
 
 `browser-smoke.cjs` starts its own loopback-only server with an ephemeral port and
 checks desktop/narrow layout, allowed workspace navigation, repeated reloads,
-stale responses, failed-request recovery and absence of page errors. It rejects
+stale responses, failed-request recovery and absence of page errors. Board checks
+cover filtering, empty results, paging with unapplied draft filters, interrupted
+workspace loads, retry, HTML-as-text rendering and rejected cross-scope envelopes. It rejects
 non-loopback page traffic. It terminates the server and browser on completion.
 
 The CI-owned workflow installs an exactly pinned Playwright in a temporary

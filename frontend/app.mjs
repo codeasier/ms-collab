@@ -1,11 +1,24 @@
 import { visibleNavigation } from './navigation.mjs'
+import { boardURL, validateBoard } from './board.mjs'
 
 const element = id => document.getElementById(id)
 let workspaces = []
 let generation = 0
 let request
+let selectedWorkspace
+let boardGeneration = 0
+let boardRequest
+let boardOffset = 0
+let appliedBoardFilters = { kind: '', state: '', q: '', limit: 10 }
+let boardAvailable = false
 
 function resetPanel() {
+  boardGeneration += 1
+  boardRequest?.abort()
+  boardAvailable = false
+  element('community-board').hidden = true
+  clearBoard()
+
   element('workspace-panel').hidden = true
   element('overview').hidden = true
   element('modules').replaceChildren()
@@ -25,6 +38,10 @@ async function showWorkspace(id) {
   request?.abort()
   request = new AbortController()
   resetPanel()
+  selectedWorkspace = id
+  element('board-filters').reset()
+  boardOffset = 0
+  appliedBoardFilters = { kind: '', state: '', q: '', limit: 10 }
   element('status').textContent = 'Loading workspace…'
   const workspace = workspaces.find(item => item.id === id)
   if (!workspace) {
@@ -53,11 +70,14 @@ async function showWorkspace(id) {
       element('open-items').textContent = overview.data.open_items
       element('overview').hidden = false
     }
+    boardAvailable = navigation.some(item => item.id === 'community-board')
+    element('community-board').hidden = !boardAvailable
     element('workspace-title').textContent = workspace.name
     element('workspace-kind').textContent = workspace.kind === 'public'
       ? 'Shared · membership required' : 'Product workspace'
     element('workspace-panel').hidden = false
     element('status').textContent = 'Synthetic demo loaded. Nothing is connected to production.'
+    if (boardAvailable) await showBoard()
   } catch (error) {
     if (current !== generation || error.name === 'AbortError') return
     resetPanel()
@@ -94,7 +114,76 @@ async function initialize() {
   }
 }
 
+function clearBoard() {
+  element('board-items').replaceChildren()
+  element('board-sources').replaceChildren()
+  element('board-page').textContent = ''
+  element('board-status').textContent = ''
+  element('board-prev').disabled = true
+  element('board-next').disabled = true
+}
+
+function boardFilters() {
+  return { kind: element('board-kind').value, state: element('board-state').value,
+    q: element('board-query').value, limit: Number(element('board-limit').value), offset: boardOffset }
+}
+
+async function showBoard() {
+  const current = ++boardGeneration
+  boardRequest?.abort()
+  boardRequest = new AbortController()
+  const id = selectedWorkspace
+  clearBoard()
+  if (!boardAvailable || !id) return
+  element('board-status').textContent = 'Loading observed items…'
+  try {
+    const filters = { ...appliedBoardFilters, offset: boardOffset }
+    const page = validateBoard(await read(boardURL(id, filters), boardRequest.signal), id, filters)
+    if (current !== boardGeneration || id !== selectedWorkspace) return
+    for (const source of page.sources) {
+      const item = document.createElement('li')
+      item.textContent = `${source.repository} · ${source.connection_id} · observed ${source.observed_at}`
+      element('board-sources').append(item)
+    }
+    for (const item of page.items) {
+      const row = document.createElement('li')
+      const heading = document.createElement('h4')
+      heading.textContent = `${item.kind === 'pull' ? 'PR' : 'Issue'} #${item.number}: ${item.title}`
+      const detail = document.createElement('p')
+      detail.textContent = `${item.repository} · ${item.connection_id} · ${item.state} · updated ${item.updated_at}`
+      const labels = document.createElement('p')
+      labels.className = 'board-labels'
+      labels.textContent = item.labels.join(' · ')
+      row.append(heading, detail, labels)
+      element('board-items').append(row)
+    }
+    element('board-status').textContent = page.items.length ? `${page.total} matching observed items. Not a live or complete repository inventory.` : 'No matching observed items.'
+    element('board-page').textContent = page.total ? `${page.offset + 1}–${Math.min(page.offset + page.items.length, page.total)} of ${page.total}` : '0 items'
+    element('board-prev').disabled = page.offset === 0
+    element('board-next').disabled = page.offset + page.limit >= page.total
+  } catch (error) {
+    if (current !== boardGeneration || error.name === 'AbortError') return
+    clearBoard()
+    element('board-status').textContent = `${error.message} Use Apply filters to retry.`
+  }
+}
+
+element('board-filters').addEventListener('submit', event => {
+  event.preventDefault()
+  boardOffset = 0
+  appliedBoardFilters = boardFilters()
+  showBoard()
+})
+element('board-prev').addEventListener('click', () => {
+  boardOffset = Math.max(0, boardOffset - appliedBoardFilters.limit)
+  showBoard()
+})
+element('board-next').addEventListener('click', () => {
+  boardOffset += appliedBoardFilters.limit
+  showBoard()
+})
+
 element('workspace').addEventListener('change', event => showWorkspace(event.target.value))
 element('retry').addEventListener('click', initialize)
-window.addEventListener('pagehide', () => { generation += 1; request?.abort() })
+window.addEventListener('pagehide', () => { generation += 1; boardGeneration += 1; request?.abort(); boardRequest?.abort() })
 initialize()

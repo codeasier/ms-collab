@@ -44,9 +44,9 @@ page = demo_board().list_items("product-alpha", kind="issue", state="open")
 
 This library is **not** an authentication/authorization boundary. A caller that
 passes another workspace's ID can read its loaded projection. The application
-must enforce membership and capability access before every query. Persistent
-storage, authenticated HTTP integration, provider synchronization and the visual
-board have not been migrated by this package.
+must enforce membership and capability access before every query. The [loopback demo](../../docs/runnable-demo.md#synthetic-community-board) now
+provides a synthetic HTTP/UI consumer. Persistent storage, authenticated HTTP
+integration and provider synchronization remain unimplemented.
 
 ## Navigation
 

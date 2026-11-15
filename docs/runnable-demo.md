@@ -38,7 +38,7 @@ node --test frontend/tests/*.test.mjs
 ```
 
 The server binds only `127.0.0.1`. It rejects foreign Host/Origin and cross-site
-requests, serves a four-file static allowlist, emits no CORS grants, and rejects
+requests, serves a five-file static allowlist, emits no CORS grants, and rejects
 write methods. No command-line option disables these restrictions.
 
 ## Read-only API
@@ -49,6 +49,7 @@ write methods. No command-line option disables these restrictions.
 | `GET /api/workspaces` | Fixed demo identity and member-visible spaces |
 | `GET /api/workspaces/{id}/modules` | Enabled modules intersected with demo grants |
 | `GET /api/workspaces/{id}/overview` | Only the authorized space's synthetic overview |
+| `GET /api/workspaces/{id}/community-board` | Authorized synthetic board page; see filters below |
 
 Unknown and inaccessible workspaces both return 404. A workspace id never becomes
 a filesystem path. Module enablement and capability are separate checks. The UI
@@ -57,10 +58,10 @@ for an older selection; the shell uses an abort controller and generation check.
 
 ## Integration seam
 
-Modules should be pure application capabilities composed at the server boundary,
-not import the server or read credentials at import time. A future community-board
-adapter can register its descriptor and scoped reader only after its independent
-review. This demo does not silently load installed packages or proxy a live service.
+The independently reviewed community-board read model is now explicitly composed
+at the server boundary. Membership, module enablement and capability are checked
+before parsing filters or reading its projection. The demo does not silently load
+installed packages or proxy a live service.
 Replacing the demo principal requires a separate authenticated, scoped context
 contract and negative tests, not accepting a user or workspace header from callers.
 
@@ -79,3 +80,27 @@ write rejection, static traversal denial and navigation filtering. They do not
 prove login, upstream integration, persistent isolation, production security,
 accessibility or visual acceptance. Browser acceptance must separately check
 workspace switching, rapid/repeated reloads, narrow layout and error recovery.
+
+## Synthetic community board
+
+The board connects the existing pure read model to a read-only HTTP route and UI.
+It is not a provider adapter or persistent/authenticated production service.
+Only `kind` (`issue`/`pull`), `state` (`open`/`closed`/`merged`), `q` (title/label,
+maximum 200 characters), `limit` (1..100) and `offset` (0..9999999) are accepted.
+Duplicate/unknown parameters return 400; denied/unknown workspaces return the same
+404 before filter validation. Identity, connection and repository cannot be
+selected through a filter. Write methods remain rejected.
+
+Apply filters resets pagination. Editing controls without applying does not
+change next/previous requests. Workspace changes clear rows immediately and reset
+filters; late old responses are discarded. Sources retain fixed fixture
+observation timestamps and the UI labels them as observed subsets, not live or
+complete inventories. The overview numbers remain a separate invented fixture,
+not totals derived from this board. Shared collaboration contains only its own
+synthetic record, never a union of private scopes.
+
+The UI renders titles and labels as text, with no provider links or raw HTML.
+Response envelopes and row/source workspace IDs must match the requested scope.
+This is defense in depth around synthetic data, **not evidence of production
+workspace isolation**. Real authentication, synchronization, administrators,
+sharing, persistence and mutation workflows are still absent.

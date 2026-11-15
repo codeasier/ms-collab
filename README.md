@@ -23,7 +23,8 @@ It is not yet a production application or a replacement for existing services.
 - Clear boundaries between platform governance and workspace self-service.
 
 These are design goals, **not implemented or verified production features**.
-The demo has fixed synthetic memberships and read-only module discovery, not real
+The demo has fixed synthetic memberships, module discovery and a read-only
+synthetic community board (filters and pagination), not real
 login, persistent workspaces, administrator workflows or production isolation.
 
 ## Migration approach

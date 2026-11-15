@@ -7,14 +7,19 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+
+from packages.community_board.demo import demo_board
 
 from .catalog import DEMO_USER, MEMBERSHIPS, OVERVIEWS, WORKSPACES, visible_modules, visible_workspaces
+
+BOARD = demo_board()
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.mjs": ("app.mjs", "text/javascript; charset=utf-8"),
+    "/board.mjs": ("board.mjs", "text/javascript; charset=utf-8"),
     "/navigation.mjs": ("navigation.mjs", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
@@ -65,10 +70,16 @@ class DemoHandler(BaseHTTPRequestHandler):
             self._reply(HTTPStatus.BAD_REQUEST, {"error": "unsupported_request"})
             return
         # No URL-provided credentials, mode switches or hidden file serving.
-        if target.scheme or target.netloc or target.query or target.fragment:
+        if target.scheme or target.netloc or target.fragment:
             self._reply(HTTPStatus.BAD_REQUEST, {"error": "unsupported_request"})
             return
         path = target.path
+        # Query parameters are allowlisted only for the read-only board endpoint.
+        parts = path.split("/")
+        board_path = len(parts) == 5 and parts[1:3] == ["api", "workspaces"] and parts[4] == "community-board"
+        if target.query and not board_path:
+            self._reply(HTTPStatus.BAD_REQUEST, {"error": "unsupported_request"})
+            return
         if path in STATIC_FILES:
             filename, media_type = STATIC_FILES[path]
             self._reply(HTTPStatus.OK, (FRONTEND / filename).read_bytes(), media_type)
@@ -88,6 +99,20 @@ class DemoHandler(BaseHTTPRequestHandler):
             if workspace_id not in WORKSPACES or workspace_id not in MEMBERSHIPS:
                 self._reply(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
+            if resource == "community-board":
+                # Authorize before parsing filters or consulting the projection.
+                # This fixed fixture is NOT production identity or tenant isolation.
+                if "community-board" not in WORKSPACES[workspace_id].modules or "community-board.read" not in MEMBERSHIPS[workspace_id]:
+                    self._reply(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                    return
+                try:
+                    options = board_options(target.query)
+                    page = BOARD.list_items(workspace_id, **options)
+                except ValueError:
+                    self._reply(HTTPStatus.BAD_REQUEST, {"error": "invalid_board_filter"})
+                    return
+                self._reply(HTTPStatus.OK, {"mode": "synthetic-demo", **page})
+                return
             if resource == "modules":
                 self._reply(HTTPStatus.OK, {"workspace_id": workspace_id,
                                             "items": visible_modules(workspace_id)})
@@ -106,6 +131,25 @@ class DemoHandler(BaseHTTPRequestHandler):
             self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "read_only_demo"})
 
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _read_only
+
+
+def board_options(query):
+    """Bounded filter vocabulary; never accept identity or provider parameters."""
+    if len(query) > 2048:
+        raise ValueError("query too long")
+    values = parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=6)
+    if any(key not in {"kind", "state", "q", "limit", "offset"} or len(value) != 1
+           for key, value in values.items()):
+        raise ValueError("unsupported or duplicate filter")
+    single = {key: value[0] for key, value in values.items()}
+    options = {"kind": single.get("kind") or None, "state": single.get("state") or None,
+               "query": single.get("q", ""), "limit": 20, "offset": 0}
+    for key in ("limit", "offset"):
+        if key in single:
+            if not single[key].isascii() or not single[key].isdigit() or len(single[key]) > 7:
+                raise ValueError("invalid pagination")
+            options[key] = int(single[key])
+    return options
 
 
 def create_server(port=8000):
