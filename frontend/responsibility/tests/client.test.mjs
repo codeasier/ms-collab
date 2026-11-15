@@ -21,6 +21,13 @@ test('field validation keeps literal paths and local principal identity semantic
  for(const patch of [{id:'ui\n'},{paths:['../x']},{paths:['a//b']},{owner_ids:['local:alice','local:alice']},{kind:'owner'},{backup:{principal_id:'local:alice',field_id:'ui'}},{extra:'not allowed'}])assert.throws(()=>validateFields([{...fields[0],...patch}]))
  assert.doesNotThrow(()=>validateFields([{...fields[0],paths:['wild*','中文/文件']}]))
 })
+test('semantic limits use Unicode code points consistently with the service',()=>{
+ const astral={...fields[0],name:'😀'.repeat(100),paths:['😀'.repeat(1024)]}
+ assert.doesNotThrow(()=>validateFields([astral]))
+ assert.throws(()=>validateFields([{...astral,name:'😀'.repeat(101)}]))
+ assert.throws(()=>validateFields([{...astral,paths:['😀'.repeat(1025)]}]))
+ assert.throws(()=>validateFields([{...astral,name:'\ud800'}]))
+})
 test('capabilities and config bind exact scope and revisions',()=>{
  assert.equal(validateCapabilities(caps,scope),caps);assert.equal(validateConfig(config,scope,caps),config)
  assert.throws(()=>validateCapabilities({...caps,scope:{...scope,workspace_id:'beta'}},scope))
@@ -39,6 +46,16 @@ test('complete path observation remains unpinned, matching only configured field
  assert.throws(()=>validateCandidates({...data,evidence_current:false,evidence_observed_at:null},scope,config,queryFrom()))
  assert.throws(()=>validateCandidates({...data,items:[{...pull,fields:[{id:'outside',kind:'developer',review_status:'unverified'}]}]},scope,config,queryFrom()))
  assert.throws(()=>validateCandidates({...data,view:'unassigned'},scope,config,queryFrom('unassigned')))
+})
+test('truncated pages, absent snapshots and inconsistent match statuses fail closed',()=>{
+ const q=queryFrom();
+ for(const patch of [{items:[]},{total:32},{snapshot_available:false,snapshot_observed_at:null},{incomplete_pull_count:2}])assert.throws(()=>validateCandidates({...candidates,...patch},scope,config,q))
+ const pull={...row,kind:'pull',assignment_status:'matched',fields:[{id:'ui',kind:'developer',review_status:'unverified'}],my_field_ids:['ui'],path_evidence:'complete_unpinned_observation',head_sha:'a'.repeat(40),base_sha:'b'.repeat(40)}
+ const data={...candidates,evidence_current:true,evidence_observed_at:'2026-01-01T00:00:00Z'}
+ for(const patch of [{fields:[],my_field_ids:[]},{assignment_status:'unassigned'},{assignment_status:'partially_mapped'},{unmapped_paths:['outside/file']}])assert.throws(()=>validateCandidates({...data,items:[{...pull,...patch}]},scope,config,q))
+ assert.throws(()=>validateCandidates({...data,snapshot_available:false,snapshot_observed_at:null,total:0,items:[]},scope,config,q))
+ const incomplete={...row,kind:'pull',assignment_status:'incomplete'}
+ assert.throws(()=>validateCandidates({...candidates,items:[incomplete],incomplete_pull_count:0},scope,config,q))
 })
 test('HTTP is same-origin memory-only bearer and CAS PUT without retry',async()=>{
  const requests=[],client=createClient({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,text:async()=>JSON.stringify({data:config})}}})
@@ -74,7 +91,7 @@ test('actual isolated HTTP service matches client schemas and CAS save',async()=
    const q=queryFrom(view,view==='field'?'review':'');const data=validateCandidates(await client.request(scope,'candidates',{query:q}),scope,config,q)
    assert.equal(data.total,view==='all'?32:view==='unassigned'?1:30)
   }
-  const updated=clone(config.fields);updated[0].name='HTTP client save'
+  const updated=clone(config.fields);updated[0].name='😀'.repeat(60);updated[0].paths=['😀'.repeat(600)]
   const saved=validateConfig(await client.request(scope,'save',{fields:updated,revision:config.revision}),scope,{revision:config.revision+1,config_version:config.config_version+1})
   assert.deepEqual(saved.fields,updated)
  }finally{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}

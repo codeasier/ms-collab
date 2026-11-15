@@ -5,7 +5,7 @@ const sha=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 const exact=(pattern,value)=>typeof value==='string'&&value.match(pattern)?.[0]===value
 const integer=(v,min=0,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(v)&&v>=min&&v<=max
 const object=(v,keys)=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',')
-const text=(v,max)=>typeof v==='string'&&v.length<=max&&!/[\u0000-\u001f\u007f]/.test(v)&&![...v].some(c=>c.codePointAt(0)>=0xd800&&c.codePointAt(0)<=0xdfff)
+const text=(v,max)=>typeof v==='string'&&[...v].length<=max&&!/[\u0000-\u001f\u007f]/.test(v)&&![...v].some(c=>c.codePointAt(0)>=0xd800&&c.codePointAt(0)<=0xdfff)
 const timestamp=v=>text(v,64)&&/(Z|[+-]\d\d:\d\d)$/.test(v)&&Number.isFinite(Date.parse(v))
 const fail=()=>{throw new Error('Invalid, incomplete or changed service response. Reload current state.')}
 const path=v=>text(v,1024)&&v.length>0&&!v.startsWith('/')&&!v.includes('\\')&&!v.split('/').some(x=>['','.','..'].includes(x))
@@ -47,7 +47,8 @@ export function queryFrom(view='all',field='',offset=0){
 export function validateCandidates(data,scope,config,query){
  if(!object(data,[...common,'mode','review_status','approval_available','transport_executable','external_effect','items','total','offset','limit','view','incomplete_pull_count','directory_status','coverage','community_revision','snapshot_available','snapshot_observed_at','evidence_current','evidence_observed_at']))fail()
  validateCommon(data,scope)
- if(data.revision!==config.revision||data.config_version!==config.config_version||data.mode!=='readonly_foundation'||data.review_status!=='unverified'||data.approval_available!==false||data.transport_executable!==false||data.external_effect!=='not_observed'||data.directory_status!=='not_implemented'||data.coverage!=='approved_observed_subset'||data.offset!==query.offset||data.limit!==query.limit||data.view!==query.view||!integer(data.total)||!integer(data.incomplete_pull_count)||!integer(data.community_revision,1)||typeof data.snapshot_available!=='boolean'||typeof data.evidence_current!=='boolean'||(data.snapshot_available?!timestamp(data.snapshot_observed_at):data.snapshot_observed_at!==null)||(data.evidence_current?!timestamp(data.evidence_observed_at):data.evidence_observed_at!==null)||!Array.isArray(data.items)||data.items.length>query.limit||data.items.length>Math.max(0,data.total-query.offset))fail()
+ if(data.revision!==config.revision||data.config_version!==config.config_version||data.mode!=='readonly_foundation'||data.review_status!=='unverified'||data.approval_available!==false||data.transport_executable!==false||data.external_effect!=='not_observed'||data.directory_status!=='not_implemented'||data.coverage!=='approved_observed_subset'||data.offset!==query.offset||data.limit!==query.limit||data.view!==query.view||!integer(data.total)||!integer(data.incomplete_pull_count)||!integer(data.community_revision,1)||typeof data.snapshot_available!=='boolean'||typeof data.evidence_current!=='boolean'||(data.snapshot_available?!timestamp(data.snapshot_observed_at):data.snapshot_observed_at!==null)||(data.evidence_current?!timestamp(data.evidence_observed_at):data.evidence_observed_at!==null)||!Array.isArray(data.items)||data.items.length!==Math.min(query.limit,Math.max(0,data.total-query.offset)))fail()
+ if(!data.snapshot_available&&(data.total!==0||data.incomplete_pull_count!==0||data.evidence_current))fail()
  const keys=new Set(),known=new Map(config.fields.map(f=>[f.id,f]))
  for(const row of data.items){
   if(!object(row,['kind','number','title','assignment_status','unmapped_paths','fields','my_field_ids','assignee_identity_status','review_status','approval_available','path_evidence','head_sha','base_sha'])||!['issue','pull'].includes(row.kind)||!integer(row.number,1)||!text(row.title,4096)||row.assignee_identity_status!=='unknown'||row.review_status!=='unverified'||row.approval_available!==false||!Array.isArray(row.fields)||row.fields.length>200||!Array.isArray(row.my_field_ids)||!unique(row.my_field_ids)||!Array.isArray(row.unmapped_paths)||row.unmapped_paths.length>4000||!row.unmapped_paths.every(path)||!unique(row.unmapped_paths))fail()
@@ -61,9 +62,12 @@ export function validateCandidates(data,scope,config,query){
    if(row.assignment_status!=='incomplete'||row.head_sha!==''||row.base_sha!==''||row.fields.length||row.unmapped_paths.length||row.my_field_ids.length)fail()
   }else if(row.path_evidence==='complete_unpinned_observation'){
    if(!['matched','partially_mapped','unassigned'].includes(row.assignment_status)||!exact(sha,row.head_sha)||!exact(sha,row.base_sha)||!data.evidence_current)fail()
+   const developers=row.fields.filter(f=>f.kind==='developer').length
+   if(row.assignment_status==='matched'&&(!developers||row.unmapped_paths.length)||row.assignment_status==='partially_mapped'&&(!developers||!row.unmapped_paths.length)||row.assignment_status==='unassigned'&&developers)fail()
   }else fail()
   if(query.view==='field'&&!ids.has(query.field_id)||query.view==='mine'&&!row.my_field_ids.length||query.view==='unassigned'&&row.kind!=='issue')fail()
  }
+ if(data.incomplete_pull_count<data.items.filter(x=>x.kind==='pull'&&x.assignment_status==='incomplete').length||query.view==='all'&&data.incomplete_pull_count>data.total)fail()
  return data
 }
 export const messageFor=status=>({401:'Authentication expired or was rejected. Reconnect.',403:'Your current permissions do not allow this change. Reload current state.',404:'This scope or capability is unavailable to your identity.',409:'The workspace or requested configuration is unavailable. Reload current state.',412:'The revision changed. Nothing was retried. Reload and review the latest configuration before editing again.',428:'A current revision is required.',400:'The service rejected this configuration. Check field IDs, paths and current member IDs.',503:'The service is unavailable. Reload to verify any uncertain write.'})[status]||'The service could not complete the request.'

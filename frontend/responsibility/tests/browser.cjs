@@ -34,7 +34,10 @@ async function main(){
   await page.locator('#reload').click();await revision(3)
   await change('Interface mapping');await page.locator('#cancel').click();assert.equal(await page.locator('#confirm-summary').textContent(),'');assert.equal(writes.length,0)
   await page.locator('#save').click();await page.keyboard.press('Escape');assert.equal(await page.locator('#confirm-scope').textContent(),'');assert.equal(writes.length,0)
+  await page.locator('#add-field').click();const draft=page.locator('#editor-fields fieldset').last()
+  await draft.locator('[data-entry="id"]').fill('docs');await draft.locator('[data-entry="name"]').fill('Documentation');await draft.locator('[data-entry="owners"]').fill('admin');await draft.locator('[data-entry="paths"]').fill('docs')
   await page.locator('#save').click();await page.evaluate(()=>{const form=document.querySelector('#confirm-form');form.requestSubmit();form.requestSubmit()});await revision(4);assert.equal(writes.length,1)
+  assert.equal((await current()).fields.at(-1).id,'docs')
   assert.equal((await current()).fields[0].name,'Interface mapping');assert.equal(await page.locator('#editor-fields fieldset').count(),0)
   // Another authorized editor wins the CAS; the stale page never overwrites or retries.
   await change('Stale local edit');const other=await current();other.fields[0].name='Concurrent configuration'

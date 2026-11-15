@@ -79,7 +79,7 @@ function inputFor(fieldset,key,label,value,{area=false,disabled=false,options}={
  const wrapper=node('label',label),input=document.createElement(options?'select':area?'textarea':'input');input.dataset.entry=key
  if(options)for(const choice of options){const option=node('option',choice);option.value=choice;input.append(option)}
  input.value=value;input.disabled=disabled;input.autocomplete='off';input.spellcheck=false
- if(!area&&!options)input.maxLength=key==='name'?100:key==='id'||key==='backup-field'?64:200
+ if(!area&&!options)input.maxLength=key==='name'?200:key==='id'||key==='backup-field'?64:200
  wrapper.append(input);if(area)wrapper.className='wide';fieldset.querySelector('.field-grid').append(wrapper)
 }
 function addField(field,isNew=false){
