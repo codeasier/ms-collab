@@ -19,6 +19,8 @@
 - [Authorized artifact HTTP API](../packages/artifacts_api/README.md)：同一 SQLite 快照中的身份/权限、季度目录和命名视图查询；无真实 provider 或下载。
 - [GitCode community snapshot adapter](../packages/community_sync/README.md)：显式凭据、只读 provider 与离线 SQLite 快照；事务授权 HTTP 另见下方社区 API。
 
+- [Authorized GUI smoke observations](../packages/gui_smoke/README.md)：固定作用域与显式读者的任务快照、状态摘要和版本分页；无外部面板代理、任务执行、日志或报告下载。
+
 - [Authorized pipeline snapshot API](../packages/pipeline_api/README.md)：同事务授权的流水线快照列表、详情与耗时趋势；只读合成数据边界，不含真实 CI 提供方或写入。
 
 - [Authorized community API](../packages/community_api/README.md)：同库事务授权、只读刷新与精确内容审批；token可见不自动共享，公开空间不绕过成员权限。
