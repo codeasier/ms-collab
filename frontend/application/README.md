@@ -24,3 +24,6 @@ The `/community/` page mounts the reviewed community board with `createCommunity
 - `pipelines.html`: credential-free pipeline scope, runs, details and durations.
   Its adapter uses the same session client, never a bearer or upstream token.
 - [Pipeline cookie acceptance](tests/README.md): independent synthetic HTTPS flow.
+
+- `research-assets.html`: read-only catalog via the shared cookie client and
+  strict [research asset controller](../research-assets/README.md).

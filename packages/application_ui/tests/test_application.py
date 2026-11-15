@@ -89,7 +89,7 @@ class UITests(unittest.TestCase):
         self.assertEqual(self.read('/',method='HEAD',extra=navigation)['status'],401)
     def test_bootstrap_has_only_fixed_non_authorizing_configuration(self):
         data=self.read('/app/bootstrap',cookies='')['body']['data']
-        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines','community','artifacts'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
+        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines','community','research-assets','artifacts'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
         self.assertNotIn('principal_id',data)
     def test_disabled_modules_and_provider_stay_fail_closed(self):
         with tempfile.TemporaryDirectory() as d:

@@ -145,3 +145,12 @@ exercises synthetic HTTPS and writes only three synthetic screenshots.
   double submission, ineffective abort and late writes, pagehide/restoration,
   computed text contrast and five desktop/mobile screenshots. These are not live
   OBS, real identity-provider, deployment or download acceptance evidence.
+
+## Research asset catalog entry
+
+`/research-assets/` is mounted only when `research-assets` is explicitly hosted.
+It reads the existing `research_assets` policy/catalog module, not binary
+artifacts. Four types, entity/text filters, stable-revision server-side paging
+and plain-text details share the current cookie session. Source declarations
+never become verified execution or incident diagnosis. No provider acquisition
+or production migration is added. See the [UI contract](../../frontend/research-assets/README.md).

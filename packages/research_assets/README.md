@@ -34,7 +34,7 @@ YAML/Markdown or source trees. Layout parsing is outside this package. Unknown
 fields fail; source paths, repository coordinates, raw documents, fault evidence,
 regular expressions and case statistics are not passthrough fields. API contract
 sections are already-selected plain text, which may describe a logical `path`.
-Text remains untrusted data; a future UI must escape it rather than render HTML.
+Text remains untrusted data; the cookie UI displays it literally, never as HTML.
 This validator is **not** a secret scrubber. Trusted adapters must select content
 approved for this catalog's audience, not everything their credentials can read.
 
@@ -134,8 +134,9 @@ Tests cover stable IDs, type-specific safe projections, all-source failure,
 source movement, current authorization, scope isolation, stale revisions,
 concurrency, revocation/expiry and audit rollback. No live provider, real data,
 legacy database upgrade, browser interaction, production deployment or source
-execution was tested or enabled. A UI and actual read-only source adapters are
-separate next slices, not implied by this API.
+execution was tested or enabled. The separate [cookie-only UI](../../frontend/research-assets/README.md) adds
+synthetic HTTPS/browser acceptance. Actual read-only source adapters, legacy
+production import and real provider compatibility remain unimplemented.
 
 - [Synthetic tests](tests/README.md)
 - [Transactional identity seam](../workspace_api/README.md)

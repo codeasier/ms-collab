@@ -18,3 +18,7 @@ Return to [composition](../README.md).
 The explicit `pipelines` browser fixture mode provisions only synthetic stored
 runs for cookie-UI acceptance; it is not provider ingestion or production setup.
 The standalone pipeline workflow separately retains provider-to-UI coverage.
+
+- `research_asset_fixtures.py` and `test_research_assets.py`: explicitly synthetic
+  four-type projections, empty/unpublished distinction and current cookie policy.
+  Browser fixture mode `assets` adds only test catalog/revision-control routes.
