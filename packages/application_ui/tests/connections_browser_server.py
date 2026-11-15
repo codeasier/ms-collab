@@ -15,7 +15,7 @@ from packages.application_host.tests.fixtures import SyntheticExchange, ISSUER
 from packages.application_ui import ApplicationUI
 from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 from packages.community_api import ConnectionPolicy, initialize
-from packages.community_api.records import encode, snapshot_data, fingerprint
+from packages.community_api.records import encode, snapshot_data, fingerprint, read, approval_text, capture_approval
 from packages.community_board import Scope, Snapshot, BoardItem
 from packages.community_sync import Connection
 from packages.login_state import LoginBinding, SQLiteLoginStore
@@ -50,12 +50,13 @@ def main():
         scopes=tuple(Scope(w,'source','sample/project') for w in spaces)
         initialize(policy,tuple(ConnectionPolicy(Connection(s),'synthetic-unused',('admin','reader'),('admin',),('admin','reviewer')) for s in scopes))
         with sqlite3.connect(path) as db:
+            current_policy=policy._load(db)
             for scope in scopes:
                 if scope.workspace_id=='empty': continue
                 items=tuple(BoardItem('issue',n,('<img src=x onerror=alert(1)>' if n==101 else f'Synthetic issue {n}') + (' beta' if scope.workspace_id=='beta' else ''), 'open','2026-01-01T00:00:00Z',('<b>plain label</b>',)) for n in range(1,102))
                 snapshot=Snapshot(scope,'2026-01-02T00:00:00Z',items)
                 approvals=[fingerprint(scope,item) for item in items if item.number in (1,101)]
-                db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?',(encode(snapshot_data(snapshot)),encode(approvals),scope.workspace_id))
+                db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?',(encode(snapshot_data(snapshot)),approval_text(approvals,capture_approval(current_policy,read(db,scope),"admin")) if scope.workspace_id!="commons" else approval_text([],None),scope.workspace_id))
         templates=tuple(CommunityConnectionTemplate('source-policy',ConnectionPolicy(Connection(scope),'synthetic-unused',('admin','reader','second'),('admin','second'),('admin','reviewer','second')),('admin',)) for scope in scopes)
         initialize_connections(policy,templates)
         clock=lambda:datetime.now(timezone.utc)

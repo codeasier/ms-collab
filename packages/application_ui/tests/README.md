@@ -40,3 +40,5 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
   serving thread never raises SystemExit inside a request; shutdown runs on a
   separate thread and the child must exit cleanly. Community and connection
   fixtures use this helper; no product shutdown or deployment behavior changes.
+
+- [Bound connection fixture startup](test_connections_fixture.py): real synthetic HTTPS child startup, strict persisted approval seeds and clean shutdown.
