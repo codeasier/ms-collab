@@ -16,3 +16,5 @@ node --test frontend/tests/*.test.mjs
 Navigation filtering is presentation only. API authorization belongs to the
 server; fixed synthetic membership checks do not constitute production identity
 or multi-tenant isolation.
+
+- [Optional browser acceptance](checks/README.md) is separate from the dependency-free unit checks.

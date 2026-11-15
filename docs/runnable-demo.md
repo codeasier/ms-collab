@@ -64,6 +64,14 @@ review. This demo does not silently load installed packages or proxy a live serv
 Replacing the demo principal requires a separate authenticated, scoped context
 contract and negative tests, not accepting a user or workspace header from callers.
 
+## Browser acceptance
+
+The optional [browser smoke check](../frontend/checks/README.md) starts its own
+local server and verifies workspace selection, repeated/interrupted loads, error
+recovery and narrow layout. Its tool installation belongs to the isolated public
+CI workflow, not to the application runtime. Screenshots contain synthetic data
+only and still require human review.
+
 ## Verification boundaries
 
 Automated checks cover local HTTP behavior, synthetic membership/module gates,
