@@ -19,3 +19,10 @@ authentication expiry and storage cleanup. Narrow-layout page/button overflow
 is asserted. Outputs are only desktop.png, mobile.png and detail.png outside the
 checkout under `$RUNNER_TEMP/ms-collab-pipeline-ui` (or the system temp directory).
 Human review of those screenshots remains required in addition to a green job.
+
+- `tasks.test.mjs`: exact revision-local task DTO, duplicate identity and global
+  coverage, status pagination, malformed/extra field denial, cookie/bearer typed
+  read-path equivalence and closed log actions.
+- [HTTPS task acceptance](../../application/tests/pipeline-tasks-browser.cjs):
+  real cookie-session pages, stale task responses/revisions, scope and membership
+  invalidation, empty/missing observations, XSS and three synthetic screenshots.

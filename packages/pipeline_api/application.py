@@ -7,6 +7,7 @@ from packages.pipelines import InvalidSnapshot, PipelineScope, summarize_duratio
 from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import PolicyError
 from .records import InvalidRecord, decode_snapshots, resource_id
+from .tasks import task_page
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _STATES = frozenset({"success", "failure", "cancelled", "timed_out", "skipped", "queued", "running", "unknown"})
@@ -31,6 +32,8 @@ class PipelineApplication(WorkspaceApplication):
         def read(policy, actor):
             # No record lookup, parsing or count calculation before current policy.
             record = policy.read_resource(actor, scope.workspace_id, "pipelines", resource_id(scope))
+            if endpoint == "tasks" and record.revision != options["revision"]:
+                raise PolicyError(412, "revision_mismatch")
             try:
                 rows = decode_snapshots(scope, record.text)
                 now = self._clock()
@@ -47,6 +50,9 @@ class PipelineApplication(WorkspaceApplication):
                     row = next((row for row in rows if row["id"] == run_id), None)
                     if row is None:
                         raise PolicyError(404, "not_found")
+                    if endpoint == "tasks":
+                        return {"scope": scope.as_dict(), "source": source,
+                                **task_page(row, offset=options["offset"], limit=options["limit"], status=options.get("status", ""))}
                     return {"scope": scope.as_dict(), "source": source, "run": row}
                 ordered = sorted(rows, key=lambda r: (timestamp(r["observed_at"]), r["id"]), reverse=True)
                 if options.get("status"):
@@ -71,37 +77,44 @@ class PipelineApplication(WorkspaceApplication):
         if type(path) is not str or len(path) > 1000 or type(query) is not str or len(query) > 256:
             raise PolicyError(400, "invalid_request")
         parts = path.split("/")
-        if (environ.get("REQUEST_METHOD") != "GET" or len(parts) not in (8, 9)
+        if (environ.get("REQUEST_METHOD") != "GET" or len(parts) not in (8, 9, 10)
                 or parts[:3] != ["", "api", "workspaces"] or parts[4] != "pipelines"
                 or any(_ID.fullmatch(p) is None for p in (parts[3], parts[5], parts[6]))
                 or parts[7] not in {"runs", "durations"}):
             raise PolicyError(404, "not_found")
         run_id = None
-        if len(parts) == 9:
-            if parts[7] != "runs" or _ID.fullmatch(parts[8]) is None or query:
+        if len(parts) >= 9:
+            if parts[7] != "runs" or _ID.fullmatch(parts[8]) is None or (len(parts) == 9 and query):
                 raise PolicyError(404, "not_found")
             run_id = parts[8]
+        endpoint = parts[7]
+        if len(parts) == 10:
+            if parts[9] != "tasks":
+                raise PolicyError(404, "not_found")
+            endpoint = "tasks"
         try:
             values = {}
-            for key, value in parse_qsl(query, strict_parsing=True, keep_blank_values=True, max_num_fields=3):
+            for key, value in parse_qsl(query, strict_parsing=True, keep_blank_values=True, max_num_fields=4):
                 if key in values:
                     raise ValueError()
                 values[key] = value
-            allowed = {"limit"} if parts[7] == "durations" else {"offset", "limit", "status"}
+            allowed = {"offset", "limit", "status", "revision"} if endpoint == "tasks" else ({"limit"} if endpoint == "durations" else {"offset", "limit", "status"})
             if not values.keys() <= allowed:
                 raise ValueError()
-            options = {"offset": 0, "limit": 30 if parts[7] == "durations" else 20}
+            if endpoint == "tasks" and "revision" not in values:
+                raise PolicyError(428, "revision_required")
+            options = {"offset": 0, "limit": 30 if endpoint == "durations" else 20}
             for key, value in values.items():
                 if key == "status":
                     if value not in _STATES:
                         raise ValueError()
                     options[key] = value
                 else:
-                    if not re.fullmatch(r"[0-9]{1,6}", value):
+                    if not re.fullmatch(r"[1-9][0-9]{0,8}" if key == "revision" else r"[0-9]{1,6}", value):
                         raise ValueError()
                     options[key] = int(value)
             if not 1 <= options["limit"] <= 100 or not 0 <= options["offset"] <= 100000:
                 raise ValueError()
-            return PipelineScope(parts[3], parts[5], parts[6]), parts[7], run_id, options
+            return PipelineScope(parts[3], parts[5], parts[6]), endpoint, run_id, options
         except (ValueError, InvalidSnapshot):
             raise PolicyError(400, "invalid_request") from None

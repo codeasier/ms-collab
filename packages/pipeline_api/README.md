@@ -103,3 +103,27 @@ python3 -m unittest discover -s packages/workspace_api/tests -v
 ```
 
 [Synthetic regression coverage](tests/README.md) · [Documentation](../../docs/README.md)
+
+## Revision-pinned stage/task observations
+
+`GET /runs/{run}/tasks?revision={revision}&offset=0&limit=20&status=failure`
+reads the same authorized resource and SQLite snapshot as the existing API.
+`revision` is mandatory, canonical positive decimal up to 999999999; a missing
+revision returns 428 and a changed resource returns 412, never a silent retry.
+The existing offset/limit/status bounds apply. This paginates at most 200 stored
+tasks, not remote history. Unknown fields, duplicate queries and writes fail.
+
+The response retains `scope`/`source`, a selected `run` summary, complete stage
+and global status-count `coverage`, the exact `filter`, and `total`/`offset`/
+`limit`/`items`. Each task has its original zero-based `stage_index`/`job_index`,
+the same allowlisted job fields, and `id_occurrences` across the entire run.
+Duplicate provider IDs are retained and explicitly ambiguous, not conflated.
+Stage arrays include empty stages; counts are not inferred stage results, and
+`stage_status_supplied` is always false. Missing details remain distinct from a
+known empty topology. Read revocation/expiry and value-free corruption errors
+reuse the original transaction boundary; no provider or writer is added.
+
+- [Why logs remain closed](LOG_BOUNDARY.md): provenance, privacy limits and the
+  prerequisites for any separately reviewed log protocol.
+- [Task UI](../../frontend/pipelines/README.md): cookie/bearer adapters both use
+  the same typed read path and version fence, never credential conversion.

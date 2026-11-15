@@ -36,3 +36,7 @@ Return to [frontend](../README.md).
   browser tooling, via [CI](../../../.github/workflows/pipeline-cookie-ui.yml).
 
 - `assistant-browser.cjs`: synthetic HTTPS saved-owner history, 105 events, archive/restore and interrupted lifecycle coverage; four screenshots, no execution.
+
+- `pipeline-tasks-browser.cjs`: synthetic projected stage/task metadata through
+  current cookies, fixed-revision pages, duplicate-ID notices, rejected extra
+  fields, close/scope races and revocation. No raw logs or real provider calls.

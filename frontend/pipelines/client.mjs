@@ -1,4 +1,4 @@
-const id = value => typeof value==='string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value)
+const id = value => typeof value==='string' && value.match(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/)?.[0]===value
 const states = new Set(['success','failure','cancelled','timed_out','skipped','queued','running','unknown'])
 const integer = (value,max=10000) => Number.isSafeInteger(value)&&value>=0&&value<=max
 const time = value => typeof value==='string'&&/(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value))
@@ -59,11 +59,12 @@ export function validateDurations(data,scope,version,items){
  }
  return data
 }
-export function readPath(scope,kind,{runID}={}){
+export function readPath(scope,kind,{runID,revision,offset=0,limit=10,status=''}={}){
  let path
  if(kind==='runs')path='/runs?limit=100'
  else if(kind==='durations')path='/durations?limit=100'
  else if(kind==='detail'&&id(runID))path='/runs/'+runID
+ else if(kind==='tasks'&&id(runID)&&integer(revision,999999999)&&revision>0&&integer(offset,100000)&&integer(limit,100)&&limit>0&&typeof status==='string'&&(!status||states.has(status))){const q=new URLSearchParams({revision:String(revision),offset:String(offset),limit:String(limit)});if(status)q.set('status',status);path='/runs/'+runID+'/tasks?'+q}
  else throw new Error('Unsupported read.')
  return baseURL(scope)+path
 }
@@ -73,10 +74,10 @@ export function createClient({fetcher=fetch}={}){
  return {
   connect(value){if(typeof value!=='string'||!value||value.length>8192||/\s/.test(value))throw new Error('Enter a valid access credential.');credential=value},
   clear(){credential=''},
-  async request(scope,kind,{runID,signal}={}){
+  async request(scope,kind,{signal,...options}={}){
    if(!credential)throw new Error('Disconnected.')
-   const response=await fetcher(readPath(scope,kind,{runID}),{method:'GET',headers:{Authorization:`Bearer ${credential}`},signal,credentials:'omit',cache:'no-store',redirect:'error'})
-   if(!response.ok){const error=new Error(({401:'Authentication expired or was rejected. Reconnect.',403:'Current workspace permissions deny access.',404:'The scope or run is unavailable to your current identity.',409:'The workspace or pipeline module is unavailable.',503:'Stored pipeline data or the service is unavailable.'})[response.status]||'Unable to read this snapshot.');error.status=response.status;throw error}
+   const response=await fetcher(readPath(scope,kind,options),{method:'GET',headers:{Authorization:`Bearer ${credential}`},signal,credentials:'omit',cache:'no-store',redirect:'error'})
+   if(!response.ok){const error=new Error(({401:'Authentication expired or was rejected. Reconnect.',403:'Current workspace permissions deny access.',404:'The scope or run is unavailable to your current identity.',409:'The workspace or pipeline module is unavailable.',412:'Stored snapshot revision changed. Reopen the scope.',428:'Current snapshot revision is required.',503:'Stored pipeline data or the service is unavailable.'})[response.status]||'Unable to read this snapshot.');error.status=response.status;throw error}
    const payload=await response.json();if(!payload||!Object.hasOwn(payload,'data'))invalid();return payload.data
   }
  }
@@ -88,4 +89,17 @@ export async function loadSnapshot(client,scope,signal){
  const durations=validateDurations(await client.request(scope,'durations',{signal}),scope,list.source.revision,list.items)
  current(signal)
  return {list,durations,revision:list.source.revision}
+}
+
+const canonical=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v)
+export function validateTasks(data,scope,version,run,{offset=0,limit=10,status=''}={}){
+ source(data,scope,version)
+ if(!integer(offset,100000)||!integer(limit,100)||limit<1||(!states.has(status)&&status!==''))invalid()
+ const stages=run.stages||[],jobs=stages.flatMap(stage=>stage.jobs),occurrences=new Map()
+ for(const job of jobs)occurrences.set(job.id,(occurrences.get(job.id)||0)+1)
+ const counts=rows=>Object.fromEntries([...states].map(state=>[state,rows.filter(j=>j.status===state).length]))
+ const all=stages.flatMap((stage,stage_index)=>stage.jobs.map((job,job_index)=>({stage_index,job_index,id:job.id,name:job.name,status:job.status,started_at:job.started_at,finished_at:job.finished_at,id_occurrences:occurrences.get(job.id)}))).filter(j=>!status||j.status===status)
+ const expected={scope,source:{kind:'stored_snapshot',revision:version,full_history_complete:false,live_provider_verified:false},run:{id:run.id,status:run.status,observed_at:run.observed_at,details_available:run.stages!==null},coverage:{stage_count:stages.length,task_count:jobs.length,status_counts:counts(jobs),duplicate_id_tasks:jobs.filter(j=>occurrences.get(j.id)>1).length,stage_status_supplied:false},stages:stages.map((stage,index)=>({index,name:stage.name,task_count:stage.jobs.length,status_counts:counts(stage.jobs)})),filter:{status},total:all.length,offset,limit,items:all.slice(offset,offset+limit)}
+ if(canonical(data)!==canonical(expected))invalid()
+ return data
 }
