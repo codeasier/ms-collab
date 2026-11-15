@@ -1,7 +1,8 @@
 """Small WSGI API connecting trusted verification to atomic SQLite policy.
 
-There is no server command, default verifier, anonymous identity, cookie/session
-or mock authentication implementation. Test doubles exist only under tests/.
+There is no server command, default verifier, anonymous or mock identity.
+An explicit session boundary can replace (never mix with) bearer verification.
+Test doubles exist only under tests/.
 """
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -38,8 +39,18 @@ class WorkspaceApplication:
     WSGI servers/proxies must supply bounded request reads, TLS, header normalization
     and limits. This adapter does not make the existing local demo authenticated.
     """
-    def __init__(self, *, store: SQLiteWorkspaceService, providers, provider_key,
-                 clock=lambda: datetime.now(timezone.utc)):
+    def __init__(self, *, store: SQLiteWorkspaceService | None = None, providers=None, provider_key=None,
+                 clock=lambda: datetime.now(timezone.utc), session_boundary=None):
+        self._session_boundary = None
+        if session_boundary is not None:
+            # Trusted constructor composition only. No assertion conversion or
+            # fallback between cookies and bearer authentication is permitted.
+            from packages.session_api import SessionWorkspaceApplication
+            if (type(session_boundary) is not SessionWorkspaceApplication
+                    or store is not None or providers is not None or provider_key is not None):
+                raise ValueError("select exactly one explicit authentication boundary")
+            self._session_boundary = session_boundary
+            return
         if type(store) is not SQLiteWorkspaceService:
             raise ValueError("an initialized SQLite policy store is required")
         providers = tuple(providers)
@@ -75,6 +86,8 @@ class WorkspaceApplication:
 
     def _verify_request(self, environ):
         """Verify an opaque bearer credential using trusted factory configuration."""
+        if self._session_boundary is not None:
+            return self._session_boundary._verify_request(environ)
         authorization = environ.get("HTTP_AUTHORIZATION", "")
         if type(authorization) is not str or not authorization.startswith("Bearer "):
             raise AuthenticationError()
@@ -91,6 +104,9 @@ class WorkspaceApplication:
         Resolve the current subject binding and evaluate the complete adapter
         operation in the same policy snapshot. Callback is trusted Python code.
         """
+        if self._session_boundary is not None:
+            return self._session_boundary._authenticated_transaction(assertion, callback,
+                write=write, with_connection=with_connection, before_commit=before_commit)
         def operation(policy, connection=None):
             # Recheck after waiting for the lock, not merely when token arrived.
             self._verifier.validate_current(self._provider_key, assertion)

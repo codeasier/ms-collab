@@ -38,3 +38,5 @@
 - [Owner-scoped assistant saved history](../packages/assistant_history/README.md)：当前身份与权限隔离的只读事件、固定版本分页和可逆归档；不含 ACP 执行、真实网络或会话恢复。
 
 - [Authorized responsibility UI](../packages/responsibility_ui/README.md)：结构化配置/CAS冲突处理与真实受权候选分页；同源内存凭据，明确指派未知、证据不等于评审，不含路径发布或上游动作。
+- [Configured unified service host](../packages/application_host/README.md)：同一Cookie/session与策略事务下的六类模块和工作空间/邀请API；真实GitCode仍fail-closed，不挂载同步、下载、旧Bearer UI或生产入口。
+- [Content-bound artifact download API](../packages/artifact_download/README.md)：独立字节授权、固定 OBS GET、完整 hash 校验后限时输出与逐块撤权；仅合成 provider/HTTP 验证，无前端下载入口或真实云验收。

@@ -118,3 +118,9 @@ The browser command requires the repository's locked Playwright tools, Chromium
 and OpenSSL. [Test fixtures](tests/README.md) use only temporary synthetic stores,
 a test-only code verifier and an isolated local certificate. No private runtime
 files, raw logs or real credentials belong in this repository.
+
+## Configured module composition
+
+The [unified service host](../application_host/README.md) now composes selected
+module dispatchers through this same cookie response envelope and transaction
+boundary. Existing standalone bearer APIs/UIs are not implicitly converted.

@@ -14,3 +14,7 @@ or credential is used. Four screenshots contain synthetic data only; hosted CI
 runs the browser because restricted local executors may not support Chromium.
 
 [Client](../README.md) · [Service composition](../../../packages/responsibility_ui/README.md)
+
+Routing uses the [single-owner test dispatcher](../../workspace-admin/tests/scenario-router.cjs)
+from the invitation lifecycle fix: scenario replacement never changes ownership
+of an in-flight request, and teardown drains handlers without ignoring errors.
