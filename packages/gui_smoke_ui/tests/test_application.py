@@ -45,6 +45,18 @@ class UITests(unittest.TestCase):
             self.assertEqual(static(self.app,**env)['status'],401)
         self.assertEqual(static(self.app,REQUEST_METHOD='HEAD')['body'],b'')
 
+    def test_public_top_level_shell_can_receive_oauth_redirect_only(self):
+        navigation={'HTTP_SEC_FETCH_SITE':'cross-site','HTTP_SEC_FETCH_MODE':'navigate','HTTP_SEC_FETCH_DEST':'document'}
+        for path in ('/','/gui-smoke/'):
+            result=static(self.app,path,**navigation)
+            self.assertEqual(result['status'],200)
+            self.assertNotIn('Set-Cookie',result['headers'])
+            self.assertEqual(result['body'],static(self.app,path)['body'])
+        for override in ({'HTTP_SEC_FETCH_DEST':'iframe'},{'HTTP_SEC_FETCH_MODE':'cors'},{'REQUEST_METHOD':'POST'},{'QUERY_STRING':'scope=alpha'},{'HTTP_AUTHORIZATION':'Bearer fake'},{'HTTP_HOST':'other.invalid'},{'wsgi.url_scheme':'http'},{'SCRIPT_NAME':'/prefix'}):
+            self.assertEqual(static(self.app,**(navigation|override))['status'],401)
+        self.assertEqual(static(self.app,'/gui-smoke/app.mjs',**navigation)['status'],401)
+        self.assertEqual(self.read(extra=navigation)['status'],401)
+
     def test_shell_has_no_embedded_identity_scope_or_execution_control(self):
         body=static(self.app)['body'].decode()
         for private in ('alice-sub','alpha-branch',self.cookies,self.csrf,'synthetic-provider','type="password"','Authorization'):

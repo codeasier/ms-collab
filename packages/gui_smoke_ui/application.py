@@ -41,7 +41,15 @@ class GuiSmokeUI:
                                               ("Content-Length", str(len(body)))])
             return [b"" if environ.get("REQUEST_METHOD") == "HEAD" else body]
         try:
-            self._host._boundary._transport_security(environ)
+            # OAuth's redirect chain retains cross-site Fetch Metadata at `/`.
+            # Only non-sensitive top-level HTML navigation may cross origins;
+            # iframe/subresource/API reads retain the normal stricter boundary.
+            public_navigation = (type(path) is str and path in {"/", "/gui-smoke/"}
+                and environ.get("REQUEST_METHOD") == "GET"
+                and not environ.get("QUERY_STRING", "")
+                and environ.get("HTTP_SEC_FETCH_MODE") == "navigate"
+                and environ.get("HTTP_SEC_FETCH_DEST") == "document")
+            self._host._boundary._transport_security(environ, callback=public_navigation)
         except AuthenticationError:
             return respond("401 Unauthorized", b"same_origin_https_required")
         if (type(path) is not str or path not in _FILES or environ.get("QUERY_STRING", "")

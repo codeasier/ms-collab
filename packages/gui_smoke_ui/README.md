@@ -40,7 +40,10 @@ callback exception, Secure/HttpOnly session cookie, readable Secure CSRF cookie,
 rotation, stale-cookie recovery, expiry and logout. Host configuration still
 determines all mounted APIs; the UI is not a separate authority or route gateway.
 Static and API responses require the configured HTTPS origin and are no-store;
-static CSP restricts scripts/styles/connect to self. Authorization headers are
+static CSP restricts scripts/styles/connect to self. The non-sensitive HTML shell
+alone permits cross-site top-level GET navigation (`navigate` + `document`) so the
+OAuth redirect chain can land at `/`. HTTPS/Host/no-bearer checks still apply;
+iframes, subresources and data APIs do not gain this exception. Authorization headers are
 rejected even if a valid session cookie is also present. No CORS is added.
 
 ## What the interface means
@@ -65,7 +68,9 @@ not HTML, markdown, external links or provider error strings.
 Every new scope/read clears the old view. Request generation and cancellation
 prevent late reads from replacing a newer scope, Back action, clear, session check
 or logout. Credentials and task content are not stored in local/session storage,
-URLs or browser history. `pagehide` clears memory/DOM/forms; BFCache restoration
+page URLs or browser history. API requests necessarily carry logical scope/task
+IDs in paths and exact branch filters in query strings; deployment access-log
+policy must account for those identifiers rather than assume they are absent. `pagehide` clears memory/DOM/forms; BFCache restoration
 checks the session again. Logout clears the local view immediately but only says
 "Signed out" after the host confirms. Failed logout is explicitly unconfirmed.
 

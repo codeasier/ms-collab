@@ -78,7 +78,10 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     assert.equal(await page.locator('.task').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');
     assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
     await login();await load();await control('/synthetic-revoke');await page.locator('#next').click();await notice('session is not active');assert.equal(await page.locator('.task').count(),0);
-    // Stale cookies recover through the same real auth flow, not a fake login.
+    // Stale-cookie recovery is explicit: first click clears an invalid cookie;
+    // a later user click starts a fresh attempt. No automatic auth write replay.
+    await page.locator('#sign-in').click();await notice('Sign-in could not be started');
+    assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
     await login();await load();await control('/synthetic-policy-revoke');await page.locator('#next').click();await notice('not available');assert.equal(await page.locator('.task').count(),0);
     assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);
     assert.equal(requests.some(r=>r.headers.authorization),false);
@@ -88,7 +91,7 @@ const assert=require('node:assert/strict');const readline=require('node:readline
     console.log('PASS: synthetic HTTPS login/cookie policy, scope isolation, consistent paging, task evidence, XSS, empty/unpublished, late response, browser history, mobile, logout, session/member revoke. No production/provider/runner acceptance.');
   } catch(error) {
     // This fixture has synthetic data only; never log cookies or request headers.
-    if(page&&!page.isClosed()){console.error('Synthetic failure state',JSON.stringify({url:page.url(),body:(await page.locator('body').innerText()).slice(0,2500),errors,paths:requests.map(r=>({path:new URL(r.url).pathname,method:r.method}))}));await page.screenshot({path:join(shots,'failure.png'),fullPage:true});}
+    if(page&&!page.isClosed()){console.error('Synthetic failure state',JSON.stringify({path:new URL(page.url()).pathname,body:(await page.locator('body').innerText()).slice(0,2500),errors,paths:requests.map(r=>({path:new URL(r.url).pathname,method:r.method}))}));await page.screenshot({path:join(shots,'failure.png'),fullPage:true});}
     throw error;
   } finally {
     if(browser)await browser.close();
