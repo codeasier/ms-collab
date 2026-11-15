@@ -1,9 +1,9 @@
-import {createClient, validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL} from './client.mjs'
+import {createClient, validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations} from './client.mjs'
 const el = id => document.getElementById(id)
 const client = createClient()
-const pendingCreations = new Map()
+const pendingCreations = new Map(), pendingInvitations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
-let managementAvailable = false
+let managementAvailable = false, saveGeneration = 0
 function cancelRequests() { generation++; controller?.abort(); controller = new AbortController(); return generation }
 function closeEditor() {
   editing = undefined; el('editor').close()
@@ -15,20 +15,26 @@ function closeAction() {
   action = undefined; el('action-dialog').close()
   for (const id of ['action-title','action-description','action-status']) el(id).textContent = ''
 }
-function closeDialogs() { closeEditor(); closeCreate(); closeAction() }
+function closeInvite() { el('invite-dialog').close(); el('invite-form').reset(); el('invite-status').textContent = '' }
+function closeDialogs() { closeEditor(); closeCreate(); closeAction(); closeInvite() }
 function clearPanel() {
   closeDialogs(); el('panel').hidden = true; el('members').replaceChildren()
   el('title').textContent = ''; el('state').textContent = ''
   el('module-panel').hidden = true; el('modules').replaceChildren(); el('module-key').replaceChildren()
   el('module-status').textContent = ''; el('install-form').hidden = true
+  el('invitation-panel').hidden = true; el('invitations').replaceChildren(); el('invitation-status').textContent = ''; el('invite-open').hidden = true
 }
-function busy(value) {
+function busy(value, ticket) {
+  if (!value && ticket !== undefined && ticket !== saveGeneration) return
+  saveGeneration++
   saving = value
   for (const control of document.querySelectorAll('dialog button,dialog input,dialog select')) control.disabled = value
+  return saveGeneration
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
-  cancelRequests(); client.clear(); clearPanel(); workspaces = []; selection = undefined
-  managementAvailable = false; pendingCreations.clear()
+  cancelRequests(); client.clear(); clearPanel(); busy(false); workspaces = []; selection = undefined
+  managementAvailable = false; pendingCreations.clear(); pendingInvitations.clear()
+  el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
   el('workspace').replaceChildren(); el('control-spaces').replaceChildren(); el('operator-panel').hidden = true
   el('session').hidden = true; el('connect').hidden = false; el('credential').value = ''; el('status').textContent = message
 }
@@ -99,6 +105,60 @@ async function loadModules(space, current) {
     el('module-status').textContent = error.status ? error.message : 'Unable to load valid module state. Reload to retry.'
   }
 }
+async function loadInbox(current) {
+  try {
+    const invitations = validateInvitations(await client.request(invitationURL(), {signal:controller.signal}))
+    if (current !== generation) return
+    for (const item of invitations) {
+      if (item.state !== 'pending') throw new Error('Invalid invitation response.')
+      const row = document.createElement('li'), label = document.createElement('span')
+      label.textContent = `${item.workspace_name} · ${item.role} · expires ${new Date(item.expires*1000).toISOString()}`
+      row.append(label)
+      for (const state of ['accepted','declined']) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = state === 'accepted' ? 'Join' : 'Decline'
+        button.setAttribute('aria-label', `${button.textContent} ${item.workspace_name}`)
+        button.addEventListener('click', () => openAction({kind:'invitation-response',title:state === 'accepted' ? 'Join workspace' : 'Decline invitation',
+          description:`${state === 'accepted' ? 'Join' : 'Decline'} ${item.workspace_name} as ${item.role}. Only the verified identity addressed by this invitation can respond. Joining grants the stated workspace role; this does not accept an external provider agreement.`,
+          path:invitationURL(undefined,item.id),body:{state},revision:item.revision,id:item.id,invitationScope:item.workspace_id}))
+        row.append(button)
+      }
+      el('inbox').append(row)
+    }
+    el('inbox-panel').hidden = false; el('inbox-status').textContent = `${invitations.length} actionable invitations (up to 100). No membership is granted until you join.`
+  } catch (error) {
+    if (current !== generation || error.name === 'AbortError') return
+    if (error.status === 401) { disconnect(error.message); return }
+    if (error.status === 404) return // Optional extension, no fake fallback data.
+    el('inbox').replaceChildren(); el('inbox-panel').hidden = false; el('inbox-status').textContent = 'Unable to load valid invitations. Reload to retry.'
+  }
+}
+async function loadInvitations(space,current) {
+  try {
+    const invitations = validateInvitations(await client.request(invitationURL(space.id), {signal:controller.signal}),space.id)
+    if (current !== generation) return
+    for (const item of invitations) {
+      const row = document.createElement('li'), label = document.createElement('span')
+      label.textContent = `${item.principal_id} · ${item.role} · ${item.state} · expires ${new Date(item.expires*1000).toISOString()}`
+      row.append(label)
+      if (['pending','expired','invalidated'].includes(item.state)) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Revoke'
+        button.setAttribute('aria-label',`Revoke invitation for ${item.principal_id}`)
+        button.addEventListener('click',()=>openAction({kind:'invitation-revoke',title:'Revoke invitation',
+          description:`Revoke the invitation for ${item.principal_id} in ${space.name}. This only cancels this pending invitation, not an already accepted membership.`,
+          path:invitationURL(space.id,item.id),body:{state:'revoked'},revision:item.revision,scope:space.id,id:item.id,invitationScope:space.id}))
+        row.append(button)
+      }
+      el('invitations').append(row)
+    }
+    el('invitation-panel').hidden = false; el('invite-open').hidden = space.state !== 'active'
+    el('invitation-status').textContent = `${invitations.length} recent invitations (up to 100, actionable first). Roles are granted only after explicit acceptance.`
+  } catch (error) {
+    if (current !== generation || error.name === 'AbortError') return
+    if (error.status === 401) { disconnect(error.message); return }
+    if (error.status === 404) return
+    el('invitations').replaceChildren(); el('invitation-panel').hidden = false; el('invitation-status').textContent = 'Unable to load valid invitation state. Reload to retry.'
+  }
+}
 async function loadMembers(id, notice='') {
   const current = cancelRequests(); clearPanel(); selection = id
   const space = workspaces.find(w => w.id === id)
@@ -118,12 +178,15 @@ async function loadMembers(id, notice='') {
     }
     el('panel').hidden = false; el('status').textContent = notice || `${members.length} memberships. Only server-authorized operations are available.`
     await loadModules(space,current)
+    if (current !== generation) return
+    await loadInvitations(space,current)
   } catch (error) { failed(error,current) }
 }
 async function reload(notice='') {
   const current = cancelRequests(); clearPanel(); el('workspace').disabled = true
   const signal = controller.signal
   el('operator-panel').hidden = true; el('control-spaces').replaceChildren(); managementAvailable = false
+  el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
   el('status').textContent = 'Loading workspaces…'
   try {
     try {
@@ -137,6 +200,8 @@ async function reload(notice='') {
         renderControls(controls)
       }
     } catch (error) { if (error.status !== 404) throw error }
+    if (current !== generation) return
+    await loadInbox(current)
     if (current !== generation) return
     const result = validateWorkspaces(await client.request('/api/workspaces', {signal}))
     if (current !== generation) return
@@ -163,7 +228,7 @@ el('connect').addEventListener('submit', event => {
 el('disconnect').addEventListener('click', () => disconnect())
 el('reload').addEventListener('click', () => reload())
 el('workspace').addEventListener('change', event => loadMembers(event.target.value))
-for (const [dialog,button,close] of [['editor','cancel',closeEditor],['create-dialog','create-cancel',closeCreate],['action-dialog','action-cancel',closeAction]]) {
+for (const [dialog,button,close] of [['editor','cancel',closeEditor],['create-dialog','create-cancel',closeCreate],['action-dialog','action-cancel',closeAction],['invite-dialog','invite-cancel',closeInvite]]) {
   el(button).addEventListener('click', close)
   el(dialog).addEventListener('cancel', event => { if (saving) event.preventDefault(); else close() })
 }
@@ -171,7 +236,7 @@ el('edit-form').addEventListener('submit', async event => {
   event.preventDefault(); if (!editing || saving) return
   const member = {...editing}, current = generation, scope = selection
   const body = {role:el('role').value,state:el('member-state').value}
-  busy(true); el('edit-status').textContent = 'Saving… Do not close the page until the result is known.'
+  const saveTurn = busy(true); el('edit-status').textContent = 'Saving… Do not close the page until the result is known.'
   try {
     const updated = await client.request(membershipURL(scope,member.principal_id), {method:'PATCH',body,revision:member.revision,signal:controller.signal})
     if (current !== generation) return
@@ -179,7 +244,7 @@ el('edit-form').addEventListener('submit', async event => {
     if (updated.principal_id !== member.principal_id) throw new Error('Invalid result')
     closeEditor(); await loadMembers(scope,'Membership saved. Current access rechecked.')
   } catch (error) { await mutationError(error,current,'edit-status',scope) }
-  finally { busy(false) }
+  finally { busy(false,saveTurn) }
 })
 el('create-open').addEventListener('click', () => { closeCreate(); el('create-dialog').showModal() })
 el('create-form').addEventListener('submit', async event => {
@@ -189,14 +254,14 @@ el('create-form').addEventListener('submit', async event => {
   const signature = JSON.stringify(body)
   if (!pendingCreations.has(signature)) pendingCreations.set(signature,crypto.randomUUID())
   const current = generation, requestKey = pendingCreations.get(signature)
-  busy(true); el('create-status').textContent = 'Creating… Do not close the page until the result is known.'
+  const saveTurn = busy(true); el('create-status').textContent = 'Creating… Do not close the page until the result is known.'
   try {
     const created = await client.request('/api/control/workspaces', {method:'POST',body,requestKey,signal:controller.signal})
     if (current !== generation) return
     validateWorkspaces([created]); pendingCreations.delete(signature); closeCreate()
     await reload(`Workspace created: ${created.name} (${created.id}). Only its nominated administrator receives membership.`)
   } catch (error) { await mutationError(error,current,'create-status') }
-  finally { busy(false) }
+  finally { busy(false,saveTurn) }
 })
 el('install-form').addEventListener('submit', event => {
   event.preventDefault(); const key = el('module-key').value
@@ -206,17 +271,37 @@ el('install-form').addEventListener('submit', event => {
 el('action-form').addEventListener('submit', async event => {
   event.preventDefault(); if (!action || saving) return
   const item = {...action}, current = generation
-  busy(true); el('action-status').textContent = 'Saving… Do not close the page until the result is known.'
+  const saveTurn = busy(true); el('action-status').textContent = 'Saving… Do not close the page until the result is known.'
   try {
     const updated = await client.request(item.path, {method:item.kind === 'install' ? 'POST' : 'PATCH',body:item.body,revision:item.revision,requestKey:item.requestKey,signal:controller.signal})
     if (current !== generation) return
     if (item.kind === 'lifecycle') { validateWorkspaces([updated]); if (updated.id !== item.id) throw new Error('Invalid result') }
+    else if (item.kind.startsWith('invitation-')) { validateInvitations([updated],item.invitationScope); if (updated.id !== item.id || updated.state !== item.body.state) throw new Error('Invalid result') }
     else { validateModules([updated],item.scope); if (updated.key !== item.id) throw new Error('Invalid result') }
     closeAction()
-    if (item.kind === 'lifecycle') await reload('Workspace lifecycle updated. Current access rechecked.')
+    if (item.kind === 'invitation-response') await reload(item.body.state === 'accepted' ? 'Workspace joined. Current memberships refreshed.' : 'Invitation declined.')
+    else if (item.kind === 'invitation-revoke') await loadMembers(item.scope,'Invitation revoked.')
+    else if (item.kind === 'lifecycle') await reload('Workspace lifecycle updated. Current access rechecked.')
     else await loadMembers(item.scope,'Module configuration updated. Current access rechecked.')
   } catch (error) { await mutationError(error,current,'action-status',item.scope) }
-  finally { busy(false) }
+  finally { busy(false,saveTurn) }
+})
+el('invite-open').addEventListener('click',()=>{ closeInvite(); el('invite-dialog').showModal() })
+el('invite-form').addEventListener('submit',async event=>{
+  event.preventDefault(); if (saving || !validId(selection)) return
+  const body = {principal_id:el('invite-principal').value.trim(),role:el('invite-role').value}
+  if (!validId(body.principal_id) || !['viewer','developer'].includes(body.role)) { el('invite-status').textContent = 'Enter an existing verified principal ID and bounded role.'; return }
+  const scope = selection, current = generation, signature = JSON.stringify([scope,body])
+  if (!pendingInvitations.has(signature)) pendingInvitations.set(signature,crypto.randomUUID())
+  const saveTurn = busy(true); el('invite-status').textContent = 'Inviting… Verify the result before closing the page.'
+  try {
+    const item = await client.request(invitationURL(scope),{method:'POST',body,requestKey:pendingInvitations.get(signature),signal:controller.signal})
+    if (current !== generation) return
+    validateInvitations([item],scope)
+    if (item.principal_id !== body.principal_id || item.role !== body.role) throw new Error('Invalid result')
+    pendingInvitations.delete(signature); closeInvite(); await loadMembers(scope,'Invitation recorded. The target must sign in and explicitly join; no message or secret link was sent.')
+  } catch (error) { await mutationError(error,current,'invite-status',scope) }
+  finally { busy(false,saveTurn) }
 })
 window.addEventListener('pagehide', () => disconnect('Disconnected. Reconnect and verify any uncertain creation before submitting another request.'))
 if (location.protocol !== 'https:' && !(location.protocol === 'http:' && location.hostname === '127.0.0.1')) {

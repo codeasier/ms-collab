@@ -49,8 +49,10 @@ jobs:
         run: |
           python3 -m unittest discover -s packages/workspace_ui/tests -v
           python3 -m unittest discover -s packages/workspace_admin_api/tests -v
+          python3 -m unittest discover -s packages/workspace_invitations/tests -v
           node --test frontend/workspace-admin/tests/*.test.mjs
           node frontend/workspace-admin/tests/browser.cjs
+          node frontend/workspace-admin/tests/invitations.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -58,6 +60,8 @@ jobs:
           path: |
             ${{ runner.temp }}/ms-collab-admin/desktop.png
             ${{ runner.temp }}/ms-collab-admin/mobile.png
+            ${{ runner.temp }}/ms-collab-admin/invitations-desktop.png
+            ${{ runner.temp }}/ms-collab-admin/invitations-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

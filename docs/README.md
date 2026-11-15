@@ -26,4 +26,5 @@
 
 - [Authorized artifact browser](../packages/artifacts_ui/README.md)：目录、季度、分页与命名视图的受权只读界面；真实同步与下载尚未实现。
 
+- [Identity-addressed workspace invitations](../packages/workspace_invitations/README.md)：可信目录指定身份的邀请/加入、24 小时过期、单次/撤销与事务审计；无公开秘密链接或默认身份。
 - [Authorized pipeline observations UI](../packages/pipeline_ui/README.md)：同源受权运行列表、详情及耗时展示；版本一致性与取消竞态防护，不含日志、执行或上游刷新。
