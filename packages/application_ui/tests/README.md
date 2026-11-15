@@ -2,6 +2,12 @@
 
 - `test_application.py`: exact-host static allowlist, public bootstrap boundaries,
   no credential HTML, closed provider, real session/CSRF/CAS and revocation checks.
+- `test_artifact_session.py`: real cookie-only catalog, explicit admin opt-in,
+  complete candidate/digest/readers/CAS, private fence, current revocation/expiry
+  and transaction rollback, no refresh or download fallback.
+- `artifact_fixtures.py`, `artifact_browser_server.py`: synthetic published and
+  staged snapshots, same real session/policy composition and opt-in HTTPS listener.
+  No fixture is imported by production code or represents real OBS verification.
 - `browser_server.py`: explicit opt-in temporary HTTPS and synthetic control routes.
   Never imported by ApplicationUI, never a deployment or identity-provider adapter.
 - [Browser/client tests](../../../frontend/application/tests/README.md) use the real

@@ -6,11 +6,16 @@
   provider navigation; shared responsibility adapter preserves exact scope/CAS.
 - `index.html`, `manage.html`, `responsibility.html`: fixed public shells, no
   credential input or user data embedded in HTML.
+- `artifacts-session.mjs`: exact-scope published catalog and complete-candidate
+  approval adapters, using the same cookie client and current CSRF proof.
+- `artifacts.html`, `artifact-admin.html`, `artifacts.css`: optional, light-theme
+  module pages. Refresh is explicitly unavailable on the unified host; no download UI.
 - `style.css`: responsive shared navigation/account boundary.
 - [Tests](tests/README.md): contract and actual synthetic HTTPS acceptance.
 
-Business controllers are reused from [workspace administration](../workspace-admin/README.md)
-and [responsibility](../responsibility/README.md), with an explicit supplied client.
+Business controllers are reused from [workspace administration](../workspace-admin/README.md),
+[responsibility](../responsibility/README.md), [artifact catalog](../artifacts/README.md)
+and [artifact administration](../artifact-admin/README.md), with an explicit supplied client.
 Only their separate legacy `entry.mjs` scripts create bearer clients. New session
 pages never import those entry scripts and never copy or fabricate a credential.
 The server is [ApplicationUI](../../packages/application_ui/README.md).

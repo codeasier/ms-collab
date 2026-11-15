@@ -1,5 +1,7 @@
-import {createClient,LatestOperation,scopeFrom,validateStatus,validateReview,validateMutation} from './client.mjs'
-const el=id=>document.getElementById(id),client=createClient(),gate=new LatestOperation()
+import {LatestOperation,scopeFrom,validateStatus,validateReview,validateMutation} from './client.mjs'
+export function mountArtifactAdministrationPage({client,sessionMode=false,onSignOut=()=>{}}){
+if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit administration client required.')
+const el=id=>document.getElementById(id),gate=new LatestOperation()
 const secure=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
 let scope,state,preview,pending,busy=false
 function closeConfirmation(){pending=undefined;el('confirmation').close();for(const id of ['confirm-title','confirm-scope','confirm-detail'])el(id).textContent=''}
@@ -7,8 +9,8 @@ function clearPreview(){preview=undefined;el('preview').hidden=true;el('rows').r
 function clearPanel(){closeConfirmation();clearPreview();state=undefined;el('panel').hidden=true;for(const id of ['scope-title','revision','publication'])el(id).textContent='';for(const id of ['refresh','review']){el(id).hidden=true;el(id).disabled=true}}
 function resetRequest(){gate.clear();busy=false;clearPanel()}
 function disconnect(message='Disconnected. An already accepted action may have completed. Reconnect and reload to verify.'){
- resetRequest();client.clear();scope=undefined;el('session').hidden=true;el('connect').hidden=!secure;el('reload').disabled=true
- for(const id of ['credential','workspace','connection','bucket'])el(id).value=''
+ resetRequest();client.clear();scope=undefined;el('session').hidden=true;if(el('connect'))el('connect').hidden=!secure;el('reload').disabled=true
+ for(const id of ['credential','workspace','connection','bucket'])if(el(id))el(id).value=''
  el('status').textContent=message
 }
 function controls(){
@@ -65,8 +67,8 @@ function confirmAction(action){
  el('confirm-detail').textContent=action==='refresh'?'Read the configured provider and create a private candidate. Previously approved metadata remains visible; no new metadata is automatically shared.':`Publish all ${preview.count} metadata rows to exactly ${preview.readers.length} configured reader IDs: ${preview.readers.join(', ')}. Current membership is still required. Digest ${preview.candidate_digest}.`
  el('confirmation').showModal()
 }
-el('connect').addEventListener('submit',event=>{event.preventDefault();if(!secure)return;const value=el('credential').value;resetRequest();try{client.connect(value)}catch{client.clear();el('credential').value='';el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter administrator-provided scope IDs to check current capabilities.'})
-el('disconnect').addEventListener('click',()=>disconnect())
+if(!sessionMode)el('connect').addEventListener('submit',event=>{event.preventDefault();if(!secure)return;const value=el('credential').value;resetRequest();try{client.connect(value)}catch{client.clear();el('credential').value='';el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter administrator-provided scope IDs to check current capabilities.'})
+el('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})
 for(const id of ['workspace','connection','bucket'])el(id).addEventListener('input',()=>{resetRequest();scope=undefined;el('reload').disabled=true;el('status').textContent='Scope changed. Check access again before reviewing or changing anything.'})
 el('scope-form').addEventListener('submit',event=>{event.preventDefault();resetRequest();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('bucket').value)}catch(error){scope=undefined;el('status').textContent=error.message;return}loadStatus()})
 el('reload').addEventListener('click',()=>loadStatus());el('review').addEventListener('click',loadReview)
@@ -85,4 +87,7 @@ el('confirm-form').addEventListener('submit',async event=>{
  }catch(error){failed(error,op)}
 })
 window.addEventListener('pagehide',()=>disconnect('Disconnected. Reconnect to load current state.'))
-if(!secure){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+if(!sessionMode&&!secure){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+
+return {activate(){el('session').hidden=false;el('status').textContent='Choose administrator-provided scope IDs. Approval does not grant anonymous or download access.'},clear:disconnect}
+}

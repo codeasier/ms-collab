@@ -5,6 +5,9 @@ import {validateWorkspaces} from '/manage/client.mjs'
 import {mountWorkspacePage} from '/manage/admin.mjs'
 import {mountPipelinePage} from '../pipelines/runs.mjs'
 import {mountResponsibilityPage} from '../responsibility/browser.mjs'
+import {createArtifactSessionClients} from './artifacts-session.mjs'
+import {mountArtifactCatalogPage} from '/artifacts/browser.mjs'
+import {mountArtifactAdministrationPage} from '/artifact-admin/browser.mjs'
 const el=id=>document.getElementById(id)
 let generation=0,bootstrap,page,busy=false,principal,ready=false,initializing=false
 const session=createSessionClient({onInvalid:message=>clear(message)})
@@ -61,6 +64,7 @@ async function start(){
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
   const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
+  for(const module of ['artifacts','artifact-admin']){const link=el('app-'+module+'-link');if(link)link.hidden=!bootstrap.ui_modules.includes(module)}
   if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
   else if(document.body.dataset.page==='responsibility'){
    if(!bootstrap.ui_modules.includes('responsibility'))throw new Error('Responsibility is not configured on this service.')
@@ -73,6 +77,11 @@ async function start(){
   else if(document.body.dataset.page==='pipelines'){
    if(!bootstrap.ui_modules.includes('pipelines'))throw new Error('Pipelines are not configured on this service.')
    page=mountPipelinePage({client:createPipelineSessionClient(session),sessionMode:true,onSignOut:signOut})
+  }
+  else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
+   const module=document.body.dataset.page;if(!bootstrap.ui_modules.includes(module))throw new Error('This artifact page is not configured on this service.')
+   const clients=createArtifactSessionClients(session)
+   page=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
   }
   ready=true;initializing=false;busy=false;el('app-recheck').textContent='Recheck session';controls();await inspect()
  }catch(error){if(turn===generation){clear(error.message||'Application configuration unavailable.');if(!ready)el('app-recheck').textContent='Retry setup'}}

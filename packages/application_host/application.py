@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 from packages.assistant_history import AssistantHistoryApplication
 from packages.gui_smoke import GuiSmokeApplication, SmokeConnection
-from packages.artifact_sync import IndexedArtifactApplication
+from packages.artifact_sync import IndexedArtifactApplication, ArtifactSynchronizer, ProviderError
+from packages.artifact_admin import ArtifactAdministrationAPI
 from packages.community_api import CommunityApplication
 from packages.pipeline_api import PipelineApplication
 from packages.research_assets import AssetApplication
@@ -25,6 +26,7 @@ class HostConfig:
     modules: tuple[str, ...] = ()
     module_catalog: tuple[ModuleTemplate, ...] = ()
     gui_smoke_connections: tuple[SmokeConnection, ...] = ()
+    artifact_administration: bool = False
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
@@ -38,6 +40,8 @@ class HostConfig:
                 or len({c.scope for c in self.gui_smoke_connections}) != len(self.gui_smoke_connections)
                 or (self.gui_smoke_connections and "gui-smoke" not in self.modules)):
             raise ValueError("explicit GUI smoke configuration requires its hosted module")
+        if type(self.artifact_administration) is not bool or (self.artifact_administration and "artifacts" not in self.modules):
+            raise ValueError("artifact administration requires its explicit hosted module")
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -68,6 +72,15 @@ class ApplicationHost:
         self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
                          **({"connections": config.gui_smoke_connections} if key == "gui-smoke" else {}))
                          for key in config.modules}
+        self._artifact_admin = None
+        if config.artifact_administration:
+            def unavailable_provider(*_):
+                # The unified host has no external acquisition configuration.
+                raise ProviderError('credential_unavailable')
+            sync = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,
+                                        credential_loader=unavailable_provider)
+            self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=False)
+
 
     def __call__(self, environ, start_response):
         # The same HTTPS/Host/Cookie/CSRF and error/response envelope protects all
@@ -87,6 +100,10 @@ class ApplicationHost:
         if parts[:3] in (["", "api", "control"], ["", "api", "invitations"]):
             return self._workspaces._dispatch(environ)
         if parts[:3] == ["", "api", "workspaces"]:
+            if len(parts) >= 5 and parts[4] == "artifact-admin":
+                if self._artifact_admin is None:
+                    raise PolicyError(404, "not_found")
+                return self._artifact_admin._dispatch(environ)
             if len(parts) >= 5 and parts[4] in _MODULES:
                 module = self._modules.get(parts[4])
                 if module is None:

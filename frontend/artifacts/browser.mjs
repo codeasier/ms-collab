@@ -1,12 +1,14 @@
-import {createClient,validateScope} from './client.mjs'
-const $=id=>document.getElementById(id), client=createClient()
+import {validateScope} from './client.mjs'
+export function mountArtifactCatalogPage({client,sessionMode=false,onSignOut=()=>{}}){
+if(!client||typeof client.quarters!=='function'||typeof client.query!=='function'||typeof client.clear!=='function')throw new Error('Explicit catalog client required.')
+const $=id=>document.getElementById(id)
 let generation=0, controller, scope=null, path='', view='', page=1, total=0, connected=false
 const queryControls=['sort','order','keyword','recursive','files-only','apply']
 function clearResults(){ $('results').replaceChildren();$('evidence').textContent='';$('page-label').textContent='';$('previous').disabled=true;$('next').disabled=true;total=0 }
 function cancel(){generation++;controller?.abort();controller=null;clearResults();return generation}
 function clearCatalog(){cancel();scope=null;path='';view='';page=1;$('catalog').hidden=true;$('quarter').replaceChildren();$('scope-title').textContent='';$('path-label').textContent='';$('view-id').value='';$('keyword').value='';$('recursive').checked=false;$('files-only').checked=false;$('sort').value='name';$('order').value='asc';setMode()}
 function disconnect(message='Disconnected. Local catalog data and the credential were cleared.'){
-  client.clear();connected=false;clearCatalog();$('connect').hidden=false;$('session').hidden=true;$('credential').value='';for(const id of ['workspace','connection','bucket'])$(id).value='';$('status').textContent=message
+  client.clear();connected=false;clearCatalog();if($('connect'))$('connect').hidden=false;$('session').hidden=true;if($('credential'))$('credential').value='';for(const id of ['workspace','connection','bucket'])$(id).value='';$('status').textContent=message
 }
 function error(error,ticket){if(ticket!==generation)return;if(error.status===401){disconnect(error.message);return}clearResults();$('status').textContent=error.status?error.message:'Unable to obtain a valid response. Check the scope and filters, then retry.'}
 function setMode(){for(const id of queryControls)$(id).disabled=!!view;$('browse').hidden=!view;$('up').disabled=!!view||!path;$('path-label').textContent=view?`Named view: ${view} (navigation disabled)`:`Folder: /${path}`}
@@ -41,10 +43,10 @@ async function openScope(){
     setMode();if(result.quarters.length)await run();else{$('status').textContent='No quarters in this stored catalog. No fallback was used.';$('path-label').textContent='Folder: /'}
   }catch(e){error(e,ticket)}
 }
-$('connect').addEventListener('submit',event=>{event.preventDefault();const value=$('credential').value;$('credential').value='';try{client.connect(value)}catch{$('status').textContent='Enter a valid opaque credential.';return}connected=true;$('connect').hidden=true;$('session').hidden=false;$('status').textContent='Credential held locally. Choose a scope to verify access.';$('workspace').focus()})
+if(!sessionMode)$('connect').addEventListener('submit',event=>{event.preventDefault();const value=$('credential').value;$('credential').value='';try{client.connect(value)}catch{$('status').textContent='Enter a valid opaque credential.';return}connected=true;$('connect').hidden=true;$('session').hidden=false;$('status').textContent='Credential held locally. Choose a scope to verify access.';$('workspace').focus()})
 $('scope-form').addEventListener('submit',event=>{event.preventDefault();if(connected)openScope()})
 for(const id of ['workspace','connection','bucket'])$(id).addEventListener('input',()=>{clearCatalog();$('status').textContent='Scope changed. Open the exact scope to load data.'})
-$('disconnect').addEventListener('click',()=>disconnect())
+$('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})
 $('reload').addEventListener('click',openScope)
 $('query-form').addEventListener('submit',event=>{event.preventDefault();page=1;run()})
 for(const id of ['sort','order','keyword','recursive','files-only'])$(id).addEventListener('input',()=>{cancel();$('status').textContent='Filters changed. Apply filters to load data.'})
@@ -56,3 +58,6 @@ $('up').addEventListener('click',()=>{if(view)return;const stem=path.replace(/\/
 $('previous').addEventListener('click',()=>{if(page>1){page--;run()}})
 $('next').addEventListener('click',()=>{if(page*Number($('page-size').value)<total){page++;run()}})
 window.addEventListener('pagehide',()=>disconnect('Disconnected when leaving this page.'))
+
+return {activate(){connected=true;$('session').hidden=false;$('status').textContent='Choose an exact scope. Current session authority is checked on every request.';$('workspace').focus()},clear:disconnect}
+}
