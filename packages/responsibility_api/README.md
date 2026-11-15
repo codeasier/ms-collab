@@ -13,7 +13,8 @@ connection and enabled `community` **and `responsibility`** modules for the spac
 Use `initialize(store, policies)` exactly once to create the dedicated versioned
 table; GETs never initialize or migrate it. Each `ResponsibilityPolicy` contains
 one `Scope(workspace_id, connection_id, repository)` and explicit `reader_ids`,
-`editor_ids`, `publisher_ids`. No role name grants these automatically.
+`editor_ids`, `publisher_ids`. Initialization captures current active same-space
+recipients into generation-bound grants. No role name grants these automatically.
 
 Construct `ResponsibilityApplication(store=..., providers=..., provider_key=...)`
 using the same authoritative directory and reviewed verifier as the base API.
@@ -27,7 +28,9 @@ capability. Reader authority never implies mutation or publication.
 Platform operators, owner/backup/committer field labels, public repositories and
 shared workspace kind bypass none of these controls. No all-workspaces fallback
 exists. Updating a trusted responsibility policy through `replace_policy` uses
-CAS and clears its previous config/evidence before a new audience can see it.
+CAS, current admin/community/write authorization and an explicit trusted actor,
+then clears its previous config/evidence before a new audience can see it. It is a
+destructive regrant, even for the same recipient list; never an automatic recovery.
 This is a trusted integration helper, not an HTTP grant-management endpoint.
 
 ## HTTP contract
@@ -41,11 +44,18 @@ and final current-identity checks apply to all operations.
 | --- | --- | --- |
 | GET | `/capabilities` | Current explicit read/edit ability; writes still reauthorize |
 | GET | `/config` | Scope, revision, config version, local identity namespace and fields |
-| PUT | `/config` | Exact `{"fields":[...]}`; explicit editor authority and `If-Match` |
+| PUT | `/config` | Exact `{"fields":[...]}`; explicit editor authority and `If-Match`; historical identity pins are retained |
+| POST | `/reconfirm` | Exact `{fields, confirmation_token}`; explicit current editor, reviewed proposal and `If-Match` |
 | GET | `/candidates` | `view=mine|all|field|unassigned`, optional `field_id`, `offset`, `limit` |
 
-Configuration bodies are bounded to 64 KiB and reject duplicate/unknown keys.
-Owner IDs must resolve to current active members of the same space. No email,
+Configuration PUT bodies are bounded to 65,536 bytes; only reconfirmation POST
+permits 65,624 bytes for the fixed token envelope, so full-budget saved fields
+remain recoverable. Both reject duplicate/unknown keys.
+Owner IDs must resolve to current active members of the same space. Historical
+owner/backup pins never silently transfer to a new identity; stale references
+block all candidate projection until an explicit reviewed confirmation or
+deliberate replacement. Config responses label historical references separately.
+See the [reference/recovery contract](REFERENCES.md). No email,
 REST-ID coercion or directory enumeration is provided. Existing field IDs cannot
 be deleted by replacement in this slice. PUT uses the record revision the caller
 read: missing returns 428, stale 412. Changes increment config/record versions
@@ -77,7 +87,8 @@ Each prepared record has only an approved open-PR item fingerprint and validated
 `PathEvidence`. At most 200 records and 1 MiB serialized data are allowed. Issues,
 unapproved targets, other scopes, invalid dates, future/backwards observations
 and stale revisions are rejected. The timestamp must cover the current community
-snapshot. No patch text, comments, raw provider response, user profile, token or
+snapshot. Publication stores publisher generation/membership/grant provenance;
+later invalidation preserves evidence but removes it from candidate projection. No patch text, comments, raw provider response, user profile, token or
 upstream URL is retained. There is **no live path acquisition** or external Issue
 identity mapper in this slice. Tests construct only synthetic observations.
 

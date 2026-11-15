@@ -66,7 +66,7 @@ def initialize(path):
     initialize_invitations(store)
     community_scopes=tuple(Scope(w,'source','sample/project') for w in spaces)
     initialize_community(store,tuple(ConnectionPolicy(Connection(s),'synthetic-reference',('admin','reader'),('admin',),('admin',)) for s in community_scopes))
-    initialize_responsibility(store,tuple(ResponsibilityPolicy(s,('admin','reader'),('admin',),('admin',)) for s in community_scopes))
+    initialize_responsibility(store,tuple(ResponsibilityPolicy(s,('admin','reader'),('admin',),('admin',)) if s.workspace_id=='alpha' else ResponsibilityPolicy(s,(),(),()) for s in community_scopes))
     artifacts=tuple(ArtifactScope(w,'source','bucket') for w in spaces)
     initialize_indexes(store,tuple(IndexPolicy(ArtifactConnection(s,'synthetic-bucket','eu-west-101'),
                              'synthetic-reference',('admin','reader'),('admin',),('admin',)) for s in artifacts))

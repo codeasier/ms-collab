@@ -51,6 +51,8 @@ jobs:
           python3 -m unittest discover -s packages/responsibility_api/tests -v
           node --test frontend/responsibility/tests/*.test.mjs
           node frontend/responsibility/tests/browser.cjs
+          node frontend/responsibility/tests/references-browser.cjs bearer
+          node frontend/responsibility/tests/references-browser.cjs cookie
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -60,6 +62,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-responsibility/mobile.png
             ${{ runner.temp }}/ms-collab-responsibility/conflict.png
             ${{ runner.temp }}/ms-collab-responsibility/editor.png
+            ${{ runner.temp }}/ms-collab-responsibility-references-bearer/*.png
+            ${{ runner.temp }}/ms-collab-responsibility-references-cookie/*.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os')
 const {spawn}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
+const {stopSyntheticFixture}=require('../../application/tests/fixture-process.cjs')
 async function within(promise){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('barrier timeout')),20000))])}finally{clearTimeout(timer)}}
 async function main(){
  const child=spawn('python3',['-m','packages.responsibility_ui.tests.browser_server'],{cwd:path.resolve(__dirname,'../../..'),stdio:['ignore','pipe','pipe']});child.stderr.resume();let browser
@@ -86,6 +87,6 @@ async function main(){
   await router.drain();await context.unrouteAll({behavior:'wait'})
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(external,[]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(downloads,[])
   console.log('Responsibility acceptance passed: real authorized API, config CAS, uncertainty, scope/identity fencing, XSS and responsive screenshots.')
- }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
+ }finally{try{await browser?.close()}finally{await stopSyntheticFixture(child)}}
 }
 main().catch(error=>{console.error(error.stack);if(error.cause)console.error(error.cause.stack);process.exitCode=1})

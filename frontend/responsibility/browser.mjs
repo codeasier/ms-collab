@@ -5,14 +5,14 @@ const el=id=>document.getElementById(id),gate=new LatestOperation()
 const secure=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
 let scope,capabilities,configuration,candidates,query,pending,busy=false
 const node=(tag,value,className)=>{const n=document.createElement(tag);n.textContent=value;if(className)n.className=className;return n}
-function closeConfirmation(){pending=undefined;el('confirmation').close();el('confirm-scope').textContent='';el('confirm-summary').textContent=''}
+function closeConfirmation(){pending=undefined;el('confirmation').close();el('confirm-scope').textContent='';el('confirm-summary').textContent='';el('confirm-title').textContent='';el('confirm-submit').textContent=''}
 function clearEditor(){closeConfirmation();el('editor').hidden=true;el('editor-fields').replaceChildren()}
 function clearCandidates(){candidates=undefined;el('candidates').replaceChildren();for(const id of ['coverage','observation','page'])el(id).textContent='';for(const id of ['previous','next'])el(id).disabled=true}
-function clearPanel(){clearEditor();clearCandidates();capabilities=configuration=undefined;el('panel').hidden=true;el('edit').hidden=true;el('configuration').replaceChildren();el('field').replaceChildren();for(const id of ['scope-title','version'])el(id).textContent=''}
+function clearPanel(){clearEditor();clearCandidates();capabilities=configuration=undefined;el('panel').hidden=true;el('edit').hidden=true;el('reconfirm').hidden=true;el('reference-status').textContent='';el('configuration').replaceChildren();el('field').replaceChildren();for(const id of ['scope-title','version'])el(id).textContent=''}
 function controls(){
- el('reload').disabled=busy||!scope;el('edit').disabled=busy||!capabilities?.edit;el('save').disabled=busy||!capabilities?.edit
+ el('reload').disabled=busy||!scope;el('edit').disabled=busy||!capabilities?.edit;el('save').disabled=busy||!capabilities?.edit;el('reconfirm').disabled=busy||!capabilities?.edit||!configuration?.references.confirmation_token
  el('add-field').disabled=busy||!capabilities?.edit||el('editor-fields').children.length>=200;el('cancel-edit').disabled=busy
- for(const input of el('filters').elements)input.disabled=busy||!configuration
+ for(const input of el('filters').elements)input.disabled=busy||!configuration||configuration.references.state!=='current'
  for(const fieldset of el('editor-fields').children)fieldset.disabled=busy
  el('previous').disabled=busy||!candidates||query.offset===0
  el('next').disabled=busy||!candidates||query.offset+query.limit>=candidates.total
@@ -30,11 +30,14 @@ function failed(error,operation){
  el('status').textContent=error.status?error.message:'Unable to verify a complete response. A save may already have completed. Reload current state before editing again; nothing was retried.'
 }
 function renderConfig(){
+ const stale=configuration.references.state==='reconfirmation_required'
+ el('reference-status').textContent=stale?`Historical, unconfirmed local IDs: ${configuration.references.stale_ids.join(', ')}. They do not identify the current people. All candidate views are unavailable until stale IDs are replaced or explicitly reconfirmed. Ordinary Save never rebinds a historical ID.${capabilities.edit&&!configuration.references.confirmation_token?' Reconfirmation is unavailable: replace ineligible IDs through an explicit edit.':''}`:'Ownership references are current local identity and membership references, not permissions.'
+ el('reconfirm').hidden=!stale||!capabilities.edit||!configuration.references.confirmation_token
  el('scope-title').textContent=`${scope.workspace_id} / ${scope.connection_id} / ${scope.repository}`
  el('version').textContent=`Record revision ${configuration.revision} · Configuration version ${configuration.config_version} · ${capabilities.edit?'Editor permission verified':'Read-only access'}`
  for(const field of configuration.fields){
-  const item=node('li','');item.append(node('span',field.kind+' field','tag'),node('strong',field.name),node('span',`ID: ${field.id}`,'detail'),node('span',`Ordered owner IDs: ${field.owner_ids.join(', ')}`,'detail'),node('span',`Literal paths: ${field.paths.join(' · ')}`,'detail'))
-  if(field.backup)item.append(node('span',`Backup relationship: ${field.backup.principal_id} from ${field.backup.field_id}. Not automatic assignment.`,'detail'))
+  const item=node('li','');item.append(node('span',field.kind+' field','tag'),node('strong',field.name),node('span',`ID: ${field.id}`,'detail'),node('span',`Ordered owner IDs: ${field.owner_ids.map(id=>id+(configuration.references.stale_ids.includes(id)?' (historical, unconfirmed)':'')).join(', ')}`,'detail'),node('span',`Literal paths: ${field.paths.join(' · ')}`,'detail'))
+  if(field.backup)item.append(node('span',`Backup relationship: ${field.backup.principal_id}${configuration.references.stale_ids.includes(field.backup.principal_id)?' (historical, unconfirmed)':''} from ${field.backup.field_id}. Not automatic assignment.`,'detail'))
   el('configuration').append(item)
   const option=node('option',field.name+' ('+field.id+')');option.value=field.id;el('field').append(option)
  }
@@ -63,14 +66,17 @@ async function loadScope(notice=''){
   validateCapabilities(caps,selected)
   const config=await client.request(selected,'config',{signal:operation.signal});if(!gate.current(operation))return
   validateConfig(config,selected,caps)
-  const requested=queryFrom(),result=await client.request(selected,'candidates',{query:requested,signal:operation.signal});if(!gate.current(operation))return
-  validateCandidates(result,selected,config,requested)
+  const requested=queryFrom();let result
+  if(config.references.state==='current'){
+   result=await client.request(selected,'candidates',{query:requested,signal:operation.signal});if(!gate.current(operation))return
+   validateCandidates(result,selected,config,requested)
+  }
   capabilities=caps.capabilities;configuration=config;candidates=result;query=requested;busy=false;el('view').value='all';el('field-label').hidden=true
-  renderConfig();renderCandidates();controls();el('status').textContent=notice||'Current scope loaded. These are observed matches, not assignments or review results.'
+  renderConfig();if(result)renderCandidates();controls();el('status').textContent=notice||(result?'Current scope loaded. These are observed matches, not assignments or review results.':'Retained configuration loaded. Historical ownership references require explicit review; candidates are unavailable.')
  }catch(error){failed(error,operation)}
 }
 async function loadCandidates(requested){
- if(!scope||!configuration||busy)return
+ if(!scope||!configuration||busy||configuration.references.state!=='current')return
  const selected={...scope},config=configuration,operation=gate.begin();clearCandidates();busy=true;controls();el('status').textContent='Loading this approved observation view…'
  try{
   const result=await client.request(selected,'candidates',{query:requested,signal:operation.signal});if(!gate.current(operation))return
@@ -118,21 +124,31 @@ el('configuration-form').addEventListener('submit',event=>{
  event.preventDefault();if(busy||!scope||!configuration||!capabilities?.edit)return
  try{
   const fields=readDraft();if(sameFields(fields,configuration.fields)){el('status').textContent='No configuration changes to save.';return}
-  pending={scope:{...scope},revision:configuration.revision,config_version:configuration.config_version,fields}
+  pending={action:'save',scope:{...scope},revision:configuration.revision,config_version:configuration.config_version,fields}
+  el('confirm-title').textContent='Save this configuration once?';el('confirm-submit').textContent='Save once'
   el('confirm-scope').textContent=`${scope.workspace_id} / ${scope.connection_id} / ${scope.repository} · revision ${pending.revision}`
   el('confirm-summary').textContent=`Save the complete configuration of ${fields.length} fields. Owner IDs and current permissions will be rechecked by the service.`
   el('confirmation').showModal()
  }catch{el('status').textContent='Check stable IDs, names, literal paths, unique owners and cross-field backup relationships before saving.'}
 })
-el('cancel').addEventListener('click',closeConfirmation);el('confirmation').addEventListener('cancel',closeConfirmation)
+el('reconfirm').addEventListener('click',()=>{
+ if(busy||!scope||!configuration||!capabilities?.edit||configuration.references.state!=='reconfirmation_required'||!configuration.references.confirmation_token)return
+ const fields=structuredClone(configuration.fields),ids=[...new Set(fields.flatMap(f=>[...f.owner_ids,...(f.backup?[f.backup.principal_id]:[])]))]
+ pending={action:'reconfirm',scope:{...scope},revision:configuration.revision,config_version:configuration.config_version,fields,confirmation_token:configuration.references.confirmation_token}
+ el('confirm-title').textContent='Reconfirm current local identities once?';el('confirm-submit').textContent='Reconfirm once'
+ el('confirm-scope').textContent=`${scope.workspace_id} / ${scope.connection_id} / ${scope.repository} · revision ${pending.revision}`
+ el('confirm-summary').textContent=`Every listed owner and backup ID will be explicitly bound to its CURRENT local identity and membership: ${ids.join(', ')}. This does not restore the original person or grant permissions. Fields and paths remain unchanged. Cancel if these current identities are not the people you intend.`
+ el('confirmation').showModal()
+})
+el('cancel').addEventListener('click',closeConfirmation);el('confirmation').addEventListener('cancel',closeConfirmation);el('confirmation').addEventListener('close',()=>{if(!el('confirmation').open)closeConfirmation()})
 el('confirm-form').addEventListener('submit',async event=>{
  event.preventDefault();if(!pending||busy)return
- const selected=pending,operation=gate.begin();closeConfirmation();clearCandidates();busy=true;controls();el('status').textContent='Saving once. If interrupted, reload to verify the outcome; nothing is retried automatically.'
+ const selected=pending,operation=gate.begin();closeConfirmation();clearCandidates();busy=true;controls();el('status').textContent=(selected.action==='reconfirm'?'Reconfirming once.':'Saving once.')+' If interrupted, reload to verify the outcome; nothing is retried automatically.'
  try{
-  const result=await client.request(selected.scope,'save',{fields:selected.fields,revision:selected.revision,signal:operation.signal});if(!gate.current(operation))return
+  const result=await client.request(selected.scope,selected.action,{fields:selected.fields,revision:selected.revision,confirmation_token:selected.confirmation_token,signal:operation.signal});if(!gate.current(operation))return
   validateConfig(result,selected.scope,{revision:selected.revision+1,config_version:selected.config_version+1})
-  if(!sameFields(result.fields,selected.fields))throw new Error('Unexpected saved configuration.')
-  await loadScope('Configuration saved and current state reloaded. No assignment or review workflow was executed.')
+  if(result.references.state!=='current'||!sameFields(result.fields,selected.fields))throw new Error('Unexpected saved configuration.')
+  await loadScope(selected.action==='reconfirm'?'Ownership references explicitly reconfirmed and current state reloaded. No identity or permissions changed.':'Configuration saved and current state reloaded. No assignment or review workflow was executed.')
  }catch(error){failed(error,operation)}
 })
 window.addEventListener('pagehide',()=>disconnect('Disconnected. Reconnect to load current state.'))

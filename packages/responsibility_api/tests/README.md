@@ -10,3 +10,14 @@ approval, stale observation invalidation, no unapproved counts/paths, strict
 inputs, real HTTP, concurrent writers, schema corruption and audit/expiry rollback.
 
 [Service](../README.md) · [Pure tests](../../responsibility/tests/README.md)
+
+
+`test_authority.py` covers generation-bound reader/editor/publisher grants,
+historical owners/committers/cross-field backups, retired-ID reuse, active/member
+ABA, explicit proposal reconfirmation, unrelated authority boundaries, all six
+mixed-format failures and destructive legacy recovery. Editor-nonowner role ABA,
+empty-config foreign realm, both module cycles, community regrant, actual writer
+reservation waits and CAS races are checked. Persistence expiry/audit failures,
+MAX revisions, canonical JSON, size/history bounds and publisher-provenance
+invalidation retain the prior records on failure. Test-only directory transitions
+never become production mutation helpers. [Full contract](../REFERENCES.md).

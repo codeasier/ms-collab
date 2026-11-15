@@ -5,7 +5,7 @@ import {createClient,LatestOperation,scopeFrom,queryFrom,validateFields,sameFiel
 const scope=scopeFrom('alpha','source','sample','project')
 const fields=[{id:'ui',name:'UI',kind:'developer',paths:['ui'],owner_ids:['local:alice'],backup:null}]
 const common={scope,revision:3,config_version:2,identity_namespace:'ms-collab.principal.id',workflow_enabled:false}
-const config={...common,fields}
+const config={...common,fields,references:{state:'current',stale_ids:[],confirmation_token:null}}
 const caps={...common,capabilities:{read:true,edit:true}}
 const row={kind:'issue',number:1,title:'<img src=x onerror=alert(1)>',assignment_status:'unknown',unmapped_paths:[],fields:[],my_field_ids:[],assignee_identity_status:'unknown',review_status:'unverified',approval_available:false,path_evidence:'unavailable',head_sha:'',base_sha:''}
 const candidates={...common,mode:'readonly_foundation',review_status:'unverified',approval_available:false,transport_executable:false,external_effect:'not_observed',items:[row],total:1,offset:0,limit:20,view:'all',incomplete_pull_count:0,directory_status:'not_implemented',coverage:'approved_observed_subset',community_revision:5,snapshot_available:true,snapshot_observed_at:'2026-01-01T00:00:00Z',evidence_current:false,evidence_observed_at:null}
@@ -32,6 +32,7 @@ test('capabilities and config bind exact scope and revisions',()=>{
  assert.equal(validateCapabilities(caps,scope),caps);assert.equal(validateConfig(config,scope,caps),config)
  assert.throws(()=>validateCapabilities({...caps,scope:{...scope,workspace_id:'beta'}},scope))
  assert.throws(()=>validateCapabilities({...caps,capabilities:{read:true,edit:'yes'}},scope))
+ assert.throws(()=>validateConfig({...config,references:{...config.references,confirmation_token:'a'.repeat(64)}},scope,{...caps,capabilities:{read:true,edit:false}}));
  assert.throws(()=>validateConfig({...config,revision:4},scope,caps));assert.throws(()=>validateConfig({...config,workflow_enabled:true},scope))
 })
 test('candidate projection fails closed on scope, revision, view and executable claims',()=>{
@@ -82,7 +83,7 @@ test('no unbounded configuration body or extra response envelope',async()=>{
 
 
 test('actual isolated HTTP service matches client schemas and CAS save',async()=>{
- const child=spawn('python3',['-m','packages.responsibility_ui.tests.browser_server'],{stdio:['ignore','pipe','pipe']});child.stderr.resume()
+ const child=spawn('python3',['-m','packages.responsibility_ui.tests.browser_server'],{env:{...process.env,MS_COLLAB_SYNTHETIC_RESPONSIBILITY_UI:'1'},stdio:['ignore','pipe','pipe']});child.stderr.resume()
  try{
   const origin=await new Promise((resolve,reject)=>{child.stdout.once('data',d=>resolve(d.toString().trim()));child.once('exit',()=>reject(new Error('synthetic fixture stopped')))})
   const client=createClient({fetcher:(url,opts)=>fetch(origin+url,opts)});client.connect('test-admin')
@@ -94,6 +95,15 @@ test('actual isolated HTTP service matches client schemas and CAS save',async()=
   const updated=clone(config.fields);updated[0].name='😀'.repeat(60);updated[0].paths=['😀'.repeat(600)]
   const saved=validateConfig(await client.request(scope,'save',{fields:updated,revision:config.revision}),scope,{revision:config.revision+1,config_version:config.config_version+1})
   assert.deepEqual(saved.fields,updated);assert.equal(sameFields(saved.fields,updated),true)
+  // An existing maximum-size UTF-8 save remains recoverable through this exact
+  // adapter after a real fixture identity ABA, without reducing any fields.
+  const {nearLimitFields,wireBytes}=await import('./body-boundary.mjs'),large=nearLimitFields(65536,undefined,saved.fields)
+  const largeSaved=validateConfig(await client.request(scope,'save',{fields:large,revision:saved.revision}),scope)
+  assert.equal((await fetch(origin+'/synthetic/identity-aba',{method:'POST',headers:{Origin:origin}})).status,200)
+  const stale=validateConfig(await client.request(scope,'config'),scope);assert.equal(stale.references.state,'reconfirmation_required')
+  assert.equal(wireBytes({fields:large,confirmation_token:stale.references.confirmation_token}),65624)
+  const restored=validateConfig(await client.request(scope,'reconfirm',{fields:large,revision:stale.revision,confirmation_token:stale.references.confirmation_token}),scope)
+  assert.equal(restored.revision,largeSaved.revision+1);assert.equal(restored.references.state,'current');assert.deepEqual(restored.fields,large)
  }finally{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
 })
 
@@ -105,4 +115,38 @@ test('configuration equality ignores object key order but keeps semantic orderin
  assert.equal(sameFields(original,[...wire].reverse()),false)
  const renamed=clone(wire);renamed[0].name='Changed';assert.equal(sameFields(original,renamed),false)
  assert.throws(()=>sameFields(original,[{...wire[0],extra:true}]))
+})
+
+
+test('reference status is exact, scoped to current nominations and never inferred',()=>{
+ for(const references of [undefined,null,{state:'legacy',stale_ids:[],confirmation_token:null},{state:'current',stale_ids:['local:alice'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:[],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['other'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['local:alice','local:alice'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['local:alice'],confirmation_token:'A'.repeat(64)},{...config.references,extra:true}])assert.throws(()=>validateConfig({...config,references},scope))
+ for(const confirmation_token of [null,'a'.repeat(64)]){
+  assert.doesNotThrow(()=>validateConfig({...config,references:{state:'current',stale_ids:[],confirmation_token}},scope))
+  const stale={...config,references:{state:'reconfirmation_required',stale_ids:['local:alice'],confirmation_token}}
+  assert.doesNotThrow(()=>validateConfig(stale,scope));assert.throws(()=>validateCandidates(candidates,scope,stale,queryFrom()))
+ }
+})
+test('reconfirmation is a separate exact POST with proposal and CAS, never retry',async()=>{
+ const requests=[],client=createClient({fetcher:async(url,options)=>{requests.push({url,options});return {ok:false,status:409}}});client.connect('synthetic-only')
+ for(const confirmation_token of [undefined,null,'a'.repeat(63),'A'.repeat(64),'a'.repeat(64)+'\n'])await assert.rejects(client.request(scope,'reconfirm',{fields,revision:3,confirmation_token}))
+ assert.equal(requests.length,0)
+ await assert.rejects(client.request(scope,'reconfirm',{fields,revision:3,confirmation_token:'a'.repeat(64)}),e=>e.status===409)
+ assert.equal(requests.length,1);const {url,options}=requests[0]
+ assert.ok(url.endsWith('/reconfirm'));assert.equal(options.method,'POST');assert.equal(options.headers['If-Match'],'"3"');assert.equal(options.credentials,'omit')
+ assert.deepEqual(JSON.parse(options.body),{fields,confirmation_token:'a'.repeat(64)})
+})
+
+test('bearer byte budget preserves 64 KiB fields plus only the fixed reconfirmation proof',async()=>{
+ const {nearLimitFields,escapedNames,wireBytes}=await import('./body-boundary.mjs')
+ const requests=[],client=createClient({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,text:async()=>JSON.stringify({data:{}})}}});client.connect('synthetic-only')
+ for(const name of escapedNames){
+  const fields=nearLimitFields(65536,name),confirmation_token='a'.repeat(64)
+  assert.equal(wireBytes({fields,confirmation_token}),65624)
+  await client.request(scope,'save',{fields,revision:3});assert.equal(new TextEncoder().encode(requests.at(-1).options.body).length,65536)
+  await client.request(scope,'reconfirm',{fields,revision:3,confirmation_token});const sent=requests.at(-1)
+  assert.equal(new TextEncoder().encode(sent.options.body).length,65624);assert.equal(sent.options.method,'POST');assert.equal(sent.options.headers['If-Match'],'"3"');assert.deepEqual(JSON.parse(sent.options.body),{fields,confirmation_token})
+  const count=requests.length,tooLarge=nearLimitFields(65537,name)
+  await assert.rejects(client.request(scope,'save',{fields:tooLarge,revision:3}),/64 KiB/)
+  await assert.rejects(client.request(scope,'reconfirm',{fields:tooLarge,revision:3,confirmation_token}),/64 KiB/);assert.equal(requests.length,count)
+ }
 })

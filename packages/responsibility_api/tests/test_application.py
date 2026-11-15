@@ -30,7 +30,9 @@ FIELDS=[dict(id='ui',name='UI',kind='developer',paths=['ui'],owner_ids=['dev','a
         dict(id='core',name='Core',kind='developer',paths=['src'],owner_ids=['reader'],backup=None),
         dict(id='review',name='Review',kind='committer',paths=['ui','src'],owner_ids=['second'],backup=None)]
 
-def policy(scope=SCOPE):return ResponsibilityPolicy(scope,('reader','admin','dev'),('admin',),('admin',))
+def policy(scope=SCOPE):
+    readers=('reader','admin','dev') if scope.workspace_id=='alpha' else ('reader','admin') if scope.workspace_id=='commons' else ('admin',)
+    return ResponsibilityPolicy(scope,readers,('admin',),('admin',))
 
 
 class ResponsibilityTests(unittest.TestCase):
@@ -106,7 +108,7 @@ class ResponsibilityTests(unittest.TestCase):
         data=result['body']['data'];self.assertEqual((data['revision'],data['config_version']),(2,2));self.assertEqual(data['fields'],FIELDS)
         self.assertEqual(self.save(revision=1)['status'],412)
         self.assertEqual(self.save(config=[])['status'],409)
-        self.assertEqual(self.request()['body']['data'],data)
+        reader=self.request()['body']['data'];self.assertIsNone(reader['references']['confirmation_token']);data['references']['confirmation_token']=None;self.assertEqual(reader,data)
         self.assertFalse(data['workflow_enabled'])
         with sqlite3.connect(self.path) as db:self.assertEqual(db.execute(f'SELECT config_version FROM {_TABLE} WHERE workspace_id="alpha" AND connection_id="source"').fetchone()[0],2)
 
@@ -137,7 +139,7 @@ class ResponsibilityTests(unittest.TestCase):
         with self.assertRaises(PolicyError):self.publish(scope=Scope('commons','source','sample/project'))
 
     def test_publisher_is_separate_from_editor_and_reader(self):
-        old=policy();replace_policy(self.store,replace(old,publisher_ids=('reader',)),expected_revision=1)
+        old=policy();replace_policy(self.store,replace(old,publisher_ids=('reader',)),actor_id='admin',expected_revision=1)
         with self.assertRaises(PolicyError) as e:self.publish()
         self.assertEqual(e.exception.status,404)
         with self.assertRaises(PolicyError) as e:self.publish(credential=Credential('test-reader'))
@@ -146,7 +148,7 @@ class ResponsibilityTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.publish(credential='test-admin')
 
     def test_editor_and_publisher_still_require_current_reader_grant(self):
-        replace_policy(self.store,replace(policy(),reader_ids=('reader',)),expected_revision=1)
+        replace_policy(self.store,replace(policy(),reader_ids=('reader',)),actor_id='admin',expected_revision=1)
         self.assertEqual(self.request(token='test-admin')['status'],404)
         self.assertEqual(self.save()['status'],404)
         with self.assertRaises(PolicyError) as e:self.publish()
@@ -186,7 +188,7 @@ class ResponsibilityTests(unittest.TestCase):
         self.assertNotIn('Synthetic UI change',json.dumps(result))
 
     def test_policy_change_clears_old_fields_evidence_and_new_audience(self):
-        self.save();self.publish();old=self.rstate();replace_policy(self.store,replace(policy(),reader_ids=('admin',)),expected_revision=old['revision'])
+        self.save();self.publish();old=self.rstate();replace_policy(self.store,replace(policy(),reader_ids=('admin',)),actor_id='admin',expected_revision=old['revision'])
         self.assertEqual(self.request()['status'],404)
         self.assertEqual(self.request(token='test-admin')['body']['data']['fields'],[])
         self.assertEqual(self.rstate()['evidence'],[])

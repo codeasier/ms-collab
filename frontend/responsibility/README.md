@@ -32,3 +32,36 @@ remaining deployment limits are documented in [tests](tests/README.md).
 The business controller now exports an explicit mount function. `entry.mjs` is
 the standalone bearer bootstrap; the [unified session entry](../application/README.md)
 injects cookie-only requests without importing that legacy entry.
+
+## Historical identity and membership references
+
+Configuration responses include strict `references` status. Stale owner/backup
+IDs are labeled **historical, unconfirmed**, not looked up as current people.
+All candidate views and counts remain unavailable while any nominated pin is
+stale. Current authorized editors may still remove/replace stale IDs in the full
+configuration. Ordinary Save never rebinds a previously nominated ID, even after
+removal and re-addition. Ineligible IDs must be replaced before reconfirmation.
+
+The separate **Review identity reconfirmation** button is shown only for stale
+references with an eligible current editor proposal. Its second-stage dialogue
+lists every current owner/backup ID and explains that confirmation binds those
+IDs to CURRENT local identities and memberships, not original people or rights.
+A single explicit confirmation sends `POST /reconfirm` with the exact full
+fields, proposal token and displayed `If-Match` revision. Cancel/Escape, scope
+changes, sign-out, pagehide or a failed/uncertain response clear pending intent;
+no Save, reload, reconnect or conflict automatically confirms or retries.
+
+Both the standalone bearer entry and shared HTTPS session entry mount this same
+controller. The session adapter uses fresh CSRF and cookies only, never a fabricated
+bearer credential. Tokens and identity-provider subjects are never rendered.
+
+Ordinary configuration saves remain limited to 65,536 UTF-8 JSON bytes for the
+`{fields}` request. Explicit reconfirmation permits exactly 88 additional bytes
+for its fixed 64-hex `confirmation_token` member, for a maximum of 65,624 bytes.
+This preserves recovery of an already accepted near-limit configuration without
+trimming its fields. Both adapters enforce the byte limit after JSON encoding,
+including multibyte characters and escaped quotes/backslashes. The shared cookie
+transport grants this extra budget only to an exact POST to the valid scoped
+responsibility `/reconfirm` route with the exact valid fields/token envelope;
+other routes, methods and payloads retain their 65,536-byte limit. This does not
+change CSRF, revision, identity or authorization requirements.
