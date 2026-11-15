@@ -7,7 +7,7 @@ import re
 
 from packages.artifacts import Scope
 from packages.artifact_sync import ArtifactSynchronizer, ProviderError
-from packages.artifact_sync.records import authorized
+from packages.artifact_sync.records import authorized, publication_current
 from packages.artifact_refresh import ConfiguredArtifactRefresh
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
@@ -50,7 +50,7 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
                 if not any(grants.values()):
                     raise PolicyError(404, 'not_found')
                 return {'scope': scope.as_dict(), 'revision': current.revision,
-                        'published_revision': current.published_revision,
+                        'published_revision': current.published_revision if publication_current(policy,current) else None,
                         'pending': current.candidate is not None, 'capabilities': grants}
             return self._service._authenticated_transaction(assertion, status, with_connection=True)
         expected = self._revision(environ)

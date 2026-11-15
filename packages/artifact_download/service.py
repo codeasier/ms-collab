@@ -10,9 +10,10 @@ from uuid import uuid4
 
 from packages.artifact_sync import ArtifactSynchronizer, ProviderError
 from packages.artifact_sync.provider import _bound, _now, object_key
-from packages.artifact_sync.records import authorized, decode_snapshot, scope_key
+from packages.artifact_sync.records import authorized, decode_snapshot, scope_key, flow_pin
 from packages.artifacts.catalog import instant
 from packages.workspaces import PolicyError, StorageError, SQLiteWorkspaceService
+from packages.workspaces.authority import authority_current
 from . import records
 from .provider import OBSObjectTransport
 
@@ -44,8 +45,11 @@ class ArtifactDownloader:
             # Archived spaces retain local metadata reads, not fresh external bytes.
             if policy._workspaces[scope.workspace_id].state != 'active':
                 raise PolicyError(404, 'not_found')
-            grant, raw = records.load(connection, scope)
-            if actor not in grant.downloaders or index.published is None:
+            stored = records.load(connection,scope)
+            grant, raw = stored.policy, stored.raw
+            if (actor not in grant.downloaders or index.published is None
+                    or not authority_current(policy,actor,stored.authority)
+                    or stored.parent_index != records.parent_pin(index)):
                 raise PolicyError(404, 'not_found')
             binding = next((v for v in grant.bindings if v.key == key), None)
             row = next((r for r in decode_snapshot(index.published, index.policy.connection).artifacts if r.key == key), None)
@@ -53,7 +57,7 @@ class ArtifactDownloader:
                     or instant(row.modified_at) != instant(binding.modified_at)):
                 raise PolicyError(404, 'not_found')
             policy._match(revision, index.published_revision)
-            value = (actor, index.policy_raw, index.published, index.published_revision, raw, policy._realm, policy._principals[actor].generation)
+            value = (actor,index.policy_raw,index.published_raw,index.published_revision,raw,flow_pin(policy,actor,scope))
             if pinned is not None and value != pinned:
                 raise PolicyError(412, 'download_changed')
             if lease is not None:

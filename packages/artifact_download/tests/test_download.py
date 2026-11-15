@@ -19,6 +19,8 @@ from packages.artifact_download import ArtifactDownloadAPI, ArtifactDownloader, 
 from packages.artifact_download import records
 from packages.artifact_sync import ArtifactSynchronizer, initialize_indexes
 from packages.artifact_sync.records import policy_text as index_text
+from packages.artifact_sync import records as indexes
+from packages.artifact_sync.tests.authority_fixtures import configure_index_fixture, configure_bytes_fixture, seed_publication
 from packages.workspaces import StorageError
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'artifact_sync' / 'tests'))
 from fixtures import CONFIG, NOW, POLICY, SCOPE, Transport, Verifier, credential, initialize, page, provider
@@ -148,7 +150,7 @@ class DownloadTests(unittest.TestCase):
                 c.execute('UPDATE artifact_indexes_v1 SET published=?,published_revision=?', (rows[0][6], rows[0][7]))
                 c.execute('UPDATE artifact_download_policies_v1 SET policy=?', (grants,))
         for binding in (replace(BINDING, key='builds/missing'), replace(BINDING, size=len(DATA)-1), replace(BINDING, modified_at='2026-01-01T22:00:00Z')):
-            with sqlite3.connect(self.path) as c: c.execute('UPDATE artifact_download_policies_v1 SET policy=?', (records.policy_text(replace(GRANT, bindings=(binding,))),))
+            configure_bytes_fixture(self.store,replace(GRANT,bindings=(binding,)))
             self.assertEqual(self.call()['status'], 404)
         self.assertEqual(self.objects.calls, [])
 
@@ -217,6 +219,9 @@ class DownloadTests(unittest.TestCase):
         with self.assertRaises(DownloadInterrupted): next(stream)
 
     def test_grant_policy_or_current_member_changes_interrupt(self):
+        with sqlite3.connect(self.path) as c:
+            old_byte=c.execute('SELECT policy FROM artifact_download_policies_v1').fetchone()[0]
+            old_index=c.execute('SELECT policy FROM artifact_indexes_v1').fetchone()[0]
         for mutation in ('grant','index','module'):
             with self.subTest(mutation=mutation):
                 stream = self.call(consume=False)['stream']
@@ -226,8 +231,8 @@ class DownloadTests(unittest.TestCase):
                     if mutation=='module': c.execute("UPDATE modules SET can_read=0 WHERE workspace_id='alpha'")
                 with self.assertRaises(DownloadInterrupted): next(stream)
                 with sqlite3.connect(self.path) as c:
-                    c.execute('UPDATE artifact_download_policies_v1 SET policy=?',(records.policy_text(GRANT),))
-                    c.execute('UPDATE artifact_indexes_v1 SET policy=?',(index_text(POLICY),))
+                    c.execute('UPDATE artifact_download_policies_v1 SET policy=?',(old_byte,))
+                    c.execute('UPDATE artifact_indexes_v1 SET policy=?',(old_index,))
                     c.execute("UPDATE modules SET can_read=1 WHERE workspace_id='alpha'")
 
     def test_per_actor_capacity_shared_by_independent_service_instances(self):
@@ -279,9 +284,8 @@ class DownloadTests(unittest.TestCase):
     def test_global_capacity_and_reader_grants_are_both_required(self):
         grant = replace(GRANT, downloaders=('reader', 'admin', 'approver'))
         index = replace(POLICY, readers=('reader', 'admin', 'approver'))
-        with sqlite3.connect(self.path) as c:
-            c.execute('UPDATE artifact_download_policies_v1 SET policy=?', (records.policy_text(grant),))
-            c.execute('UPDATE artifact_indexes_v1 SET policy=?', (index_text(index),))
+        configure_index_fixture(self.store,index)
+        configure_bytes_fixture(self.store,grant)
         one=self.call(consume=False)['stream']; two=self.call(who='admin',consume=False)['stream']
         self.assertEqual(self.call(who='approver')['status'],429)
         one.close(); self.assertEqual(self.call(who='approver')['status'],200); two.close()
@@ -297,10 +301,10 @@ class DownloadTests(unittest.TestCase):
         from packages.artifact_sync.records import snapshot_text,decode_snapshot
         binding=replace(BINDING,size=0,sha256=sha256(b'').hexdigest())
         with sqlite3.connect(self.path) as c:
-            snap=decode_snapshot(c.execute('SELECT published FROM artifact_indexes_v1').fetchone()[0], CONFIG)
-            snap=replace(snap,artifacts=(replace(snap.artifacts[0],size=0),))
-            c.execute('UPDATE artifact_indexes_v1 SET published=?',(snapshot_text(snap),))
-            c.execute('UPDATE artifact_download_policies_v1 SET policy=?',(records.policy_text(replace(GRANT,bindings=(binding,))),))
+            snap=decode_snapshot(indexes.load(c,SCOPE).published,CONFIG)
+        snap=replace(snap,artifacts=(replace(snap.artifacts[0],size=0),))
+        seed_publication(self.store,SCOPE,snap,actor='approver')
+        configure_bytes_fixture(self.store,replace(GRANT,bindings=(binding,)))
         self.objects.data=b''
         result=self.call();self.assertEqual(result['status'],200);self.assertEqual(result['raw'],b'')
         self.assertEqual(self.leases(),[('reader','complete',0,0)])

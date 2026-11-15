@@ -19,3 +19,5 @@ acceptance. [Browser acceptance](../../../frontend/application/tests/artifact-do
 verifies a native browser download's complete saved bytes, stale confirmation,
 late fetch/digest cancellation, logout/cleanup and five synthetic screenshots.
 No screenshot or synthetic file is evidence of real cloud downloads.
+
+- [Generation authority regressions](test_authority.py)

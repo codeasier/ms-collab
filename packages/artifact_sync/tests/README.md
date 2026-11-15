@@ -14,3 +14,6 @@ The dedicated `Artifact index acquisition` workflow also runs Playwright against
 this synthetic server and retains desktop/mobile screenshots for three days.
 
 [Package contract](../README.md) · [Protocol provenance](../MIGRATION.md)
+
+- [Generation authority regressions](test_authority.py)
+- [Synthetic bound publication fixtures](authority_fixtures.py), test-only provisioning

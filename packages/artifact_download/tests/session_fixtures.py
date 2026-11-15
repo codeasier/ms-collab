@@ -10,6 +10,7 @@ from packages.application_host.tests.fixtures import setup, NOW
 from packages.artifact_download import ArtifactDownloadConfiguration, ContentBinding, DownloadPolicy, initialize_downloads
 from packages.artifact_sync.provider import BoundCredential
 from packages.artifact_sync.records import snapshot_text
+from packages.artifact_sync.tests.authority_fixtures import seed_publication
 from packages.artifacts import Artifact, Scope, Snapshot
 
 SCOPE=Scope('alpha','source','bucket')
@@ -38,8 +39,7 @@ def setup_download(directory,*,origin='https://app.example.invalid',clock=lambda
     original,policy,login,exchange=setup(directory,origin=origin,clock=clock,authorization_endpoint=authorization_endpoint)
     initialize_downloads(policy,(GRANT,))
     snapshot=Snapshot(SCOPE,'2026-01-01T00:00:00Z',(Artifact('builds/','2026-01-01T00:00:00Z',0,True),Artifact(KEY,BINDING.modified_at,len(DATA)),Artifact('builds/unbound.txt',BINDING.modified_at,7)))
-    with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
-        db.execute('UPDATE artifact_indexes_v1 SET published=?,published_revision=1 WHERE workspace=?',(snapshot_text(snapshot),'alpha'))
+    seed_publication(policy,SCOPE,snapshot)
     objects=SyntheticObjects()
     config=replace(original._config,artifact_downloads=enabled)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or 'https://identity.example.invalid/authorize',authorization_scopes=('synthetic_user',))

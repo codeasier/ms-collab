@@ -7,8 +7,9 @@ import re
 from packages.artifacts import Scope
 from packages.artifacts.catalog import instant
 from packages.artifact_sync.provider import object_key
-from packages.artifact_sync.records import dump, _json, scope_key, load as load_index
+from packages.artifact_sync.records import dump, _json, scope_key, load as load_index, digest, MAX_REVISION
 from packages.workspaces import SQLiteWorkspaceService, PolicyError, StorageError
+from packages.workspaces.authority import capture_authority, validate_authority
 
 MAX_BYTES = 5 * 1024 * 1024
 TTL_SECONDS = 30
@@ -93,22 +94,61 @@ def check_schema(connection):
             raise StorageError('invalid_download_schema')
 
 
-def load(connection, scope):
+def decode_policy(raw, scope):
+    value = _json(raw)
+    if type(value) is not dict or set(value) != {'schema','scope','downloaders','bindings'} or type(value.pop('schema')) is not int:
+        raise ValueError('invalid byte policy')
+    value['scope'] = Scope(**value['scope'])
+    value['bindings'] = tuple(ContentBinding(**v) for v in value['bindings'])
+    result = DownloadPolicy(**value)
+    if result.scope != scope or policy_text(result) != raw:
+        raise ValueError('invalid byte policy')
+    return result
+
+
+def parent_pin(index):
+    return {'grant_revision':index.grant_revision,'policy_digest':digest(index.policy_raw)}
+
+
+def bound_policy_text(config, authority, grant_revision, parent):
+    validate_authority(authority,config.downloaders)
+    if (type(grant_revision) is not int or not 1 <= grant_revision <= MAX_REVISION
+            or type(parent) is not dict or set(parent) != {'grant_revision','policy_digest'}
+            or type(parent['grant_revision']) is not int or not 1 <= parent['grant_revision'] <= MAX_REVISION
+            or type(parent['policy_digest']) is not str or not re.fullmatch(r'[0-9a-f]{64}',parent['policy_digest'])):
+        raise ValueError('invalid byte grant')
+    raw = dump({'schema':2,'policy':_json(policy_text(config)),'authority':authority,
+                'grant_revision':grant_revision,'parent_index':parent})
+    if len(raw) > 1048576:
+        raise ValueError('byte grant too large')
+    return raw
+
+
+@dataclass(frozen=True)
+class DownloadGrant:
+    policy: DownloadPolicy
+    raw: str
+    authority: dict | None
+    grant_revision: int
+    parent_index: dict | None
+
+
+def load(connection, scope, *, allow_legacy=False):
     check_schema(connection)
     row = connection.execute(f'SELECT policy FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?', scope_key(scope)).fetchone()
     if row is None:
         raise PolicyError(404, 'not_found')
     try:
-        raw = row[0]
-        value = _json(raw)
-        if type(value) is not dict or set(value) != {'schema', 'scope', 'downloaders', 'bindings'} or type(value.pop('schema')) is not int:
-            raise ValueError()
-        value['scope'] = Scope(**value['scope'])
-        value['bindings'] = tuple(ContentBinding(**v) for v in value['bindings'])
-        result = DownloadPolicy(**value)
-        if result.scope != scope or policy_text(result) != raw:
-            raise ValueError()
-        return result, raw
+        raw = row[0];value = _json(raw)
+        if allow_legacy and type(value) is dict and value.get('schema') == 1:
+            return DownloadGrant(decode_policy(raw,scope),raw,None,0,None)
+        if (type(value) is not dict or set(value) != {'schema','policy','authority','grant_revision','parent_index'}
+                or type(value['schema']) is not int or value['schema'] != 2):
+            raise ValueError('unbound byte grants')
+        config = decode_policy(dump(value['policy']),scope)
+        if bound_policy_text(config,value['authority'],value['grant_revision'],value['parent_index']) != raw:
+            raise ValueError('invalid bound byte grant')
+        return DownloadGrant(config,raw,value['authority'],value['grant_revision'],value['parent_index'])
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
         raise StorageError('invalid_download_policy') from None
 
@@ -130,11 +170,48 @@ def initialize_downloads(store, policies):
             if (any(v not in policy._principals for v in p.downloaders)
                     or any(not b.key.startswith(index.policy.connection.prefix) for b in p.bindings)):
                 raise ValueError('unprovisioned download policy')
-            raw = policy_text(p)
+            authority=capture_authority(policy,p.downloaders);parent=parent_pin(index)
+            raw = bound_policy_text(p,authority,1,parent)
             row = connection.execute(f'SELECT policy FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?', scope_key(p.scope)).fetchone()
             if row is not None:
-                if row[0] != raw:
+                existing=load(connection,p.scope)
+                if existing.policy != p or existing.authority != authority or existing.parent_index != parent:
                     raise ValueError('existing download policy cannot be replaced')
             else:
                 connection.execute(f'INSERT INTO {_TABLE} VALUES (?,?,?,?)', (*scope_key(p.scope), raw))
     store._transaction(operation, write=True, with_connection=True)
+
+
+def regrant_downloads(store, config, *, actor_id, expected_grant_revision,
+                      expected_policy_digest, expected_parent_grant_revision,
+                      expected_parent_policy_digest):
+    """Explicit byte regrant with BOTH old-byte and reviewed-current-parent CAS."""
+    if type(store) is not SQLiteWorkspaceService or type(config) is not DownloadPolicy:
+        raise ValueError('configured byte regrant required')
+    def operation(policy, connection):
+        policy._admin(actor_id,config.scope.workspace_id)
+        old = load(connection,config.scope,allow_legacy=True)
+        if (type(expected_grant_revision) is not int or expected_grant_revision != old.grant_revision
+                or type(expected_policy_digest) is not str or expected_policy_digest != digest(old.raw)):
+            raise PolicyError(412,'stale_byte_grant')
+        index = load_index(connection,config.scope)
+        parent = parent_pin(index)
+        if (type(expected_parent_grant_revision) is not int or expected_parent_grant_revision != parent['grant_revision']
+                or type(expected_parent_policy_digest) is not str or expected_parent_policy_digest != parent['policy_digest']):
+            raise PolicyError(412,'parent_index_changed')
+        if old.grant_revision >= MAX_REVISION:
+            raise PolicyError(409,'byte_grant_revision_exhausted')
+        try:
+            if any(not b.key.startswith(index.policy.connection.prefix) for b in config.bindings):
+                raise ValueError('scope prefix changed')
+            raw=bound_policy_text(config,capture_authority(policy,config.downloaders),old.grant_revision+1,parent)
+        except (ValueError,TypeError,KeyError,RecursionError):
+            raise PolicyError(400,'invalid_byte_regrant') from None
+        changed = connection.execute(f'UPDATE {_TABLE} SET policy=? WHERE workspace=? AND connection=? AND bucket=? AND policy=?',
+            (raw,*scope_key(config.scope),old.raw)).rowcount
+        if changed != 1:
+            raise PolicyError(412,'stale_byte_grant')
+        policy._changed(actor_id,config.scope.workspace_id,'resource.update',
+            'artifact-byte-grant:'+digest(dump(scope_key(config.scope))),old.grant_revision+1)
+        return load(connection,config.scope)
+    return store._transaction(operation,write=True,with_connection=True)
