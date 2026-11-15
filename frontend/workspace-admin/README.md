@@ -9,3 +9,8 @@ API. No credentials, identity provider or server are bundled. See the
 - [Tests](tests/README.md): unit and hosted browser acceptance.
 
 Optional lifecycle/module controls require the explicitly configured [administration extension](../../packages/workspace_admin_api/README.md); the UI never supplies operator authority or module capabilities.
+
+Invitation controls use the [identity-addressed adapter](../../packages/workspace_invitations/README.md):
+explicit existing principal, bounded role, 24-hour validity, signed-in inbox and
+confirm/cancel Join/revoke. No secret link or external message is generated.
+Uncertain invite creation retains a scope/body retry key in page memory only.

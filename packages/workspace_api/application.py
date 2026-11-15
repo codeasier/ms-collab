@@ -85,7 +85,7 @@ class WorkspaceApplication:
         # Protocol verification (possibly network I/O) occurs before any DB lock.
         return self._verifier.verify(self._provider_key, credential)
 
-    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False):
+    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None):
         """Internal adapter seam, never an HTTP callback or reusable authority.
 
         Resolve the current subject binding and evaluate the complete adapter
@@ -104,8 +104,12 @@ class WorkspaceApplication:
             self._verifier.validate_current(self._provider_key, assertion)
             return result
 
-        return self._store._transaction(operation, write=write, with_connection=with_connection, before_commit=
-            lambda: self._verifier.validate_current(self._provider_key, assertion))
+        def commit_guard():
+            self._verifier.validate_current(self._provider_key, assertion)
+            if before_commit is not None:
+                before_commit()  # Trusted adapters may only ADD a commit guard.
+        return self._store._transaction(operation, write=write, with_connection=with_connection,
+                                        before_commit=commit_guard)
 
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)

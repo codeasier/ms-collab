@@ -173,7 +173,8 @@ class SQLiteWorkspaceService:
                     identifier(value)
                 revision(event.revision)
                 if event.action not in {"workspace.create", "workspace.state", "membership.update",
-                                        "membership.promote", "membership.demote", "module.state", "module.install", "resource.update"}:
+                                        "membership.promote", "membership.demote", "membership.join",
+                                        "invitation.create", "invitation.accepted", "invitation.declined", "invitation.revoked", "module.state", "module.install", "resource.update"}:
                     raise ValueError("invalid audit action")
             if [event.sequence for event in service._audit] != list(range(1, len(service._audit) + 1)):
                 raise ValueError("invalid audit sequence")
