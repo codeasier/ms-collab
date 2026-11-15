@@ -1,0 +1,63 @@
+name: Artifact browser UI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-ui-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  artifact-ui:
+    name: Artifact browser acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out this revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked browser tooling in temporary directory
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ms-collab-browser-tools"
+          cp scripts/browser/package.json scripts/browser/package-lock.json "$RUNNER_TEMP/ms-collab-browser-tools/"
+          npm ci --prefix "$RUNNER_TEMP/ms-collab-browser-tools" --ignore-scripts --no-audit --no-fund
+          node "$RUNNER_TEMP/ms-collab-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Exercise synthetic authorized catalog UI
+        env:
+          NODE_PATH: ${{ runner.temp }}/ms-collab-browser-tools/node_modules
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
+        run: |
+          python3 -m unittest discover -s packages/artifacts_ui/tests -v
+          python3 -m unittest discover -s packages/artifacts_api/tests -v
+          node --test frontend/artifacts/tests/*.test.mjs
+          node frontend/artifacts/tests/browser.cjs
+      - name: Upload only the synthetic acceptance screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-artifact-browser-screenshots
+          path: |
+            ${{ runner.temp }}/ms-collab-artifact-ui/desktop.png
+            ${{ runner.temp }}/ms-collab-artifact-ui/mobile.png
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 3

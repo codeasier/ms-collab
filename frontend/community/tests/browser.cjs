@@ -47,7 +47,7 @@ async function main(){
   await page.unroute('**/commons/community/source/sample/project/items?*');await open('commons')
   const folder=path.join(process.env.RUNNER_TEMP||os.tmpdir(),'ms-collab-community');fs.mkdirSync(folder,{recursive:true})
   await page.locator('#review-view').click();await ready();await page.screenshot({path:path.join(folder,'desktop.png'),fullPage:true})
-  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
+  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.ok(await page.locator('#actions button:visible').evaluateAll(buttons=>buttons.every(button=>button.scrollWidth<=button.clientWidth)));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
   await open('empty');assert.match(await page.locator('#summary').textContent(),/No snapshot/)
   // Page lifecycle clears credential, private content, scope, draft and dialog.
   await page.locator('#refresh').click();await page.goto(origin+'/unavailable');await page.goBack();await page.locator('#connect:not([hidden])').waitFor();await page.goForward();await page.goBack();await page.locator('#connect:not([hidden])').waitFor()
