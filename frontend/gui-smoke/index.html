@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light"><title>GUI smoke · ms-collab</title>
+  <link rel="stylesheet" href="/gui-smoke/style.css"><script type="module" src="/gui-smoke/app.mjs"></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/gui-smoke/" aria-label="ms-collab GUI smoke">ms<span>/</span>collab</a><span class="module-label">GUI smoke</span><div class="session"><span id="session-label" role="status">Checking session…</span><button id="session-check" class="quiet" type="button">Check session</button><button id="sign-in" type="button" hidden>Sign in</button><button id="sign-out" class="quiet" type="button" hidden>Sign out</button></div></header>
+<main>
+  <section class="intro"><div><p class="eyebrow">QUALITY / OBSERVATIONS</p><h1>Published GUI observations</h1><p class="muted">Inspect the tasks your workspace has explicitly shared with you.</p></div><span class="read-only">READ ONLY</span></section>
+  <p class="boundary">Saved reports, not a live queue. This view cannot start, retry or cancel a task. A reported result is not independently verified execution evidence.</p>
+  <details id="scope-picker" class="scope-box" open><summary id="scope-summary">Choose an authorized scope</summary><form id="scope-form" autocomplete="off"><label>Workspace<input id="workspace" name="workspace" required maxlength="128" placeholder="Workspace ID" autocomplete="off" spellcheck="false"></label><label>Connection<input id="connection" name="connection" required maxlength="128" placeholder="Connection ID" autocomplete="off" spellcheck="false"></label><label>Repository<input id="repository" name="repository" required maxlength="128" placeholder="Repository ID" autocomplete="off" spellcheck="false"></label><button id="load" type="submit" disabled>Load published tasks</button></form><p class="hint">Use an exact scope supplied by your workspace administrator. IDs do not grant access.</p></details>
+  <p id="notice" class="notice" role="status" aria-live="polite">Sign in to inspect an authorized scope.</p>
+  <section id="workspace-view" hidden>
+    <div class="view-heading"><div><h2 id="scope-title">Task observations</h2><p id="snapshot-label" class="muted"></p></div><button id="clear" class="quiet" type="button">Clear view</button></div>
+    <div id="summary" class="stats" aria-label="Reported snapshot state counts"></div>
+    <div id="list-view">
+      <form id="filter-form" class="filters"><label>Status<select id="status-filter"><option value="">All reported states</option><option>pending</option><option>running</option><option>success</option><option>failed</option><option>cancelled</option><option>unknown</option></select></label><label>Source<select id="source-filter"><option value="">All sources</option><option>web</option><option>scheduled</option><option>api</option><option>retry</option><option>unknown</option></select></label><label class="branch-filter">Exact branch<input id="branch-filter" maxlength="400" autocomplete="off" placeholder="Any branch"></label><label>Page size<select id="page-size"><option>5</option><option selected>20</option><option>50</option></select></label><button type="submit">Apply filters</button></form>
+      <div class="section-title"><h3>Published tasks</h3><span id="result-count" class="muted"></span></div>
+      <div id="tasks" class="tasks"></div><p id="empty" class="empty" hidden></p>
+      <nav class="pagination" aria-label="Task pages"><button id="previous" class="quiet" type="button">Previous</button><span id="page-label"></span><button id="next" class="quiet" type="button">Next</button></nav>
+    </div>
+    <section id="detail-view" hidden aria-label="Task details"><button id="back" class="quiet" type="button">← Back to tasks</button><div id="detail"></div></section>
+  </section>
+  <footer>Current access is rechecked on every read. Leaving this page or signing out clears its in-memory view. No task content or credentials are saved in browser storage.</footer>
+</main>
+</body>
+</html>

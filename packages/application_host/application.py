@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from packages.assistant_history import AssistantHistoryApplication
+from packages.gui_smoke import GuiSmokeApplication, SmokeConnection
 from packages.artifact_sync import IndexedArtifactApplication
 from packages.community_api import CommunityApplication
 from packages.pipeline_api import PipelineApplication
@@ -14,7 +15,7 @@ from packages.workspace_admin_api import ModuleTemplate, WorkspaceAdministration
 from packages.workspace_invitations import WorkspaceInvitationApplication
 from packages.workspaces import PolicyError
 
-_MODULES = frozenset({"community", "pipelines", "artifacts", "research-assets", "responsibility", "assistant"})
+_MODULES = frozenset({"community", "pipelines", "artifacts", "research-assets", "responsibility", "assistant", "gui-smoke"})
 
 
 @dataclass(frozen=True)
@@ -23,14 +24,20 @@ class HostConfig:
     origin: str
     modules: tuple[str, ...] = ()
     module_catalog: tuple[ModuleTemplate, ...] = ()
+    gui_smoke_connections: tuple[SmokeConnection, ...] = ()
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
                 or len(set(self.modules)) != len(self.modules)
                 or type(self.module_catalog) is not tuple
-                or any(type(t) is not ModuleTemplate or t.key not in {"research_assets" if k == "research-assets" else k for k in self.modules} for t in self.module_catalog)
+                or any(type(t) is not ModuleTemplate or t.key not in {k.replace("-", "_") if k in {"research-assets", "gui-smoke"} else k for k in self.modules} for t in self.module_catalog)
                 or len({t.key for t in self.module_catalog}) != len(self.module_catalog)):
             raise ValueError("explicit supported modules and catalog required")
+        if (type(self.gui_smoke_connections) is not tuple or len(self.gui_smoke_connections) > 100
+                or any(type(c) is not SmokeConnection for c in self.gui_smoke_connections)
+                or len({c.scope for c in self.gui_smoke_connections}) != len(self.gui_smoke_connections)
+                or (self.gui_smoke_connections and "gui-smoke" not in self.modules)):
+            raise ValueError("explicit GUI smoke configuration requires its hosted module")
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -56,8 +63,11 @@ class ApplicationHost:
         self._workspaces = WorkspaceInvitationApplication(api=administration, clock=clock)
         constructors = {"community": CommunityApplication, "pipelines": PipelineApplication,
                         "artifacts": IndexedArtifactApplication, "research-assets": AssetApplication,
-                        "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication}
-        self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock) for key in config.modules}
+                        "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication,
+                        "gui-smoke": GuiSmokeApplication}
+        self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
+                         **({"connections": config.gui_smoke_connections} if key == "gui-smoke" else {}))
+                         for key in config.modules}
 
     def __call__(self, environ, start_response):
         # The same HTTPS/Host/Cookie/CSRF and error/response envelope protects all

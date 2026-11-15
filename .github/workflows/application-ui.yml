@@ -59,6 +59,7 @@ jobs:
             ${{ runner.temp }}/ms-collab-application-ui/closed-login.png
             ${{ runner.temp }}/ms-collab-application-ui/overview.png
             ${{ runner.temp }}/ms-collab-application-ui/manage.png
+            ${{ runner.temp }}/ms-collab-application-ui/manage-mobile.png
             ${{ runner.temp }}/ms-collab-application-ui/responsibility.png
             ${{ runner.temp }}/ms-collab-application-ui/mobile.png
             ${{ runner.temp }}/ms-collab-application-ui/conflict.png

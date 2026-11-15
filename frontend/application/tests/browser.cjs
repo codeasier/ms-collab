@@ -3,6 +3,20 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
+// Check actual computed foreground/background after the browser has applied both
+// stylesheets. Resolve transparent ancestors, reject invisible/disabled probes.
+async function readable(page,selectors){
+ const rows=await page.evaluate(selectors=>{
+  const rgb=value=>{const values=value.match(/[\d.]+/g).map(Number);return {rgb:values.slice(0,3),alpha:values[3]??1}}
+  const luminance=values=>values.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0)
+  return selectors.map(selector=>{const el=document.querySelector(selector);if(!el||!el.checkVisibility()||el.disabled)throw new Error('Invalid contrast probe '+selector)
+   const style=getComputedStyle(el),fg=rgb(style.color);let node=el,bg
+   while(node){const value=rgb(getComputedStyle(node).backgroundColor);if(value.alpha===1){bg=value.rgb;break}if(value.alpha!==0)throw new Error('Unsupported translucent contrast background');node=node.parentElement}
+   if(!bg||fg.alpha!==1)throw new Error('Undefined opaque contrast pair')
+   const values=[luminance(fg.rgb),luminance(bg)].sort((a,b)=>a-b);return [selector,(values[1]+.05)/(values[0]+.05)]})
+ },selectors)
+ for(const [selector,ratio]of rows)assert.ok(ratio>=4.5,`${selector} text contrast ${ratio.toFixed(2)} < 4.5`)
+}
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-application-cert-')),children=[];let browser
  try{
@@ -36,14 +50,18 @@ async function main(){
   await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden)
   const loginCount=logins.length;await page.locator('nav a[href="/manage/"]').click();await page.waitForFunction(()=>document.querySelector('#members').children.length===3)
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
-  await page.getByRole('button',{name:'Edit reader',exact:true}).click();await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
+  await page.getByRole('button',{name:'Edit reader',exact:true}).click();await readable(page,['#editing','#role','#member-state','#save','#cancel']);await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
-  const before=writes.length;await page.locator('#create-open').click();await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin');await page.locator('#create-cancel').click();assert.equal(writes.length,before)
-  await page.locator('#invite-open').click();await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
+  const before=writes.length;await page.locator('#create-open').click();await readable(page,['#create-dialog h2','#space-name','#space-kind','#initial-admin','#create-save','#create-cancel']);await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin');await page.locator('#create-cancel').click();assert.equal(writes.length,before)
+  await page.locator('#invite-open').click();await readable(page,['#invite-dialog h2','#invite-principal','#invite-role','#invite-save','#invite-cancel']);await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
   // Membership success notice precedes the separately awaited module/invitation reads.
   await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('outsider · developer · pending'))
   assert.match(await page.locator('#invitations').textContent(),/outsider · developer · pending/)
+  await page.waitForFunction(()=>!document.querySelector('#reload').disabled)
+  await readable(page,['.notice','#status','#workspace','#reload','#panel h2','#state','#members li span','#members button','#operator-panel h2','#create-open','#module-status','#modules button','#invitation-status'])
+  const beforeAction=writes.length;await page.locator('#control-spaces button').first().click();await readable(page,['#action-title','#action-description','#action-save','#action-cancel']);await page.locator('#action-cancel').click();assert.equal(writes.length,beforeAction)
   await page.screenshot({path:path.join(folder,'manage.png'),fullPage:true})
+  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'manage-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1050})
   await page.locator('nav a[href="/responsibility/"]').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#session').hidden)
   const scope=async workspace=>{await page.locator('#workspace').fill(workspace);await page.locator('#connection').fill('source');await page.locator('#owner').fill('sample');await page.locator('#repo').fill('project');await page.locator('#scope-form button').click()}
   const revision=async n=>{try{await page.waitForFunction(n=>document.querySelector('#version').textContent.startsWith(`Record revision ${n} ·`),n)}catch(error){throw new Error(`Revision ${n}: ${await page.locator('#status').textContent()}`,{cause:error})}}
@@ -85,7 +103,7 @@ async function main(){
   assert.equal((await context.cookies(main.origin)).some(c=>c.name==='__Host-ms-collab-session'),false)
   await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#app-data').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
-  console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and six responsive screenshots. Synthetic HTTPS only.')
+  console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and seven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
  }finally{await browser?.close();for(const child of children){if(child.exitCode===null){child.kill();await within(new Promise(resolve=>child.once('exit',resolve)))}}fs.rmSync(temp,{recursive:true,force:true})}
 }
 main().catch(error=>{console.error(error.stack);if(error.cause)console.error(error.cause.stack);process.exitCode=1})
