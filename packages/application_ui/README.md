@@ -181,3 +181,13 @@ fresh CSRF, not a token or actor override. The existing ownership, dependency
 fences and revocation semantics are unchanged. It does not enable ACP transport,
 agent execution, prompts, MCP, resume, cancellation, ingestion or export.
 See the [UI contract and synthetic acceptance](../../frontend/assistant/README.md).
+
+## GUI observations and navigation audit
+
+The optional `/gui-smoke/` page now uses this same session client and shell, not
+the standalone GUI authentication controller. Exact-scope tasks, state summaries
+and details reuse the existing strict validators and revision-fenced view state.
+Scope/filter edits, clear, pagehide, logout and 401 discard the private display.
+No second sign-in, bearer adapter, provider request or execution control is added.
+See the [capability map](../../docs/unified-entry.md) for all supported pages and
+explicit remaining limits, and the [GUI contract](../../frontend/gui-smoke/README.md).
