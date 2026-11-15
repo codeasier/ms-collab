@@ -83,3 +83,10 @@ external verification before a SQLite lock, then resolve the current binding and
 reauthorize inside the policy transaction. It has no endpoint that accepts a
 `VerifiedIdentity` or `Principal` from a client. Existing `Authenticator` behavior
 and generic directory integrations remain unchanged.
+
+## Provider protocol groundwork
+
+The [GitCode OAuth protocol client](../gitcode_identity/README.md) implements
+only documented wire operations and minimized upstream evidence. It is **not** a
+`Provider` verifier or login route; callback transaction binding, protocol
+capability verification and sessions remain required before integration.
