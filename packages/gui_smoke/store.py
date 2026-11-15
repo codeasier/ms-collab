@@ -3,6 +3,7 @@
 """Trusted publication and current-authority reads in the policy transaction."""
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 import hashlib
 
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
@@ -55,7 +56,8 @@ def _binding(policy, actor, scope):
     text(principal.issuer, 200)
     text(principal.subject, 200)
     return {"issuer": principal.issuer, "subject": principal.subject,
-            "membership_revision": policy._memberships[(scope.workspace_id, actor)].revision}
+            "membership_revision": policy._memberships[(scope.workspace_id, actor)].revision,
+            "generation": principal.generation}
 
 
 def _now(clock):
@@ -75,8 +77,8 @@ def _load(connection, scope, now, check_fence=None):
         integer(row[0], 1, MAX_REVISION)
         record = decode(row[1])
         exact(record, {"version", "scope", "revision", "observed_at", "workspace_revision",
-                       "module_revision", "readers", "tasks"})
-        if type(record["version"]) is not int or record["version"] != 1 or record["scope"] != scope.as_dict() or record["revision"] != row[0]:
+                       "module_revision", "readers", "tasks"} | ({"policy_realm"} if record.get("version") == 2 else set()))
+        if type(record["version"]) is not int or record["version"] not in {1,2} or record["scope"] != scope.as_dict() or record["revision"] != row[0]:
             raise ValueError("misplaced_snapshot")
         integer(record["revision"], 1, MAX_REVISION)
         integer(record["workspace_revision"], 1, MAX_REVISION)
@@ -88,10 +90,13 @@ def _load(connection, scope, now, check_fence=None):
             raise ValueError("invalid_audience")
         for actor, binding in readers.items():
             identifier(actor)
-            exact(binding, {"issuer", "subject", "membership_revision"})
+            exact(binding, {"issuer", "subject", "membership_revision"} | ({"generation"} if record["version"] == 2 else set()))
+            if record["version"] == 2:integer(binding["generation"], 1, MAX_REVISION)
             text(binding["issuer"], 200)
             text(binding["subject"], 200)
             integer(binding["membership_revision"], 1, MAX_REVISION)
+        if record["version"] == 2 and (type(record["policy_realm"]) is not str or re.fullmatch(r"[0-9a-f]{32}", record["policy_realm"]) is None):
+            raise ValueError("invalid_policy_realm")
         if check_fence is not None:
             check_fence(record)
         if type(record["tasks"]) is not list or len(record["tasks"]) > MAX_TASKS:
@@ -110,7 +115,8 @@ def read_snapshot(policy, connection, actor, configured, now):
     scope = configured.scope
     binding = _binding(policy, actor, scope)
     def check_fence(record):
-        if (record["readers"].get(actor) != binding
+        if (record["version"] != 2 or record.get("policy_realm") != policy._realm
+                or record["readers"].get(actor) != binding
                 or record["workspace_revision"] != policy._workspaces[scope.workspace_id].revision
                 or record["module_revision"] != policy._modules[(scope.workspace_id, "gui_smoke")].revision):
             raise PolicyError(404, "not_found")
@@ -154,7 +160,7 @@ def publish_snapshot(store, configured, *, actor, tasks, observed_at, expected_r
         observed = timestamp(observed_at)
         if observed > now or (prior is not None and observed <= timestamp(prior["observed_at"])):
             raise ValueError("observation_must_advance")
-        record = {"version": 1, "scope": scope.as_dict(), "revision": revision + 1,
+        record = {"version": 2, "policy_realm": policy._realm, "scope": scope.as_dict(), "revision": revision + 1,
                   "observed_at": observed_at,
                   "workspace_revision": policy._workspaces[scope.workspace_id].revision,
                   "module_revision": policy._modules[(scope.workspace_id, "gui_smoke")].revision,

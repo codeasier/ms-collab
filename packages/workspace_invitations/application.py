@@ -68,7 +68,7 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
                 return [view(policy,item,now) for item in result[:100]]
             if command == 'respond':
                 found = records(connection,'id=? AND principal_id=?',(args[0],actor))
-                if not found or binding(policy._principals[actor]) != found[0]['binding']:
+                if not found or binding(policy._principals[actor], policy._realm) != found[0]['binding']:
                     raise PolicyError(404,'not_found')
                 item = found[0]
                 policy._match(args[1],item['revision'])

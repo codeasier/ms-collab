@@ -124,3 +124,12 @@ files, raw logs or real credentials belong in this repository.
 The [unified service host](../application_host/README.md) now composes selected
 module dispatchers through this same cookie response envelope and transaction
 boundary. Existing standalone bearer APIs/UIs are not implicitly converted.
+
+## Principal generation binding
+
+Composition now binds the login-store object before any login begins. Session
+issuance and protected requests compare realm + principal ID + generation and
+current issuer/subject; schema v1 and legacy unbound authority fail closed in the
+composed host. There is no automatic adoption or database upgrade. Refer to the
+[authority foundation](../../docs/principal-authority.md), including code-level
+closed identity administration and the remaining local-ID ACL migration gates.

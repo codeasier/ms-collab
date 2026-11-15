@@ -84,9 +84,10 @@ def protected_worker(policy_path, login_path, token, csrf, entered, release, que
     except Exception as error: queue.put(type(error).__name__)
 
 
-def logout_worker(login_path, token, csrf, ready, done, queue):
+def logout_worker(policy_path, login_path, token, csrf, ready, done, queue):
     try:
         store = SQLiteLoginStore(login_path, binding=BINDING, clock=lambda: NOW)
+        SessionPolicyStore(policy=SQLiteWorkspaceService(policy_path), login=store)
         ready.set()
         store.logout(Credential(token), Credential(csrf))
         queue.put("logout")
@@ -308,8 +309,8 @@ class SessionHTTPTests(unittest.TestCase):
     def test_cross_workspace_member_revoked_disabled_and_unknown_binding_denied(self):
         self.assertEqual(self.request(path=BASE.replace("alpha", "beta"))["status"],404)
         for subject in ("disabled-sub", "no-local-binding"):
-            session = self.make_session(subject)
-            self.assertEqual(self.request(cookies=cookie_header({_SESSION:session.token.value}))["status"],401)
+            with self.assertRaises(AuthenticationError):
+                self.make_session(subject)  # Unknown/inactive local identity denied before issuance.
         viewer = self.make_session("viewer-sub")
         cookies = cookie_header({_SESSION:viewer.token.value})
         self.assertEqual(self.request(cookies=cookies)["status"],200)
@@ -419,7 +420,7 @@ class SessionHTTPTests(unittest.TestCase):
         logout=None
         try:
             self.assertTrue(entered.wait(10))
-            logout=ctx.Process(target=logout_worker,args=(str(self.login_path),self.session.token.value,self.session.csrf.value,ready,done,queue)); logout.start()
+            logout=ctx.Process(target=logout_worker,args=(str(self.policy_path),str(self.login_path),self.session.token.value,self.session.csrf.value,ready,done,queue)); logout.start()
             # Opening the login store itself waits for the shared write reservation.
             self.assertFalse(done.wait(.15))
             release.set()

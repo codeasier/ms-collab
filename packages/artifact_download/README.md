@@ -150,3 +150,8 @@ This is a conservative protocol subset, **not live cloud compatibility proof**.
 Synthetic signature, response, DNS, authorization and real loopback HTTP tests do
 not validate a real bucket, actual identity provider, deployment proxy or large
 object performance. See [remaining work](MIGRATION.md#remaining-work).
+
+In-progress byte authorization pins now include the policy realm and actor
+generation. This detects synthetic identity ABA before subsequent byte release.
+Persisted downloader/index local-ID grants are **not** migrated by this change;
+identity administration remains code-level closed. See the [consumer inventory](../../docs/principal-authority.md).

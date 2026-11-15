@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Dedicated owner-bound records inside the policy store's SAME transaction."""
 from datetime import datetime, timezone
+import re
 import hashlib
 
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
@@ -54,7 +55,7 @@ def _now(clock):
 
 
 def authority(policy, owner, workspace, conversation, modules, action="read"):
-    """Bind current authority to fixed scope; no principal-generation claim."""
+    """Bind fixed scope to policy realm and monotonic principal generation."""
     if type(modules) is not list or not 1 <= len(modules) <= 16 or modules != sorted(set(modules)) or "assistant" not in modules:
         raise ValueError("invalid_dependencies")
     for module in modules:
@@ -64,6 +65,7 @@ def authority(policy, owner, workspace, conversation, modules, action="read"):
     principal = policy._principals[owner]
     return {"scope": {"workspace_id": workspace, "owner_id": owner, "conversation_id": conversation},
             "issuer": principal.issuer, "subject": principal.subject,
+            "policy_realm": policy._realm, "principal_generation": principal.generation,
             "workspace_revision": policy._workspaces[workspace].revision,
             "membership_revision": policy._memberships[(workspace,owner)].revision,
             "modules": {key:policy._modules[(workspace,key)].revision for key in modules}}
@@ -78,12 +80,16 @@ def _row(connection, workspace, conversation, owner):
         if row[2] not in {"active","archived"} or timestamp(row[5]) < timestamp(row[4]):
             raise ValueError()
         fence=decode(row[6])
-        if (type(fence) is not dict or set(fence) != {"scope","issuer","subject","workspace_revision","membership_revision","modules"}
+        if (type(fence) is not dict or set(fence) not in ({"scope","issuer","subject","workspace_revision","membership_revision","modules"},
+                    {"scope","issuer","subject","workspace_revision","membership_revision","modules","policy_realm","principal_generation"})
                 or fence["scope"] != {"workspace_id":workspace,"owner_id":owner,"conversation_id":conversation}
                 or type(fence["modules"]) is not dict or not 1 <= len(fence["modules"]) <= 16):
             raise ValueError()
         for binding in (fence["issuer"],fence["subject"]):
             if type(binding) is not str or not 1 <= len(binding) <= 200 or any(c.isspace() for c in binding):raise ValueError()
+        if "principal_generation" in fence:
+            positive(fence["principal_generation"])
+            if type(fence["policy_realm"]) is not str or re.fullmatch(r"[0-9a-f]{32}", fence["policy_realm"]) is None:raise ValueError()
         positive(fence["workspace_revision"]);positive(fence["membership_revision"])
         for key,value in fence["modules"].items():identifier(key);positive(value)
         if "assistant" not in fence["modules"] or type(row[7]) is not int or not 0 <= row[7] <= MAX_EVENTS or type(row[8]) is not int or not 0 <= row[8] <= MAX_BYTES:
@@ -102,6 +108,8 @@ def authorized_row(policy, connection, owner, workspace, conversation, action="r
     policy.authorize(owner,workspace,"assistant",action)
     row = _row(connection,workspace,conversation,owner)
     expected = row["fence"]
+    if "principal_generation" not in expected:
+        raise PolicyError(404,"not_found")  # Retain legacy data, never backfill authority.
     if authority(policy,owner,workspace,conversation,sorted(expected["modules"]),action) != expected:
         raise PolicyError(404,"not_found")
     return row

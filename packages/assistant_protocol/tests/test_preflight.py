@@ -46,6 +46,15 @@ class PreflightTests(unittest.TestCase):
     def sql(self, query, values=()):
         with sqlite3.connect(self.path) as c:return c.execute(query, values).fetchall()
     def audit_count(self):return self.sql("SELECT COUNT(*) FROM audit WHERE object_id LIKE 'assistant-preflight:%'")[0][0]
+    def test_principal_aba_does_not_restore_blocked_receipt_or_history(self):
+        from packages.workspaces.tests.identity_fixture import simulate_identity
+        self.assess()
+        with sqlite3.connect(self.path) as db:
+            simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='alice'")
+            simulate_identity(db, "UPDATE principals SET subject='alice' WHERE id='alice'")
+        with self.assertRaisesRegex(PolicyError, 'not_found'): self.assess()
+        self.assertEqual(self.audit_count(), 1)
+
     def test_authorized_request_is_terminal_blocked_not_launch_authority(self):
         result=self.assess()
         self.assertEqual(set(result), {'receipt','state','reason','execution_enabled','launch_permitted'})

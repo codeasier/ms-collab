@@ -120,3 +120,8 @@ binding checks cannot infer an upstream disable/re-enable event not recorded in
 the authoritative directory. Local IDs must never be reused for other identities.
 All [base deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
 and the [identity trust boundary](../identity/README.md) remain applicable.
+
+Invitation binding digests now include policy realm, principal ID and generation
+for both inviter and invitee. Legacy digests remain stored but invalidated, never
+backfilled into current authority. Synthetic A→B→A/disable-reenable tests do not
+mean identity administration is enabled; see the [closed foundation](../../docs/principal-authority.md).

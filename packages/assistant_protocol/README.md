@@ -66,7 +66,7 @@ The audit action remains the existing `resource.update`, with an
 `assistant-preflight:` hashed object key. It records a refused admission, never a
 process start or successful model call. Expiry or audit/storage failure rolls the
 whole assessment back. Malformed schema/records fail closed. The current principal
-model's binding ABA limitation and SQLite transaction snapshot boundary remain as
+model's code-level closed identity-transition gate and SQLite snapshot boundary remain as
 documented by [saved history](../assistant_history/README.md); this package does
 not invent a new principal epoch or instantaneous revocation of external work.
 
@@ -79,7 +79,10 @@ existing history/session/policy regressions. No test starts an ACP process or
 contacts a real identity/model provider. No browser change is present.
 
 Production execution requires a separately reviewed and independently tested
-isolation launcher, resource limits, monotonic authorization generations, exact
+isolation launcher, resource limits, complete generation-aware admission, exact
 resource lineage, explicit provider/network/secret policy, cancel/kill/cleanup
 receipts and an authenticated admission/worker lifecycle. The protocol and audit
 are preparatory components only, not substitutes for those gates.
+
+History/preflight now includes realm and principal generation. This does not open
+identity administration or an agent runner; see the [remaining authority gates](../../docs/principal-authority.md).

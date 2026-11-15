@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import tempfile
 from threading import Barrier, Thread
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
@@ -103,6 +104,15 @@ class DownloadTests(unittest.TestCase):
 
     def revoke(self):
         self.store.set_membership('admin', 'alpha', 'reader', role='viewer', state='revoked', expected_revision=1)
+
+    def test_inflight_byte_stream_does_not_survive_identity_aba(self):
+        stream = self.call(consume=False)['stream']
+        with sqlite3.connect(self.path) as db:
+            old = db.execute("SELECT subject FROM principals WHERE id='reader'").fetchone()[0]
+            simulate_identity(db, "UPDATE principals SET subject='rebound' WHERE id='reader'")
+            simulate_identity(db, "UPDATE principals SET subject=? WHERE id='reader'", (old,))
+        with self.assertRaises(DownloadInterrupted): next(stream)
+        self.assertTrue(stream._spool.closed)
 
     def test_full_verified_bytes_no_url_no_inline_media_and_durable_audit(self):
         result = self.call()
@@ -279,7 +289,7 @@ class DownloadTests(unittest.TestCase):
     def test_actor_rebinding_and_assertion_expiry_rechecked_before_output(self):
         stream=self.call(consume=False)['stream']
         with sqlite3.connect(self.path) as c:
-            c.execute("UPDATE principals SET subject='rebound' WHERE id='reader'")
+            simulate_identity(c, "UPDATE principals SET subject='rebound' WHERE id='reader'")
         with self.assertRaises(DownloadInterrupted):next(stream)
         self.assertTrue(stream._spool.closed)
 

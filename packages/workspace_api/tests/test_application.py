@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from threading import Event, Thread
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
@@ -208,14 +209,14 @@ class ApplicationTests(unittest.TestCase):
     def test_disabled_identity_after_verification_is_rejected_in_transaction(self):
         def disable():
             with sqlite3.connect(self.path) as connection:
-                connection.execute("UPDATE principals SET active=0 WHERE id='viewer'")
+                simulate_identity(connection, "UPDATE principals SET active=0 WHERE id='viewer'")
         self.verifier.hook = disable
         self.error(401, "authentication_required", token="test-viewer")
 
     def test_rebound_identity_does_not_reuse_old_local_privileges(self):
         def change_binding():
             with sqlite3.connect(self.path) as connection:
-                connection.execute("UPDATE principals SET subject='changed-sub' WHERE id='viewer'")
+                simulate_identity(connection, "UPDATE principals SET subject='changed-sub' WHERE id='viewer'")
         self.verifier.hook = change_binding
         self.error(401, "authentication_required", token="test-viewer")
 
@@ -302,7 +303,7 @@ class ApplicationTests(unittest.TestCase):
     def test_fail_closed_store_error_sanitized(self):
         with sqlite3.connect(self.path) as connection:
             connection.execute("PRAGMA ignore_check_constraints=ON")
-            connection.execute("UPDATE principals SET active=2 WHERE id='viewer'")
+            simulate_identity(connection, "UPDATE principals SET active=2 WHERE id='viewer'")
         self.error(503, "storage_unavailable", token="test-viewer")
 
     def test_body_format_length_and_type_boundaries(self):

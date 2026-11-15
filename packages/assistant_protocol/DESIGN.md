@@ -10,7 +10,7 @@ Reviewed OBS at fixed commit `f6c184e81671b460b9322c9f8bf0cadc70599d76`:
 | `assistant_native_worker.py` | Owner/lease/config/authorization rechecks before dispatch and publication; interruptions do not blindly replay prompts. | Preserve current-authority admission observations and atomic audit. Do not call an audit receipt a lease or capability. |
 | `assistant_workspace.py`, `docs/assistant-isolation.md` | `legacy` may launch a configured host command. `sandbox_v1` builds a fixed bubblewrap argv, isolates namespaces, drops capabilities, removes inherited environment, disables network and uses bounded private tmpfs. | No legacy path. No command/env/path configuration or launch code in this increment. |
 | `test_assistant_isolation.py` | Some subprocess contract tests replace the launcher. Source documentation explicitly says these are not OS isolation acceptance. | Synthetic protocol tests must not be described as real sandbox or provider acceptance. |
-| `assistant_native_service.py` and saved history | Authentication derives owner; native policy epochs and source permissions are checked before disclosure. | Existing ms-collab owner/dependency fences stay intact. Principal generation and resource-specific lineage remain future gates. |
+| `assistant_native_service.py` and saved history | Authentication derives owner; native policy epochs and source permissions are checked before disclosure. | Existing ms-collab owner/dependency fences stay intact. History includes realm/principal generation; executable admission and resource-specific lineage remain future gates. |
 
 The protocol shape was checked against the official ACP v1
 [initialization](https://agentclientprotocol.com/protocol/v1/initialization),
@@ -41,8 +41,9 @@ The following is design, not a supported configuration or API:
    mounts or MCP. Later reads need exact object-level lineage and authorization
    before dispatch and before release, not only a module permission or page hint.
    A change of relevant policy invalidates the whole native session and any
-   pending publication. Current principal-value equality cannot detect binding
-   ABA; a real runner needs a monotonic identity/rebinding generation.
+   pending publication. The history foundation includes realm and principal generation; a real runner
+   must carry that fence through admission, dispatch, release and cancellation,
+   not rely only on current principal-value equality.
 3. **Independently accepted isolation.** Launch only a server-owned pinned
    executable/image in a freshly scoped OS/container sandbox with no host HOME,
    database, repository, sockets, private runtime state or credentials mounted.

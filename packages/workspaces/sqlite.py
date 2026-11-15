@@ -8,16 +8,18 @@ from contextlib import closing
 from dataclasses import astuple
 import math
 import os
+import re
+from uuid import uuid4
 from pathlib import Path
 import sqlite3
 from urllib.parse import quote
 
 from .model import AuditEvent, Membership, ModuleInstance, Principal, Resource, Workspace, identifier, revision
-from .service import WorkspaceService
+from .service import PolicyError, WorkspaceService
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _APPLICATION_ID = 0x4D534357  # MSCW: do not interpret unrelated databases as policy stores.
-_SCHEMA = (
+_SCHEMA_V1 = (
     "CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK (id=1), epoch INTEGER NOT NULL CHECK (epoch>=1)) STRICT",
     "CREATE TABLE principals (id TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL, active INTEGER NOT NULL CHECK (active IN (0,1)), UNIQUE(issuer,subject)) STRICT",
     "CREATE TABLE operators (principal_id TEXT PRIMARY KEY REFERENCES principals(id)) STRICT",
@@ -27,6 +29,39 @@ _SCHEMA = (
     "CREATE TABLE resources (workspace_id TEXT NOT NULL, module_key TEXT NOT NULL, id TEXT NOT NULL, text TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision>=1), PRIMARY KEY(workspace_id,module_key,id), FOREIGN KEY(workspace_id,module_key) REFERENCES modules(workspace_id,key)) STRICT",
     "CREATE TABLE audit (sequence INTEGER PRIMARY KEY CHECK (sequence>=1), actor_id TEXT NOT NULL REFERENCES principals(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), action TEXT NOT NULL, object_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision>=1)) STRICT",
 )
+
+
+_MAX_AUTHORITY = 9007199254740991
+_REALM_COLUMN = "realm TEXT NOT NULL DEFAULT 'uninitialized'"
+_GENERATION_COLUMN = "generation INTEGER NOT NULL DEFAULT 1 CHECK(generation>=1 AND generation<=9007199254740991)"
+_EPOCH_COLUMN = "authority_epoch INTEGER NOT NULL DEFAULT 1 CHECK(authority_epoch>=1 AND authority_epoch<=9007199254740991)"
+# Runtime identity mutation remains CLOSED until all ID-based grants are migrated.
+_PRINCIPAL_GUARDS = (
+    "CREATE TRIGGER principal_authority_closed BEFORE UPDATE ON principals WHEN NEW.id!=OLD.id OR NEW.issuer!=OLD.issuer OR NEW.subject!=OLD.subject OR NEW.active!=OLD.active OR NEW.generation!=OLD.generation OR NEW.authority_epoch!=OLD.authority_epoch BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+    "CREATE TRIGGER principal_delete_closed BEFORE DELETE ON principals BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+    "CREATE TRIGGER principal_replace_closed BEFORE INSERT ON principals WHEN EXISTS(SELECT 1 FROM authority_migrations) OR EXISTS(SELECT 1 FROM principals WHERE id=NEW.id OR (issuer=NEW.issuer AND subject=NEW.subject)) BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+)
+_MIGRATIONS = "CREATE TABLE authority_migrations (id INTEGER PRIMARY KEY CHECK(id=1), from_version INTEGER NOT NULL CHECK(from_version IN (0,1)), to_version INTEGER NOT NULL CHECK(to_version=2), principal_count INTEGER NOT NULL CHECK(principal_count>=0), realm TEXT NOT NULL) STRICT"
+_SCHEMA = (
+    _SCHEMA_V1[0].replace(") STRICT", ", " + _REALM_COLUMN + ") STRICT"),
+    _SCHEMA_V1[1].replace(", UNIQUE", ", " + _GENERATION_COLUMN + ", " + _EPOCH_COLUMN + ", UNIQUE"),
+    *_SCHEMA_V1[2:], _MIGRATIONS, *_PRINCIPAL_GUARDS,
+    "CREATE TRIGGER policy_authority_monotonic BEFORE UPDATE ON metadata WHEN NEW.id!=OLD.id OR NEW.realm!=OLD.realm OR NEW.epoch<OLD.epoch OR NEW.epoch>9007199254740991 BEGIN SELECT RAISE(ABORT,'invalid_authority_epoch'); END",
+    "CREATE TRIGGER policy_metadata_delete_closed BEFORE DELETE ON metadata BEGIN SELECT RAISE(ABORT,'invalid_authority_epoch'); END",
+    "CREATE TRIGGER policy_metadata_replace_closed BEFORE INSERT ON metadata WHEN EXISTS(SELECT 1 FROM metadata) BEGIN SELECT RAISE(ABORT,'invalid_authority_epoch'); END",
+    "CREATE TRIGGER authority_marker_update_closed BEFORE UPDATE ON authority_migrations BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+    "CREATE TRIGGER authority_marker_delete_closed BEFORE DELETE ON authority_migrations BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+    "CREATE TRIGGER authority_marker_replace_closed BEFORE INSERT ON authority_migrations WHEN EXISTS(SELECT 1 FROM authority_migrations) BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
+)
+
+
+def _schema_objects(connection, definitions):
+    for expected in definitions:
+        kind, name = re.match(r"CREATE (TABLE|TRIGGER) ([a-z_]+)", expected).groups()
+        row = connection.execute("SELECT type,sql FROM sqlite_master WHERE name=?", (name,)).fetchone()
+        if (row is None or row[0] != kind.lower() or type(row[1]) is not str
+                or " ".join(row[1].split()) != " ".join(expected.split())):
+            raise StorageError("unsupported_schema")
 
 
 class StorageError(Exception):
@@ -78,6 +113,8 @@ class SQLiteWorkspaceService:
                                    resources=resources, operators=operators)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 30:
             raise ValueError("timeout must be between 0 and 30 seconds")
+        if any(p.generation != 1 or p.authority_epoch != 1 for p in service._principals.values()):
+            raise ValueError("new authority must start at baseline one")
         path = Path(path).absolute()
         try:
             descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -97,10 +134,12 @@ class SQLiteWorkspaceService:
                         connection.execute(statement)
                     connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
                     connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-                    connection.executemany("INSERT INTO principals VALUES (?,?,?,?)", (astuple(p) for p in service._principals.values()))
+                    connection.executemany("INSERT INTO principals VALUES (?,?,?,?,?,?)", (astuple(p) for p in service._principals.values()))
                     connection.executemany("INSERT INTO operators VALUES (?)", ((p,) for p in service._operators))
-                    connection.execute("INSERT INTO metadata VALUES (1,?)", (service._epoch,))
+                    connection.execute("INSERT INTO metadata VALUES (1,?,?)", (service._epoch, service._realm))
+                    connection.execute("INSERT INTO authority_migrations VALUES (1,0,2,?,?)", (len(service._principals), service._realm))
                     instance._persist(connection, service, audit_start=0)
+                    instance._load(connection)
                     connection.commit()
                 except BaseException:
                     connection.rollback()
@@ -133,6 +172,7 @@ class SQLiteWorkspaceService:
         if (connection.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID
                 or connection.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION):
             raise StorageError("unsupported_schema")
+        _schema_objects(connection, _SCHEMA)
 
     @staticmethod
     def _bit(value):
@@ -155,7 +195,7 @@ class SQLiteWorkspaceService:
             if self._rows(connection, "PRAGMA foreign_key_check"):
                 raise ValueError("invalid foreign reference")
             service = WorkspaceService(
-                principals=tuple(Principal(a, b, c, self._bit(d)) for a, b, c, d in self._rows(connection, "SELECT id,issuer,subject,active FROM principals")),
+                principals=tuple(Principal(a, b, c, self._bit(d), e, f) for a, b, c, d, e, f in self._rows(connection, "SELECT id,issuer,subject,active,generation,authority_epoch FROM principals")),
                 workspaces=tuple(Workspace(*row) for row in self._rows(connection, "SELECT id,name,kind,state,revision FROM workspaces")),
                 memberships=tuple(Membership(*row) for row in self._rows(connection, "SELECT workspace_id,principal_id,role,state,revision FROM memberships")),
                 modules=tuple(ModuleInstance(a, b, tuple(cap for cap, on in (("read", self._bit(c)), ("write", self._bit(d))) if on), e, f)
@@ -163,10 +203,16 @@ class SQLiteWorkspaceService:
                 resources=tuple(Resource(*row) for row in self._rows(connection, "SELECT workspace_id,module_key,id,text,revision FROM resources")),
                 operators=frozenset(row[0] for row in self._rows(connection, "SELECT principal_id FROM operators")),
             )
-            epoch = connection.execute("SELECT epoch FROM metadata WHERE id=1").fetchone()
-            if epoch is None or type(epoch[0]) is not int or epoch[0] < 1:
+            epoch = connection.execute("SELECT epoch,realm FROM metadata WHERE id=1").fetchone()
+            if (epoch is None or type(epoch[0]) is not int or not 1 <= epoch[0] <= _MAX_AUTHORITY
+                    or type(epoch[1]) is not str or re.fullmatch(r"[0-9a-f]{32}", epoch[1]) is None
+                    or any(p.authority_epoch > epoch[0] for p in service._principals.values())):
                 raise ValueError("invalid policy epoch")
-            service._epoch = epoch[0]
+            service._epoch, service._realm = epoch
+            migration = connection.execute("SELECT from_version,to_version,principal_count,realm FROM authority_migrations WHERE id=1").fetchone()
+            if (migration is None or migration[0] not in (0,1) or migration[1] != 2
+                    or type(migration[2]) is not int or migration[2] < 0 or migration[3] != service._realm):
+                raise ValueError("invalid authority migration marker")
             service._audit = [AuditEvent(*row) for row in self._rows(connection, "SELECT sequence,actor_id,workspace_id,action,object_id,revision FROM audit ORDER BY sequence")]
             for event in service._audit:
                 for value in (event.actor_id, event.workspace_id, event.object_id):
@@ -185,6 +231,8 @@ class SQLiteWorkspaceService:
     @staticmethod
     def _persist(connection, service, *, audit_start):
         # No delete or replace: retain foreign keys, history, unrelated scopes.
+        if type(service._epoch) is not int or not 1 <= service._epoch <= _MAX_AUTHORITY:
+            raise StorageError("invalid_store")
         connection.executemany("INSERT INTO workspaces VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,state=excluded.state,revision=excluded.revision", (astuple(w) for w in service._workspaces.values()))
         connection.executemany("INSERT INTO memberships VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,principal_id) DO UPDATE SET role=excluded.role,state=excluded.state,revision=excluded.revision", (astuple(m) for m in service._memberships.values()))
         connection.executemany("INSERT INTO modules VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,key) DO UPDATE SET can_read=excluded.can_read,can_write=excluded.can_write,state=excluded.state,revision=excluded.revision", ((m.workspace_id, m.key, "read" in m.capabilities, "write" in m.capabilities, m.state, m.revision) for m in service._modules.values()))
@@ -218,6 +266,55 @@ class SQLiteWorkspaceService:
                     raise
         except sqlite3.Error as error:
             raise self._storage_error(error) from None
+
+    @classmethod
+    def migrate_v1(cls, path, *, timeout=5.0):
+        """Explicit local schema migration only; no identity mutation or login grant.
+
+        Drain old processes and secure a recovery copy first. No constructor or
+        HTTP route calls this. Unknown/partial schemas fail without changes.
+        """
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 <= timeout <= 30:
+            raise ValueError("invalid timeout")
+        instance = object.__new__(cls)
+        instance._path, instance._timeout = Path(path).absolute(), timeout
+        instance._uri = f"file:{quote(str(instance._path), safe='/')}?mode=rw"
+        try:
+            with closing(instance._connect()) as db:
+                db.execute("BEGIN IMMEDIATE")
+                try:
+                    if (db.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID
+                            or db.execute("PRAGMA user_version").fetchone()[0] != 1):
+                        raise StorageError("unsupported_schema")
+                    _schema_objects(db, _SCHEMA_V1)
+                    core = tuple(re.match(r"CREATE TABLE ([a-z_]+)", sql).group(1) for sql in _SCHEMA_V1)
+                    placeholders = ",".join("?" for _ in core)
+                    if db.execute(f"SELECT 1 FROM sqlite_master WHERE tbl_name IN ({placeholders}) AND (type='trigger' OR (type='index' AND sql IS NOT NULL))", core).fetchone():
+                        raise StorageError("unsupported_schema")
+                    for table, column in (("principals", _GENERATION_COLUMN), ("principals", _EPOCH_COLUMN), ("metadata", _REALM_COLUMN)):
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+                    realm = uuid4().hex
+                    db.execute("UPDATE metadata SET realm=? WHERE id=1", (realm,))
+                    db.execute(_MIGRATIONS)
+                    count = db.execute("SELECT count(*) FROM principals").fetchone()[0]
+                    db.execute("INSERT INTO authority_migrations VALUES (1,1,2,?,?)", (count, realm))
+                    for sql in _SCHEMA:
+                        if sql.startswith("CREATE TRIGGER "):
+                            db.execute(sql)
+                    db.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    instance._load(db)  # Data and all foreign keys validate before COMMIT.
+                    db.commit()
+                    return {"from_version": 1, "to_version": 2, "principals": count,
+                            "identity_mutation_enabled": False, "legacy_grants_upgraded": False}
+                except BaseException:
+                    db.rollback()
+                    raise
+        except sqlite3.Error as error:
+            raise instance._storage_error(error) from None
+
+    def set_principal(self, *args, **kwargs):
+        """Closed even to trusted callers; no hidden mutation/activation switch."""
+        raise PolicyError(503, "identity_transition_unavailable")
 
     def _call(self, method, *args, write=False, **kwargs):
         return self._transaction(lambda service: getattr(service, method)(*args, **kwargs), write=write)

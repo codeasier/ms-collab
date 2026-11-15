@@ -111,3 +111,13 @@ Tests are synthetic and offline, including the authorization-server double,
 code-injection/downgrade failures and multi-process one-use consumption. They are
 not live provider, browser-cookie, TLS, deployment or cross-store revocation
 acceptance. See the [identity boundary](../identity/README.md).
+
+## Authority-aware schema v2
+
+When composed by `SessionPolicyStore`, attempts and sessions are bound to the
+policy realm/current principal generation. All bound operations use policy-main
+then attached-login lock order. Legacy NULL authority is not adopted by the
+workspace host; compose before login and require fresh authentication after an
+explicit v1 upgrade. Standalone protocol primitives remain unbound. See the
+[authority contract](../../docs/principal-authority.md) for explicit migrations
+and pending-exchange ABA protections. Real GitCode remains disabled.
