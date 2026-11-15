@@ -1,8 +1,9 @@
 import {createClient, validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL} from './client.mjs'
 const el = id => document.getElementById(id)
 const client = createClient()
+const pendingCreations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
-let managementAvailable = false, pendingCreation
+let managementAvailable = false
 function cancelRequests() { generation++; controller?.abort(); controller = new AbortController(); return generation }
 function closeEditor() {
   editing = undefined; el('editor').close()
@@ -27,7 +28,7 @@ function busy(value) {
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
   cancelRequests(); client.clear(); clearPanel(); workspaces = []; selection = undefined
-  managementAvailable = false; pendingCreation = undefined
+  managementAvailable = false; pendingCreations.clear()
   el('workspace').replaceChildren(); el('control-spaces').replaceChildren(); el('operator-panel').hidden = true
   el('session').hidden = true; el('connect').hidden = false; el('credential').value = ''; el('status').textContent = message
 }
@@ -186,13 +187,13 @@ el('create-form').addEventListener('submit', async event => {
   const body = {name:el('space-name').value.trim(),kind:el('space-kind').value,initial_admin:el('initial-admin').value.trim()}
   if (!body.name || !validId(body.initial_admin) || !['product','shared'].includes(body.kind)) { el('create-status').textContent = 'Enter a name and an existing verified principal ID.'; return }
   const signature = JSON.stringify(body)
-  if (pendingCreation?.signature !== signature) pendingCreation = {signature,key:crypto.randomUUID()}
-  const current = generation, requestKey = pendingCreation.key
+  if (!pendingCreations.has(signature)) pendingCreations.set(signature,crypto.randomUUID())
+  const current = generation, requestKey = pendingCreations.get(signature)
   busy(true); el('create-status').textContent = 'Creating… Do not close the page until the result is known.'
   try {
     const created = await client.request('/api/control/workspaces', {method:'POST',body,requestKey,signal:controller.signal})
     if (current !== generation) return
-    validateWorkspaces([created]); pendingCreation = undefined; closeCreate()
+    validateWorkspaces([created]); pendingCreations.delete(signature); closeCreate()
     await reload(`Workspace created: ${created.name} (${created.id}). Only its nominated administrator receives membership.`)
   } catch (error) { await mutationError(error,current,'create-status') }
   finally { busy(false) }

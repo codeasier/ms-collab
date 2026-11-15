@@ -70,9 +70,11 @@ async function main(){
   await page.route('**/api/control/workspaces',async route=>{if(route.request().method()==='POST'&&!lost){lost=true;await route.fetch();return route.abort('failed')}return route.continue()})
   await fillCreate('Retry Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Result uncertain'))
   await page.unroute('**/api/control/workspaces')
+  // Completing another creation must not discard the unresolved request's key.
+  await fillCreate('Interleaved Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Workspace created: Interleaved Team'))
   await fillCreate('Retry Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Workspace created:'))
   const createWrites=writes.filter(r=>r.method==='POST'&&new URL(r.url).pathname==='/api/control/workspaces')
-  assert.equal(createWrites.length,2);assert.equal(createWrites[0].key,createWrites[1].key)
+  assert.equal(createWrites.length,3);assert.equal(createWrites[0].key,createWrites[2].key);assert.notEqual(createWrites[0].key,createWrites[1].key)
   let controls=(await (await context.request.get(origin+'/api/control/workspaces',{headers:operatorHeaders})).json()).data
   assert.equal(controls.filter(w=>w.name==='Retry Team').length,1);const team=controls.find(w=>w.name==='Retry Team')
   await fillCreate('Shared Team','shared');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Workspace created: Shared Team'))
