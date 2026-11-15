@@ -82,6 +82,15 @@ class ResponsibilityTests(unittest.TestCase):
         self.assertEqual(self.save(token='test-reader')['status'],404)
         self.assertEqual(self.save(token='test-second')['status'],404)
 
+    def test_capabilities_resolve_current_grants_and_never_grant_write(self):
+        self.assertEqual(self.request('/capabilities')['body']['data']['capabilities'],{'read':True,'edit':False})
+        self.assertEqual(self.request('/capabilities',token='test-admin')['body']['data']['capabilities'],{'read':True,'edit':True})
+        self.store.set_membership('second','alpha','admin',role='developer',state='active',expected_revision=1)
+        self.assertEqual(self.request('/capabilities',token='test-admin')['body']['data']['capabilities'],{'read':True,'edit':False})
+        self.assertEqual(self.save()['status'],403)
+        self.assertEqual(self.request('/capabilities',token='test-outsider')['status'],404)
+        self.assertEqual(self.request('/capabilities',query='actor=admin')['status'],404)
+
     def test_current_membership_and_both_modules_required(self):
         self.store.set_module_state('admin','alpha','responsibility',state='disabling',expected_revision=2)
         self.assertEqual(self.request()['status'],409)

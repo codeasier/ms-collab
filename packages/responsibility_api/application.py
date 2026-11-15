@@ -60,6 +60,11 @@ class ResponsibilityApplication(WorkspaceApplication):
                 state=read(db,scope)
             common={'scope':scope.as_dict(),'revision':state['revision'],'config_version':state['config_version'],
                     'identity_namespace':'ms-collab.principal.id','workflow_enabled':False}
+            if action=='capabilities':
+                editable=True
+                try:self._state(policy,actor,db,scope,'edit')
+                except PolicyError:editable=False
+                return common|{'capabilities':{'read':True,'edit':editable}}
             if action in {'config','save'}:return common|{'fields':state['fields']}
             approved=tuple(item for item in community.snapshot.items if fingerprint(scope,item) in community.approvals) if community.snapshot else ()
             current_evidence=state['community_revision']==community.revision
@@ -117,6 +122,7 @@ class ResponsibilityApplication(WorkspaceApplication):
         if len(p)!=9 or p[:3]!=['','api','workspaces'] or p[4]!='responsibility' or any(not _ID.fullmatch(x) for x in p[3:]):raise PolicyError(404,'not_found')
         scope=Scope(p[3],p[5],p[6]+'/'+p[7])
         if p[8]=='config' and verb in {'GET','PUT'} and not query:return scope,'config' if verb=='GET' else 'save',{}
+        if p[8]=='capabilities' and verb=='GET' and not query:return scope,'capabilities',{}
         if p[8]!='candidates' or verb!='GET':raise PolicyError(404,'not_found')
         try:
             options=_object(parse_qsl(query,keep_blank_values=True,strict_parsing=True,max_num_fields=4))

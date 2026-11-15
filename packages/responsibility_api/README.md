@@ -3,7 +3,8 @@
 An optional configured WSGI service for responsibility config and read-only work
 candidates. It uses a real supplied verifier and current policy database, never
 a fake production identity. The synthetic demo and existing services are not
-rewired. There is no UI, listener, provider discovery or automatic workflow here.
+rewired. There is no listener, provider discovery or automatic workflow here. An optional
+[authorized UI composition](../responsibility_ui/README.md) is separate.
 
 ## Explicit setup and authority
 
@@ -38,6 +39,7 @@ and final current-identity checks apply to all operations.
 
 | Method | Suffix | Behavior |
 | --- | --- | --- |
+| GET | `/capabilities` | Current explicit read/edit ability; writes still reauthorize |
 | GET | `/config` | Scope, revision, config version, local identity namespace and fields |
 | PUT | `/config` | Exact `{"fields":[...]}`; explicit editor authority and `If-Match` |
 | GET | `/candidates` | `view=mine|all|field|unassigned`, optional `field_id`, `offset`, `limit` |
