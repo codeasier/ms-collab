@@ -69,7 +69,8 @@ class CoreTests(unittest.TestCase):
         issue=BoardItem('issue',1,'Issue','open','2026-01-01T00:00:00Z');pull=BoardItem('pull',2,'Pull','open','2026-01-01T00:00:00Z')
         for actor in ('carol','reviewer'):
             self.assertEqual(project(FIELDS,[issue,pull],{pull.key:proof(['ui/a'])},actor)['items'],[])
-        self.assertEqual(project(FIELDS,[issue],{},'alice',view='unassigned')['items'][0]['assignee_identity_status'],'unknown')
+        issue_row=project(FIELDS,[issue],{},'alice',view='unassigned')['items'][0]
+        self.assertEqual(issue_row['assignee_identity_status'],'unknown');self.assertEqual(issue_row['assignment_status'],'unknown')
         self.assertEqual(project(FIELDS,[issue,pull],{pull.key:proof(['ui/a'])},'alice',view='field',field_id='review')['total'],1)
 
     def test_incomplete_paths_have_no_partial_assignment(self):

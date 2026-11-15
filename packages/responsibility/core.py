@@ -102,7 +102,7 @@ def project(config, items, evidence, actor, *, view='mine',field_id='',offset=0,
         if view=='field' and field_id not in {f['id'] for f in matched}:continue
         if view=='unassigned' and item.kind!='issue':continue
         rows.append(dict(kind=item.kind,number=item.number,title=item.title,
-            assignment_status='incomplete' if item.kind=='pull' and not complete else 'partially_mapped' if developers and unmapped else 'matched' if developers else 'unassigned',
+            assignment_status='unknown' if item.kind=='issue' else 'incomplete' if not complete else 'partially_mapped' if developers and unmapped else 'matched' if developers else 'unassigned',
             unmapped_paths=unmapped,fields=[dict(id=f['id'],kind=f['kind'],review_status='unverified') for f in matched],
             my_field_ids=mine,assignee_identity_status='unknown',review_status='unverified',approval_available=False,
             path_evidence='complete_unpinned_observation' if complete else 'unavailable',

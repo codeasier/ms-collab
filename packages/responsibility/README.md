@@ -59,8 +59,9 @@ matching a REST ID. The service never accepts an actor query parameter.
 Mine includes developer-field owners only, not backups or committer ownership.
 A selected committer field can be inspected through the field view. Multiple
 matching fields are observations, not assigned tasks. Unassigned remains the
-source's **Issue-only** queue; unmapped PRs are visible in all with their explicit
-status. Counts cover only supplied, approved observations, not the entire repo.
+source's **Issue-only** queue name, not a claim that upstream Issues have no
+assignee: their `assignment_status` is `unknown`. Unmapped PRs are visible in all
+with their explicit status. Counts cover only supplied, approved observations, not the entire repo.
 
 Every projection keeps `workflow_enabled=false`, `review_status=unverified`,
 `approval_available=false`, `transport_executable=false` and
