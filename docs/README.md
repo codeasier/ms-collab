@@ -52,3 +52,5 @@
 - [Research asset cookie UI](../frontend/research-assets/README.md)：同一会话中的类型/实体筛选、固定版本分页和纯文本详情；未发布与空结果分开，不含真实provider或执行。
 - [Saved assistant history UI](../frontend/assistant/README.md)：统一 Cookie/session 下的 owner 隔离、固定版本事件分页和可逆归档恢复；不启用 ACP、执行或 MCP。
 - [GitCode login activation gate](gitcode-login-acceptance.md)：官方证据与服务端绑定缺口、离线 fail-closed 回归和隔离验收步骤；不是已接入真实登录。
+
+- [ACP protocol preparation and blocked execution admission](../packages/assistant_protocol/README.md)：纯内存协议与 owner/workspace 授权拒绝审计；无进程、MCP、真实外联或执行入口，明确 OS 隔离验收阻塞。
