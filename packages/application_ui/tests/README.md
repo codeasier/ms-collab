@@ -8,3 +8,7 @@
   composed service, not mocked authentication or a session-to-bearer bridge.
 
 Return to [composition](../README.md).
+
+The explicit `pipelines` browser fixture mode provisions only synthetic stored
+runs for cookie-UI acceptance; it is not provider ingestion or production setup.
+The standalone pipeline workflow separately retains provider-to-UI coverage.

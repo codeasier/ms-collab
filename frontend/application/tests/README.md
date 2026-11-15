@@ -14,3 +14,11 @@ run by the [workflow](../../../.github/workflows/application-ui.yml). The tempor
 certificate is accepted only in a disposable browser context, never system-wide.
 
 Return to [frontend](../README.md).
+
+- `pipeline-browser.cjs`: real synthetic HTTPS login into the shared pipeline
+  controller; runs/details/durations, scope edits, malformed revisions,
+  ineffective abort, delayed detail, pagehide/recheck, logout, real Back,
+  membership/session revocation and XSS-as-text. Writes exactly desktop/mobile/
+  detail screenshots. No live provider compatibility or production deployment.
+- Run `node frontend/application/tests/pipeline-browser.cjs` with the locked
+  browser tooling, via [CI](../../../.github/workflows/pipeline-cookie-ui.yml).

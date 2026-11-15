@@ -1,13 +1,15 @@
-import {createClient,scopeFrom,loadSnapshot,validateDetail} from './client.mjs'
-const el=id=>document.getElementById(id),client=createClient(),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
-let epoch=0,controller,detailEpoch=0,detailController,scope,snapshot,page=0,filter={query:'',status:''}
+import {scopeFrom,loadSnapshot,validateDetail} from './client.mjs'
+export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{}}){
+if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
+const el=id=>document.getElementById(id),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
+let active=false,epoch=0,controller,detailEpoch=0,detailController,scope,snapshot,page=0,filter={query:'',status:''}
 function text(tag,value,className){const n=document.createElement(tag);n.textContent=value;if(className)n.className=className;return n}
 function closeDetail(){detailEpoch++;detailController?.abort();detailController=undefined;el('detail').close();el('detail-title').textContent='';el('detail-status').textContent='';el('detail-body').replaceChildren()}
 function clearPanel(){closeDetail();snapshot=undefined;page=0;el('panel').hidden=true;for(const id of ['scope-title','revision','summary','coverage'])el(id).textContent='';el('runs').replaceChildren();el('durations').replaceChildren()}
 function cancel(){epoch++;controller?.abort();controller=new AbortController();return epoch}
 function disconnect(message='Disconnected. Reconnect to read current authorized state.'){
- cancel();client.clear();clearPanel();scope=undefined;el('session').hidden=true;el('connect').hidden=!transportAllowed
- for(const id of ['credential','workspace','connection','pipeline','query'])el(id).value='';el('state').value='';filter={query:'',status:''};el('status').textContent=message
+ active=false;cancel();client.clear();clearPanel();scope=undefined;el('session').hidden=true;if(el('connect'))el('connect').hidden=!transportAllowed
+ for(const id of ['credential','workspace','connection','pipeline','query'])if(el(id))el(id).value='';el('state').value='';filter={query:'',status:''};el('status').textContent=message
 }
 function failure(error,token){if(token!==epoch||error.name==='AbortError')return;if(error.status===401){disconnect(error.message);return}clearPanel();el('status').textContent=error.status?error.message:'Snapshot changed or could not be validated. Reopen the scope to retry.'}
 function renderRuns(){
@@ -35,12 +37,12 @@ function renderDurations(){
  if(!report.groups.length)el('durations').append(text('p','No valid successful-job duration samples in this stored subset. Missing or invalid evidence is not zero duration.'))
 }
 async function load(){
- if(!scope)return
+ if(!active||!scope)return
  const selected={...scope},token=cancel();clearPanel();el('status').textContent='Reading an authorized, consistent snapshot…'
  try{const data=await loadSnapshot(client,selected,controller.signal);if(token!==epoch)return;snapshot=data;el('scope-title').textContent=`${selected.workspace_id} / ${selected.connection_id} / ${selected.pipeline_id}`;el('revision').textContent=`Stored snapshot version ${data.revision} · complete provider history: no · live provider verified: no`;el('panel').hidden=false;renderRuns();renderDurations();el('status').textContent='Current access checked by the service. This reads stored data, not a live provider refresh.'}catch(error){failure(error,token)}
 }
 async function showDetail(runID){
- if(!snapshot||!scope)return
+ if(!active||!snapshot||!scope)return
  closeDetail();detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
  el('detail-title').textContent=runID;el('detail-status').textContent='Reading current authorized run details…';el('detail').showModal()
  try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID,summary);if(token!==epoch||detailToken!==detailEpoch)return
@@ -50,12 +52,16 @@ async function showDetail(runID){
   for(const stage of run.stages||[]){const section=text('section','');section.append(text('h3',stage.name));for(const job of stage.jobs){const row=text('article','','job');row.append(text('h4',job.name),text('p',`${job.id} · ${job.status}`),text('p',`Started: ${job.started_at??'unavailable'}`),text('p',`Finished: ${job.finished_at??'unavailable'}`));section.append(row)}el('detail-body').append(section)}
  }catch(error){if(token!==epoch||detailToken!==detailEpoch||error.name==='AbortError')return;failure(error,token)}
 }
-el('connect').addEventListener('submit',event=>{event.preventDefault();if(!transportAllowed)return;try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque access credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided workspace, connection and pipeline.'})
-el('disconnect').addEventListener('click',()=>disconnect())
-el('scope-form').addEventListener('submit',event=>{event.preventDefault();cancel();clearPanel();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('pipeline').value)}catch{scope=undefined;el('status').textContent='Enter valid scope identifiers.';return}filter={query:'',status:''};el('query').value='';el('state').value='';load()})
+if(!sessionMode)el('connect').addEventListener('submit',event=>{event.preventDefault();if(!transportAllowed)return;try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque access credential.';return}active=true;el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided workspace, connection and pipeline.'})
+el('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})
+for(const id of ['workspace','connection','pipeline'])el(id).addEventListener('input',()=>{cancel();clearPanel();scope=undefined;el('status').textContent='Scope changed. Open current authorized state again.'})
+el('scope-form').addEventListener('submit',event=>{event.preventDefault();if(!active||!transportAllowed)return;cancel();clearPanel();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('pipeline').value)}catch{scope=undefined;el('status').textContent='Enter valid scope identifiers.';return}filter={query:'',status:''};el('query').value='';el('state').value='';load()})
 el('reload').addEventListener('click',load)
 el('filters').addEventListener('submit',event=>{event.preventDefault();filter={query:el('query').value,status:el('state').value};page=0;renderRuns()})
 el('previous').addEventListener('click',()=>{page--;renderRuns()});el('next').addEventListener('click',()=>{page++;renderRuns()})
 el('detail-close').addEventListener('click',closeDetail);el('detail').addEventListener('cancel',event=>{event.preventDefault();closeDetail()})
 window.addEventListener('pagehide',()=>disconnect())
-if(!transportAllowed){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+if(!sessionMode&&!transportAllowed){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+
+return {activate(){if(!transportAllowed)throw new Error('HTTPS required.');active=true;el('session').hidden=false;el('status').textContent='Enter exact workspace, connection and pipeline IDs supplied by your administrator.'},clear:disconnect}
+}
