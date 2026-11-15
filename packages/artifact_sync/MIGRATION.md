@@ -37,3 +37,7 @@ large-scale history, provider versions/deletions, editable views, configuration
 management UI, refresh/approval UI or protected file download. Existing static
 catalog APIs remain available separately; the new index adapter must be selected
 explicitly by trusted app setup. See [integration contract](README.md).
+
+The later [administration slice](../artifact_admin/README.md) supplies a separately
+configured refresh/approval UI/API. It does not remove the provider compatibility,
+production migration or download boundaries above.
