@@ -1,0 +1,46 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# --- Editors / IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+
+# --- Node.js ---
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+coverage/
+
+# --- Misc ---
+*.log
+tmp/

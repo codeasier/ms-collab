@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a problem so we can fix it
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please search existing
+        issues first. For security vulnerabilities, do **not** use this form —
+        see SECURITY.md instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps that reliably trigger the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include error output or logs if relevant.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Which version or commit are you running?
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, runtime/toolchain versions, browser, etc.
+      placeholder: "e.g. macOS 15.1, Python 3.12"
+    validations:
+      required: false
