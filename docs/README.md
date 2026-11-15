@@ -52,5 +52,6 @@
 - [Research asset cookie UI](../frontend/research-assets/README.md)：同一会话中的类型/实体筛选、固定版本分页和纯文本详情；未发布与空结果分开，不含真实provider或执行。
 - [Saved assistant history UI](../frontend/assistant/README.md)：统一 Cookie/session 下的 owner 隔离、固定版本事件分页和可逆归档恢复；不启用 ACP、执行或 MCP。
 - [GitCode login activation gate](gitcode-login-acceptance.md)：官方证据与服务端绑定缺口、离线 fail-closed 回归和隔离验收步骤；不是已接入真实登录。
+- [Pipeline stage/task observations and log boundary](../packages/pipeline_api/LOG_BOUNDARY.md)：固定版本的阶段计数与任务分页，重复ID不等于执行身份；原始日志因隐私契约未建立仍关闭。
 
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.

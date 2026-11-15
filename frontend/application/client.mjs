@@ -82,5 +82,5 @@ export function createResponsibilitySessionClient(session){
 }
 
 export function createPipelineSessionClient(session){
- return {clear:()=>session.clear(),request(scope,kind,{runID,signal}={}){return session.request(readPath(scope,kind,{runID}),{signal})}}
+ return {clear:()=>session.clear(),request(scope,kind,{signal,...options}={}){return session.request(readPath(scope,kind,options),{signal})}}
 }
