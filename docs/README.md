@@ -15,3 +15,4 @@
 - [Transactional workspace API](../packages/workspace_api/README.md)：可信验证器与 SQLite 同事务授权的配置式 WSGI 适配器；没有真实登录提供方或生产启动入口。
 
 - [Authorized artifact HTTP API](../packages/artifacts_api/README.md)：同一 SQLite 快照中的身份/权限、季度目录和命名视图查询；无真实 provider、下载或 UI。
+- [GitCode community snapshot adapter](../packages/community_sync/README.md)：显式凭据、只读 provider 与按空间/连接隔离的 SQLite 快照；尚未接入认证 HTTP 或真实看板 UI。
