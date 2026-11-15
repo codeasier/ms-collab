@@ -76,16 +76,28 @@ def project(config, items, evidence, actor, *, view='mine',field_id='',offset=0,
     if view not in {'mine','all','field','unassigned'} or (view!='field' and field_id):raise ValueError('invalid_view')
     if view=='field' and field_id not in {f['id'] for f in configured}:raise ValueError('unknown_field')
     if type(offset) is not int or not 0<=offset<=100000 or type(limit) is not int or not 1<=limit<=100:raise ValueError('invalid_page')
+    # Index literal prefixes once. Avoid config-paths × observed-paths scans:
+    # publication is bounded, but both dimensions can still be substantial.
+    by_prefix={}
+    for index,field in enumerate(configured):
+        for prefix in field['paths']:by_prefix.setdefault(prefix,set()).add(index)
     rows=[];incomplete=0
     for item in sorted(items,key=lambda i:i.key):
         if item.state!='open':continue
         proof=evidence.get(item.key) if item.kind=='pull' else None
         complete=proof is not None and proof.complete
         if item.kind=='pull' and not complete:incomplete+=1
-        matched=[f for f in configured if any(matches(p,prefix) for p in proof.paths for prefix in f['paths'])] if complete else []
+        matched_indices=set();unmapped=[]
+        if complete:
+            for path in proof.paths:
+                indices=set();components=path.split('/')
+                for end in range(1,len(components)+1):
+                    indices.update(by_prefix.get('/'.join(components[:end]),()))
+                matched_indices.update(indices)
+                if not any(configured[i]['kind']=='developer' for i in indices):unmapped.append(path)
+        matched=[field for i,field in enumerate(configured) if i in matched_indices]
         developers=[f for f in matched if f['kind']=='developer']
         mine=[f['id'] for f in developers if actor in f['owner_ids']]
-        unmapped=[p for p in proof.paths if not any(matches(p,prefix) for f in developers for prefix in f['paths'])] if complete else []
         if view=='mine' and not mine:continue
         if view=='field' and field_id not in {f['id'] for f in matched}:continue
         if view=='unassigned' and item.kind!='issue':continue

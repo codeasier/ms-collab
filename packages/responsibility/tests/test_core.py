@@ -53,6 +53,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([f['id'] for f in row['fields']],['ui','core','review']);self.assertEqual(row['my_field_ids'],['ui'])
         self.assertFalse(row['approval_available']);self.assertFalse(result['workflow_enabled']);self.assertFalse(result['transport_executable'])
 
+    def test_indexed_prefix_matching_large_config_preserves_order_and_literal_semantics(self):
+        config=[dict(id=f'f{i}',name=f'Field {i}',kind='developer' if i%2 else 'committer',
+                     paths=[f'group{i}/area{j}' for j in range(100)],owner_ids=['alice'],backup=None)
+                for i in range(200)]
+        item=BoardItem('pull',1,'Synthetic large path set','open','2026-01-01T00:00:00Z')
+        paths=tuple(sorted([f'group{i}/area99/file' for i in range(200)]+['group1/area99-extra/file','unknown/file']))
+        observation=PathEvidence(**DIFF,complete=True,paths=paths,reason='')
+        row=project(config,[item],{item.key:observation},'alice',view='all')['items'][0]
+        self.assertEqual([f['id'] for f in row['fields']],[f'f{i}' for i in range(200)])
+        self.assertEqual(row['my_field_ids'],[f'f{i}' for i in range(200) if i%2])
+        self.assertEqual(row['unmapped_paths'],[p for p in paths if p in {'group1/area99-extra/file','unknown/file'} or int(p.split('/')[0][5:])%2==0])
+
     def test_backup_committer_and_issue_ids_do_not_imply_assignment(self):
         issue=BoardItem('issue',1,'Issue','open','2026-01-01T00:00:00Z');pull=BoardItem('pull',2,'Pull','open','2026-01-01T00:00:00Z')
         for actor in ('carol','reviewer'):
