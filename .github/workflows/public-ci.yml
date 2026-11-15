@@ -1,0 +1,68 @@
+name: Public CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-checks:
+    name: Repository safety checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out this revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Validate public repository content
+        run: python3 scripts/ci/check_repository.py
+      - name: Test repository checker
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+
+  demo-tests:
+    name: Demo tests when present
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out this revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Test Python demo if migrated
+        shell: bash
+        run: |
+          if [ -d backend ]; then
+            test -d backend/tests
+            test -n "$(find backend/tests -type f -name 'test_*.py' -print -quit)"
+            python3 -m unittest discover -s backend/tests -v
+          else
+            echo 'Backend not migrated in this revision; no backend tests executed.'
+          fi
+      - name: Test frontend demo if migrated
+        shell: bash
+        run: |
+          if [ -d frontend ]; then
+            node --test frontend/tests/*.test.mjs
+          else
+            echo 'Frontend not migrated in this revision; no frontend tests executed.'
+          fi
