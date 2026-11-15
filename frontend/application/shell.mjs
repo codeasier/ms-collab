@@ -1,3 +1,5 @@
+import {mountAssetPage} from '../research-assets/browser.mjs'
+import {createAssetSessionClient} from '../research-assets/client.mjs'
 import {mountAssistantPage} from '/assistant/history.mjs'
 import {createAssistantSessionClient} from '/assistant/client.mjs'
 import {mountCommunityPage} from '../community/board.mjs'
@@ -66,6 +68,7 @@ async function start(){
   el('app-login-note').textContent=bootstrap.login_configured?'Sign-in uses only the explicitly configured identity provider. No provider protocol or production readiness is implied.':'Sign-in is unavailable: no reviewed bound-code identity provider is configured. Existing valid sessions may be rechecked; no default identity is supplied.'
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
   const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
+  const assets=el('app-research-assets-link');if(assets)assets.hidden=!bootstrap.ui_modules.includes('research-assets')
   const assistant=el('app-assistant-link');if(assistant)assistant.hidden=!bootstrap.ui_modules.includes('assistant')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
   for(const module of ['artifacts','artifact-admin']){const link=el('app-'+module+'-link');if(link)link.hidden=!bootstrap.ui_modules.includes(module)}
@@ -92,6 +95,10 @@ async function start(){
    const download=module==='artifacts'&&bootstrap.ui_modules.includes('artifact-downloads')?mountArtifactDownload({session}):null
    if(download)el('download-notice').hidden=false
    page=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut,onDownload:download?.select,clearDownload:()=>download?.clear()}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
+  }
+  else if(document.body.dataset.page==='research-assets'){
+   if(!bootstrap.ui_modules.includes('research-assets'))throw new Error('Research assets are not configured on this service.')
+   page=mountAssetPage({client:createAssetSessionClient(session),onSignOut:signOut})
   }
   ready=true;initializing=false;busy=false;el('app-recheck').textContent='Recheck session';controls();await inspect()
  }catch(error){if(turn===generation){clear(error.message||'Application configuration unavailable.');if(!ready)el('app-recheck').textContent='Retry setup'}}

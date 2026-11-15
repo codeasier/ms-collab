@@ -59,9 +59,13 @@ test('deadline includes ignored-abort fetch and releases its later body',async()
 
 test('monotonic deadline rejects timer-starving ready reads with one bounded output buffer',async()=>{
  const count=20000,small={...binding,size:count},head={...headers,'Content-Length':String(count)}
- let i=0,canceled=0;const body=new ReadableStream({pull(c){if(i++<count)c.enqueue(new Uint8Array([0]));else c.close()},cancel(){canceled++}})
- await assert.rejects(receiveArtifact(context({binding:small,deadline:1,fetcher:async()=>new Response(body,{headers:head}),digest:async()=>Buffer.from(hash,'hex')})),/deadline/)
- assert.ok(i<count);assert.equal(canceled,1)
+ const saved=globalThis.performance;let now=0,i=0,canceled=0
+ try{
+  globalThis.performance={now:()=>now}
+  const body=new ReadableStream({pull(c){if(++i===100)now=2;if(i<=count)c.enqueue(new Uint8Array([0]));else c.close()},cancel(){canceled++}})
+  await assert.rejects(receiveArtifact(context({binding:small,deadline:1,fetcher:async()=>new Response(body,{headers:head}),digest:async()=>Buffer.from(hash,'hex')})),/deadline/)
+  assert.ok(i>1&&i<count);assert.equal(canceled,1)
+ }finally{globalThis.performance=saved}
 })
 test('Unicode attachment names match actual Python stream headers by code point',()=>{
  const keys=['rocket-🚀.bin','many-😀😀.bin','é.txt','<svg>.bin','x'.repeat(100)+'.bin']
