@@ -90,4 +90,10 @@ is tested through mocked connections, not live TLS/provider acceptance.
 The [login-state core](../login_state/README.md) supplies persistent one-use state,
 browser binding, S256 material and session lifecycle primitives. It intentionally
 does not enable this protocol client as a login verifier: a securely bound-code
-adapter and HTTP/policy transaction integration remain required.
+adapter remains required; [session/policy integration](../session_api/README.md)
+and the [unified host](../application_host/README.md) are now available as explicit
+composition, without enabling this client.
+
+See the [evidence ledger and staged acceptance plan](../../docs/gitcode-login-acceptance.md)
+for the unresolved provider contract, controlled negative cases and activation
+criteria. Offline gate regressions must not be reported as live GitCode acceptance.

@@ -24,7 +24,8 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
-      - name: Test offline protocol and transport boundaries
+      - name: Test offline protocol, transport and closed-login boundaries
         run: |
           test -f packages/gitcode_identity/tests/test_client.py
+          test -f packages/gitcode_identity/tests/test_login_gate.py
           python3 -m unittest discover -s packages/gitcode_identity/tests -v

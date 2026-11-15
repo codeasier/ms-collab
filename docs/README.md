@@ -48,3 +48,5 @@
 
 - [Community sharing in the unified session entry](../packages/application_ui/README.md#community-sharing-boundary)：同一 Cookie/session 下的授权共享、完整候选集精确审批与版本冲突处理；无 Bearer 转换或上游刷新。
 - [Cookie-only pipeline entry](../packages/application_ui/README.md#pipeline-lifecycle)：同一 session 下读取准确作用域的运行、详情和耗时；取消/版本一致性，不含日志、执行或上游刷新。
+
+- [GitCode login activation gate](gitcode-login-acceptance.md)：官方证据与服务端绑定缺口、离线 fail-closed 回归和隔离验收步骤；不是已接入真实登录。
