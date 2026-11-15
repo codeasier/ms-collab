@@ -36,8 +36,10 @@ rechecked. A synthetic fixture is never imported by the production factory.
 - `/artifact-admin/` exists only with `HostConfig.artifact_administration=True`.
   It reviews and approves an existing staged candidate, including every metadata
   row and current reader, with independent digest verification and explicit CAS
-  confirmation. Refresh is unavailable: this host has no provider credential
-  loader. An unconfigured refresh request fails closed.
+  confirmation. Refresh is disabled by default; a separate `artifact_refresh`
+  host flag, trusted provider configuration and current refresher grant enable
+  private acquisition only. Unconfigured refresh fails closed. See
+  [configured refresh](../artifact_refresh/README.md).
 - `HostConfig.artifact_downloads=True` and explicit trusted download configuration
   optionally add a catalog Check download/Confirm interaction. Availability is
   independently authorized; the browser shows size/hash and verifies all bytes
@@ -84,7 +86,7 @@ is added. Existing server-issued retry keys for uncertain workspace/invitation
 creation remain page-memory-only and clear with the lifecycle.
 
 This slice does not add module/repository discovery, real GitCode login evidence,
-external acquisition/execution, production TLS setup or deployment acceptance.
+real-provider compatibility, execution, production TLS setup or deployment acceptance.
 Responsibility path observations remain unpinned and unverified for review; Issue
 assignment stays unknown. Other module UIs are not silently routed through a
 legacy bearer wrapper.
@@ -191,3 +193,14 @@ Scope/filter edits, clear, pagehide, logout and 401 discard the private display.
 No second sign-in, bearer adapter, provider request or execution control is added.
 See the [capability map](../../docs/unified-entry.md) for all supported pages and
 explicit remaining limits, and the [GUI contract](../../frontend/gui-smoke/README.md).
+
+## Community connection self-service
+
+An explicitly configured `HostConfig.community_connections` tuple enables
+`/connections/` and the community scope picker. This uses the same cookie-only
+session, not another identity flow. Current workspace admins additionally need a
+platform manager delegation; grant edits are bounded by approved principals and
+clear old observations/approvals atomically. Ordinary discovery only returns
+current readable, registered scopes. No credential or endpoint form exists.
+See the [connection contract](../workspace_connections/README.md) for deployment
+pins, revision handling, invalidation and deliberately unimplemented providers.

@@ -1,3 +1,4 @@
+import {mountConnectionsPage,mountConnectionPicker} from './connections.mjs'
 import {mountGuiSmokePage} from '../gui-smoke/view.mjs'
 import {createGuiSmokeSessionClient} from './gui-smoke-session.mjs'
 import {mountAssetPage} from '../research-assets/browser.mjs'
@@ -70,12 +71,17 @@ async function start(){
   el('app-login-note').textContent=bootstrap.login_configured?'Sign-in uses only the explicitly configured identity provider. No provider protocol or production readiness is implied.':'Sign-in is unavailable: no reviewed bound-code identity provider is configured. Existing valid sessions may be rechecked; no default identity is supplied.'
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
   const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
+  const connections=el('app-connections-link');if(connections)connections.hidden=!bootstrap.ui_modules.includes('connections')
   const gui=el('app-gui-smoke-link');if(gui)gui.hidden=!bootstrap.ui_modules.includes('gui-smoke')
   const assets=el('app-research-assets-link');if(assets)assets.hidden=!bootstrap.ui_modules.includes('research-assets')
   const assistant=el('app-assistant-link');if(assistant)assistant.hidden=!bootstrap.ui_modules.includes('assistant')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
   for(const module of ['artifacts','artifact-admin']){const link=el('app-'+module+'-link');if(link)link.hidden=!bootstrap.ui_modules.includes(module)}
   if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
+  else if(document.body.dataset.page==='connections'){
+   if(!bootstrap.ui_modules.includes('connections'))throw new Error('Connection management is not configured on this service.')
+   page=mountConnectionsPage({session})
+  }
   else if(document.body.dataset.page==='responsibility'){
    if(!bootstrap.ui_modules.includes('responsibility'))throw new Error('Responsibility is not configured on this service.')
    page=mountResponsibilityPage({client:createResponsibilitySessionClient(session),sessionMode:true,onSignOut:signOut})
@@ -90,7 +96,8 @@ async function start(){
   }
   else if(document.body.dataset.page==='community'){
    if(!bootstrap.ui_modules.includes('community'))throw new Error('Community is not configured on this service.')
-   page=mountCommunityPage({client:createCommunitySessionClient(session),sessionMode:true,onSignOut:signOut})
+   const board=mountCommunityPage({client:createCommunitySessionClient(session),sessionMode:true,onSignOut:signOut})
+   if(bootstrap.ui_modules.includes('connections')){const picker=mountConnectionPicker({session});let activation=0;page={clear:message=>{activation++;picker.clear();board.clear(message)},activate:async()=>{const turn=activation;await picker.activate();if(turn===activation)await board.activate()}}}else page=board
   }
   else if(document.body.dataset.page==='pipelines'){
    if(!bootstrap.ui_modules.includes('pipelines'))throw new Error('Pipelines are not configured on this service.')

@@ -67,3 +67,5 @@ test('pipeline cookie client only reads validated scoped paths without credentia
  for(const kind of ['trigger','logs','refresh','cancel'])assert.throws(()=>client.request(scope,kind))
  assert.throws(()=>client.request({...scope,workspace_id:'../beta'},'runs'));client.clear();await assert.rejects(client.request(scope,'runs'));assert.equal(calls.length,4)
 })
+
+test('connection navigation requires its configured community dependency',()=>{assert.throws(()=>validateBootstrap({service:'ms-collab',ui_modules:['workspaces','connections'],login_configured:false,authorization_endpoint:null},'https://app.example.invalid'))})

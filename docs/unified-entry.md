@@ -23,7 +23,7 @@ Public/shared workspaces are not anonymous feeds.
 | `/community/` | Approved content, review and complete-set explicit approval | Provider visibility is not publication; no implicit refresh |
 | `/pipelines/` | Published runs, details and duration observations | Not a runner, upstream trigger, live logs or independent execution proof |
 | `/artifacts/` | Published artifact index and named views | No unapproved-candidate fallback; byte handoff is a separate explicit opt-in |
-| `/artifact-admin/` | Staged metadata review and explicit approval | Separate host flag; no automatic provider refresh |
+| `/artifact-admin/` | Optional private refresh, staged metadata review and explicit approval | Refresh requires a separate trusted configuration and current grant; never automatic publication |
 | `/assistant/` | Current-owner saved display history, archive/restore | Not ACP execution, resume/cancel, prompts, MCP or agent dispatch |
 | `/research-assets/` | Four-type scoped knowledge catalog and literal details | Not binary artifacts, incident diagnosis or command execution |
 | `/gui-smoke/` | Saved task/state/stage observations and fixed-version details | No submit/retry/cancel/refresh/log/download controls; reported success is not a release gate |
@@ -67,3 +67,17 @@ See [configured entry](../packages/application_ui/README.md),
 [host boundary](../packages/application_host/README.md),
 [GUI presentation](../frontend/gui-smoke/README.md), and
 [documentation index](README.md).
+
+## Connection self-service
+
+With an explicitly installed community template tuple, the unified navigation
+adds **Connections**. Current workspace admins with an explicit platform manager
+delegation can replace reader/refresher/approver sets only within approved bounds.
+Any actual change clears the old snapshot and all approvals in the same audited
+transaction. Current readable-scope discovery also feeds the existing community
+form, without placing private scopes in page URLs or browser storage.
+
+This is one community vertical slice, not generic provider provisioning. No
+credentials, URLs or secret references are accepted or returned. Artifact and
+pipeline configuration remains separate, and no real provider is enabled by this
+page. See [the contract](../packages/workspace_connections/README.md).

@@ -119,7 +119,8 @@ here before identity administration can open.
 | Research assets | Reads/publication use current workspace/module checks and fixed source binding. | Long-I/O acquisition's actor-equality pin must include realm/generation. |
 | Memberships, operators, workspace creation idempotency | Existing role/lifecycle controls unchanged. | Every non-no-op identity transition must revoke all active memberships and operator membership, including reactivation of legacy inactive identities. Idempotency records keyed by local actor need binding-aware reuse semantics. |
 | Responsibility owners/backups and UI hints | Existing explicit current-member validation unchanged. | Stored owner IDs and backup references need a deliberate identity transfer/reconfirmation policy, not implicit reassignment. |
-| Future connection self-management/runtime composition | Must consume realm + ID + generation without legacy fallback. | Directory/manager pins must not be described as data-plane ACL migration; runtime must reject unknown schema and never auto-migrate. |
+| Community connection self-management and directory | Fixed installed template pins bind realm + local ID + issuer/subject + generation; missing/old pins fail closed. Current manager/admin and selected-member eligibility are rechecked. | Template constraints supplement the separate community data-plane grants above; they never upgrade legacy/stale data pins. No automatic repinning or template migration. |
+| Configured runtime composition | Requires explicit current policy/login schemas and never auto-migrates. Connection self-management is not automatically configured. | Future runtime registration must preserve explicit template/grant/credential boundaries; directory pins do not upgrade data-plane ACLs. |
 
 Opening identity administration needs a separate reviewed change that completes
 all applicable rows, revokes/rebinds persistent grants, and implements:

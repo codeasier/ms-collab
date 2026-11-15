@@ -9,7 +9,8 @@
 - `artifacts-session.mjs`: exact-scope published catalog and complete-candidate
   approval adapters, using the same cookie client and current CSRF proof.
 - `artifacts.html`, `artifact-admin.html`, `artifacts.css`: optional, light-theme
-  module pages. Refresh remains explicitly unavailable on the unified host.
+  module pages. Refresh is separately configured and disabled by default; it
+  creates only a private candidate and never auto-approves.
 - `artifact-downloads.mjs`, `artifact-download-ui.mjs`: separately configured
   exact-byte confirmation, bounded streaming/hash verification and ephemeral native
   browser handoff using the same cookie client; no URL or bearer inputs.
@@ -37,3 +38,7 @@ The `/community/` page mounts the reviewed community board with `createCommunity
   reused; authentication remains exclusively in the common shell.
 - [Capability/navigation audit](../../docs/unified-entry.md): identical fixed
   navigation is checked against every supported host module.
+
+- `connections.html`, `connections.mjs`, `connections.css`: opt-in current-session
+  community policy management and authorized scope picker. The form cannot create
+  connections or credentials, and grant changes invalidate old shared content.

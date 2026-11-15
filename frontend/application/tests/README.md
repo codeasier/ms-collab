@@ -44,3 +44,13 @@ Return to [frontend](../README.md).
   HTTPS navigation, pagination/CAS, empty/unpublished distinction, literal markup,
   scope/filter clear, ineffective abort, logout, pagehide and current revocation.
   Four screenshots are uploaded by [GUI entry CI](../../../.github/workflows/gui-entry.yml).
+
+- `connections.test.mjs`, `connections.cjs`: mounted grant edits/confirmation,
+  current readable scope picker, strict responses, conflict, ignored-abort and
+  lifecycle cleanup. [Connection CI](../../../.github/workflows/workspace-connections.yml)
+  runs the real synthetic HTTPS flow and uploads four responsive screenshots.
+
+- `fixture-process.cjs`, `fixture-process.test.mjs`: owned synthetic-process
+  cleanup for community and connections acceptance. A bounded SIGTERM wait is
+  followed by forced reaping only on failure; that path still fails the test.
+  Cleanup cannot leave an ignored-SIGTERM child keeping the CI process alive.
