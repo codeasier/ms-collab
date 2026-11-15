@@ -13,6 +13,7 @@ async function main(){
   browser=await chromium.launch({headless:true});const context=await browser.newContext({ignoreHTTPSErrors:true,acceptDownloads:true,viewport:{width:1440,height:1100}}),page=await context.newPage(),downloads=[],errors=[],outside=[]
   page.on('pageerror',e=>{errors.push(e.message);console.error(e.message)});page.on('download',d=>downloads.push(d));page.on('request',r=>{assert.ok(!r.headers().authorization);const u=new URL(r.url());if(![info.origin,new URL(info.provider).origin].includes(u.origin))outside.push(u.origin)})
   await context.addInitScript(()=>{
+   if(!globalThis.crypto?.subtle)return // about:blank has no secure-context digest
    const original=fetch;window.fetch=(input,options={})=>{const {signal,...rest}=options;return original(input,rest)}
    const digest=crypto.subtle.digest.bind(crypto.subtle);crypto.subtle.digest=async(...args)=>{const result=await digest(...args);if(window.__holdDigest){window.__digestStarted=true;await new Promise(r=>window.__releaseDigest=r)}return result}
    const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL),urls=new Set();URL.createObjectURL=b=>{const u=create(b);urls.add(u);return u};URL.revokeObjectURL=u=>{urls.delete(u);return revoke(u)};window.__downloadURLCount=()=>urls.size
