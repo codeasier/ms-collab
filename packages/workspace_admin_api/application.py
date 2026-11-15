@@ -93,11 +93,11 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                 policy._operator(actor)
                 if not _SEGMENT.fullmatch(body["initial_admin"]):
                     raise _invalid()
-                result, identity, digest = remembered(connection, actor, "workspace.create", "platform", args[0], body)
+                result, identity, digest = remembered(policy, connection, actor, "workspace.create", "platform", args[0], body)
                 if result is not None:
                     return asdict(policy._workspaces[result])
                 workspace = policy.create_workspace(actor, **body)
-                remember(connection, identity, digest, workspace.id)
+                remember(policy, connection, identity, digest, workspace.id, body)
                 return asdict(workspace)
             workspace = args[0]
             if command == "modules":
@@ -106,14 +106,14 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
             if command == "catalog":
                 return [asdict(m) for m in sorted(self._catalog.values(), key=lambda m: m.key)]
             if command == "install":
-                result, identity, digest = remembered(connection, actor, "module.install", workspace, args[1], body)
+                result, identity, digest = remembered(policy, connection, actor, "module.install", workspace, args[1], body)
                 if result is not None:
                     return asdict(policy.get_module(actor, workspace, result))
                 template = self._catalog.get(body["key"])
                 if template is None:
                     raise PolicyError(400, "module_not_approved")
                 module = policy.install_module(actor, workspace, template.key, capabilities=template.capabilities)
-                remember(connection, identity, digest, module.key)
+                remember(policy, connection, identity, digest, module.key, body)
                 return asdict(module)
             if command == "module_state":
                 # Current catalog authority is required to re-enable. Removal or

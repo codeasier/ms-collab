@@ -2,7 +2,7 @@
 
 - `test_runtime.py`: strict config, no auto bootstrap/identity, private paths,
   schema/time/binding checks, current cookie host, cooperative maintenance locks,
-  cold backups without login material, new-directory restoration and redacted CLI.
+  cold backups without login material, old admin-retry schema/manifest rejection without rewrite, new-directory restoration and redacted CLI.
 - `test_server.py`: pinned fixed server assembly, raw-header rejection, environment
   override refusal, TLS floor and logger/error redaction without socket access.
 - `https_acceptance.py`: hosted CI only, real loopback TLS process and raw HTTP

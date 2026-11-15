@@ -12,3 +12,11 @@ authority rechecks and atomic policy/retry/audit rollback.
 Browser composition and interaction coverage lives in
 [workspace UI tests](../../workspace_ui/tests/README.md). Tests do not establish
 deployment readiness or external provider compatibility.
+
+`test_retry_authority.py` covers both identity-owned retry endpoints, actor/target
+ABA and independent realm mismatch, stale key conflicts without recreation,
+strict bound-record validation, and current permission precedence. It exercises
+legacy conflict tombstones, exact runtime schema checks, lost-authority legacy
+row retention, per-stage conversion rollback, post-write rollback and a separate
+process holding the actual SQLite writer lock across test-only identity ABA.
+The simulator is only for disposable tests; identity mutation remains disabled.
