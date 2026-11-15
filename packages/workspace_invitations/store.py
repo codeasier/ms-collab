@@ -43,8 +43,8 @@ def initialize_invitations(store):
     store._transaction(initialize, write=True, with_connection=True)
 
 
-def binding(principal):
-    return sha256(json.dumps([principal.issuer, principal.subject],
+def binding(principal, realm):
+    return sha256(json.dumps(["principal-authority-v2", realm, principal.id, principal.issuer, principal.subject, principal.generation],
                             ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest()
 
 
@@ -65,8 +65,8 @@ def effective_state(policy, item, now):
     admin = policy._memberships.get((item['workspace_id'], item['inviter']))
     member = policy._memberships.get((item['workspace_id'], item['principal_id']))
     if (space is None or space.state != 'active' or space.revision != item['workspace_revision']
-            or issuer is None or not issuer.active or binding(issuer) != item['inviter_binding'] or target is None or not target.active
-            or binding(target) != item['binding'] or admin is None or admin.role != 'admin'
+            or issuer is None or not issuer.active or binding(issuer, policy._realm) != item['inviter_binding'] or target is None or not target.active
+            or binding(target, policy._realm) != item['binding'] or admin is None or admin.role != 'admin'
             or admin.state != 'active' or admin.revision != item['inviter_revision']
             or (member.revision if member else 0) != item['member_revision']
             or (member is not None and member.state != 'revoked')):
@@ -103,7 +103,7 @@ def create(connection, policy, actor, workspace, body, key, now):
         raise PolicyError(409, 'already_invited')
     if len(pending) >= 100:
         raise PolicyError(409, 'invitation_limit')
-    item = dict(zip(_FIELDS, (str(uuid4()),workspace,actor,principal.id,binding(principal),binding(policy._principals[actor]),body['role'],
+    item = dict(zip(_FIELDS, (str(uuid4()),workspace,actor,principal.id,binding(principal, policy._realm),binding(policy._principals[actor], policy._realm),body['role'],
                              'pending',now,now+86400,1,policy._workspaces[workspace].revision,
                              admin.revision,member.revision if member else 0,key)))
     connection.execute(f'INSERT INTO {_TABLE} VALUES ({",".join("?" for _ in _FIELDS)})', tuple(item.values()))

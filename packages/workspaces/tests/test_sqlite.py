@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from threading import Barrier
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 
@@ -131,7 +132,7 @@ except PolicyError as error:
 
     def test_unknown_schema_version_and_unrelated_database_fail_closed(self):
         connection = self.connection()
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=999")
         self.assert_storage("unsupported_schema", SQLiteWorkspaceService, self.path)
         self.assert_storage("unsupported_schema", self.store.list_workspaces, "viewer")
         connection.execute("PRAGMA user_version=1")
@@ -151,14 +152,14 @@ except PolicyError as error:
         with self.assertRaises(sqlite3.IntegrityError):
             connection.execute("INSERT INTO resources VALUES ('alpha','board','same','text',1)")
         with self.assertRaises(sqlite3.IntegrityError):
-            connection.execute("INSERT INTO principals VALUES ('new','synthetic','viewer',1)")
+            connection.execute("INSERT INTO principals VALUES ('new','synthetic','viewer',1,1,1)")
 
     def test_malformed_boolean_cannot_reenable_principal_or_capability(self):
         connection = self.connection()
         connection.execute("PRAGMA ignore_check_constraints=ON")
-        connection.execute("UPDATE principals SET active=2 WHERE id='disabled'")
+        simulate_identity(connection, "UPDATE principals SET active=2 WHERE id='disabled'")
         self.assert_storage("invalid_store", self.store.list_workspaces, "disabled")
-        connection.execute("UPDATE principals SET active=0 WHERE id='disabled'")
+        simulate_identity(connection, "UPDATE principals SET active=0 WHERE id='disabled'")
         for field in ("can_read", "can_write"):
             connection.execute(f"UPDATE modules SET {field}=2 WHERE workspace_id='commons'")
             self.assert_storage("invalid_store", self.store.authorize, "beta_admin", "commons", "board", "write")

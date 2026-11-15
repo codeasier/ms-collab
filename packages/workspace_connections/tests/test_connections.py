@@ -140,6 +140,53 @@ class ConnectionTests(CommunityTests):
         self.assertEqual(self.request('/manage')['status'],503)
         with sqlite3.connect(self.path) as c:self.assertIsNone(c.execute("SELECT name FROM sqlite_schema WHERE name='workspace_connection_templates_v1'").fetchone())
 
+    def test_old_identity_pin_is_rejected_not_upgraded(self):
+        with sqlite3.connect(self.path) as c:
+            row=c.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()
+            data=json.loads(row[0]);old={key:value[2:4] for key,value in data.items()}
+            c.execute("UPDATE workspace_connection_templates_v1 SET identities=? WHERE workspace_id='alpha'",(json.dumps(old),))
+        self.assertEqual(self.request('/manage')['status'],503)
+        self.assertEqual(self.request()['status'],503)
+        with sqlite3.connect(self.path) as c:
+            self.assertEqual(json.loads(c.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()[0]),old)
+
+    def test_wrong_generation_or_realm_pin_cannot_manage_or_discover(self):
+        for position,value in ((0,'f'*32),(4,2)):
+            with self.subTest(position=position),sqlite3.connect(self.path) as c:
+                data=json.loads(c.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()[0])
+                saved=data['admin'][position];data['admin'][position]=value
+                c.execute("UPDATE workspace_connection_templates_v1 SET identities=? WHERE workspace_id='alpha'",(json.dumps(data),))
+            self.assertEqual(self.change()['status'],404)
+            self.assertEqual(self.request()['body']['data']['items'],[])
+            with sqlite3.connect(self.path) as c:
+                data['admin'][position]=saved;c.execute("UPDATE workspace_connection_templates_v1 SET identities=? WHERE workspace_id='alpha'",(json.dumps(data),))
+
+    def test_rebound_reader_not_eligible_for_new_grants(self):
+        with sqlite3.connect(self.path) as c:
+            data=json.loads(c.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()[0]);data['reader'][4]+=1
+            c.execute("UPDATE workspace_connection_templates_v1 SET identities=? WHERE workspace_id='alpha'",(json.dumps(data),))
+        current=self.request('/manage')['body']['data']['items'][0]
+        self.assertFalse(next(x for x in current['options'] if x['principal_id']=='reader')['eligible']['reader_ids'])
+        self.assertEqual(self.change(grants=dict(reader_ids=['reader'],refresher_ids=[],approver_ids=[]))['status'],400)
+        self.assertEqual(self.request(token='test-reader')['body']['data']['items'],[])
+
+    def test_test_only_aba_identity_simulator_does_not_repin(self):
+        # A read-only in-memory simulator, not an enabled directory mutation API.
+        from packages.workspace_connections.records import binding
+        def simulate(policy,connection):
+            pins=binding(connection,self.template)
+            original=policy._principals['reader']
+            valid=self.management._eligible(policy,self.template,pins,'reader')
+            policy._principals['reader']=replace(original,issuer='https://other.example.invalid',subject='other',generation=original.generation+1)
+            rebound=self.management._eligible(policy,self.template,pins,'reader')
+            policy._principals['reader']=replace(original,generation=original.generation+2)
+            aba=self.management._eligible(policy,self.template,pins,'reader')
+            return valid,rebound,aba,pins
+        valid,rebound,aba,pins=self.store._transaction(simulate,write=False,with_connection=True)
+        self.assertEqual((valid,rebound,aba),(True,False,False))
+        with sqlite3.connect(self.path) as c:
+            self.assertEqual(json.loads(c.execute("SELECT identities FROM workspace_connection_templates_v1 WHERE workspace_id='alpha'").fetchone()[0]),pins)
+
     def test_two_concurrent_replacements_only_one_cas_wins(self):
         barrier=Barrier(2)
         def worker(reader):

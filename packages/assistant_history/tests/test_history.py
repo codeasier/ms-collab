@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from threading import Barrier, Thread
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
@@ -66,7 +67,24 @@ class HistoryTests(unittest.TestCase):
         return request(self.app,"/one",method="PATCH",body={"state":state},revision=revision,**kwargs)
 
     def sql(self,statement,values=()):
-        with sqlite3.connect(self.path) as c:return c.execute(statement,values).fetchall()
+        with sqlite3.connect(self.path) as c:
+            return simulate_identity(c,statement,values) if statement.startswith("UPDATE principals SET ") else c.execute(statement,values).fetchall()
+
+    def test_legacy_fence_is_retained_but_never_upgraded_to_current_authority(self):
+        fence = json.loads(self.sql("SELECT fence FROM assistant_conversations")[0][0])
+        fence.pop('principal_generation'); fence.pop('policy_realm')
+        self.sql("UPDATE assistant_conversations SET fence=?", (json.dumps(fence),))
+        before = self.sql("SELECT * FROM assistant_conversations")
+        self.assertEqual(request(self.app, "/one")["status"], 404)
+        self.assertEqual(request(self.app)["body"]["data"]["items"], [])
+        with self.assertRaises(PolicyError): self.append()
+        self.assertEqual(self.sql("SELECT * FROM assistant_conversations"), before)
+
+    def test_foreign_realm_fence_is_not_adopted(self):
+        fence = json.loads(self.sql("SELECT fence FROM assistant_conversations")[0][0])
+        fence['policy_realm'] = '0' * 32
+        self.sql("UPDATE assistant_conversations SET fence=?", (json.dumps(fence),))
+        self.assertEqual(request(self.app, "/one")["status"], 404)
 
     def test_explicit_owner_and_workspace_on_every_read(self):
         self.append()
@@ -194,17 +212,17 @@ class HistoryTests(unittest.TestCase):
         self.sql("UPDATE principals SET subject='alice',issuer='https://other.invalid' WHERE id='alice'")
         self.assertEqual(request(self.app,"/one")["status"],401)
 
-    def test_binding_and_active_are_current_checks_not_monotonic_epochs(self):
-        # Core principals have no generation. No promise to detect an intervening
-        # trusted rebind/deactivation after the exact original values are restored.
+    def test_simulated_binding_aba_and_reactivation_never_restore_history(self):
+        # Production mutations are closed. Simulate future transitions only in
+        # this disposable fixture, preserving all membership revisions.
         self.sql("UPDATE principals SET subject='replacement' WHERE id='alice'")
         self.assertEqual(request(self.app,"/one",token="test-replacement")["status"],404)
         self.sql("UPDATE principals SET subject='alice' WHERE id='alice'")
-        self.assertEqual(request(self.app,"/one")["status"],200)
+        self.assertEqual(request(self.app,"/one")["status"],404)
         self.sql("UPDATE principals SET active=0 WHERE id='alice'")
         self.assertEqual(request(self.app,"/one")["status"],401)
         self.sql("UPDATE principals SET active=1 WHERE id='alice'")
-        self.assertEqual(request(self.app,"/one")["status"],200)
+        self.assertEqual(request(self.app,"/one")["status"],404)
 
     def test_persisted_scope_rejects_cross_workspace_misplacement(self):
         self.append()

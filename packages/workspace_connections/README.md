@@ -14,7 +14,8 @@ production data, or enable a real identity/refresh provider.
    bounded acquisition settings), credential reference and maximum independent
    reader/refresher/approver sets. These are trusted configuration, not form data.
 3. Call `initialize_connections(store, templates)` once for those entries. It
-   records immutable template and identity pins in the same policy database.
+   records immutable template and identity pins (store realm, local ID, issuer,
+   subject and monotonic generation) in the same policy database.
    Existing entries cannot be silently repinned or inferred from current records.
 4. Pass the exact tuple as `HostConfig.community_connections`. An empty tuple is
    the default: API and `/connections/` are not mounted. No HTTP request creates
@@ -45,6 +46,18 @@ identity commit guard. No bearer fallback or browser-stored credentials exist.
   Refreshers/approvers must also currently be administrators. A later demotion,
   membership revocation, module/workspace suspension or session expiry is still
   checked by the underlying community API; stored allowlists are not capabilities.
+
+### Identity generation boundary
+
+Pins lacking the required realm/generation are rejected, never silently rebuilt
+from current identity state. The installed pin protects **this management and discovery adapter**, not every
+community data route. Existing direct `items`/`review` and other community ACLs
+still use local principal IDs plus current workspace membership and role checks.
+They are not silently upgraded by this page's template pin. Identity rebinding,
+deactivation/reactivation and directory mutation must remain unavailable until
+all persistent grants and data-plane consumers have reviewed migration/fencing.
+The prerequisite identity-generation foundation is closed by design; there is no
+flag in this slice that enables directory mutation or bypasses those protections.
 
 Reader, refresher and approver grants are independent. A non-reader approver is
 not added to ordinary discovery and gains no read grant by managing a template.

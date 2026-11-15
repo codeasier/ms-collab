@@ -49,6 +49,7 @@ class WorkspaceService:
         self._resources = _unique(resources, lambda r: (r.workspace_id, r.module_key, r.id))
         self._operators = frozenset(operators)
         self._epoch = 1
+        self._realm = uuid4().hex
         self._audit = []
         if not self._operators <= self._principals.keys():
             raise ValueError("unknown operator")
@@ -64,6 +65,13 @@ class WorkspaceService:
         for workspace in workspaces:
             if not self._eligible_admins(workspace.id):
                 raise ValueError("workspace requires an active eligible admin")
+
+    def set_principal(self, *args, **kwargs):
+        """Unavailable until every stored ACL and long-I/O pin is generation-bound.
+
+        No trusted-host bypass, enable flag or provisional transition ships here.
+        """
+        raise PolicyError(503, "identity_transition_unavailable")
 
     def _principal(self, actor_id):
         principal = self._principals.get(actor_id) if isinstance(actor_id, str) else None

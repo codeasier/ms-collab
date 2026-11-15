@@ -88,3 +88,12 @@ This is a policy implementation slice, **not proof of end-to-end multi-tenant or
 production isolation**. Integrations must use the contract's negative tests and
 report their own evidence. No original repository code, production data or
 private operations history is included.
+
+## Closed principal authority foundation
+
+Principal generation/authority epoch and SQLite realm are available to reviewed
+consumers. Identity mutations remain unconditionally unavailable in both service
+implementations, with database guards on the persisted directory. No flag enables
+rebinding, disable/reenable or provisioning. The [foundation contract](../../docs/principal-authority.md)
+describes explicit schema upgrades, retained legacy grants and gates before a
+future identity-administration implementation.

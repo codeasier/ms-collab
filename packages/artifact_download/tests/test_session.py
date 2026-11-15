@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 
@@ -101,7 +102,7 @@ class SessionDownloadTests(unittest.TestCase):
     def test_current_principal_binding_changes_interrupt_output(self):
         r=self.call(consume=False);stream=r['stream'];next(stream)
         with sqlite3.connect(Path(self.tmp.name)/'policy.sqlite') as db:
-            db.execute("UPDATE principals SET subject='changed-sub' WHERE id='admin'")
+            simulate_identity(db, "UPDATE principals SET subject='changed-sub' WHERE id='admin'")
         with self.assertRaises(DownloadInterrupted):next(stream)
         self.assertEqual(self.leases(),[('admin','interrupted',65536)])
     def test_archive_between_chunks_stops_external_download_output(self):

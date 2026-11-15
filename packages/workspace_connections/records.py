@@ -72,8 +72,16 @@ def check_schema(connection):
         raise StorageError('invalid_connection_management_schema')
 
 
-def identity(principal):
-    return [principal.issuer, principal.subject]
+def identity(policy, principal):
+    # No missing-generation/realm fallback: a pre-foundation store is unusable.
+    try:
+        realm, generation = policy._realm, principal.generation
+    except AttributeError:
+        raise StorageError('identity_generation_required') from None
+    if (type(realm) is not str or not re.fullmatch(r'[0-9a-f]{32}', realm)
+            or type(generation) is not int or not 1 <= generation <= MAX_REVISION):
+        raise StorageError('invalid_connection_identity_generation')
+    return [realm, principal.id, principal.issuer, principal.subject, generation]
 
 
 def compatible(state, template):
@@ -100,7 +108,7 @@ def initialize_connections(store, values):
                 raise ValueError('connection_binding_not_approved')
             if not template.principals <= policy._principals.keys():
                 raise ValueError('unknown_template_principal')
-            identities = encode({p: identity(policy._principals[p]) for p in sorted(template.principals)})
+            identities = encode({p: identity(policy, policy._principals[p]) for p in sorted(template.principals)})
             scope = template.scope
             connection.execute(f'INSERT INTO {_TABLE} VALUES (?,?,?,?,?,?)',
                 (scope.workspace_id, template.id, scope.connection_id, scope.repository, template.fingerprint, identities))
@@ -116,7 +124,9 @@ def binding(connection, template):
     try:
         identities = decode(row[3])
         if (type(identities) is not dict or set(identities) != template.principals
-                or any(type(v) is not list or len(v) != 2 or any(type(x) is not str or not x for x in v) for v in identities.values())):
+                or any(type(v) is not list or len(v) != 5 or any(type(x) is not str or not x for x in v[:4])
+                    or not re.fullmatch(r'[0-9a-f]{32}', v[0]) or v[1] != key
+                    or type(v[4]) is not int or not 1 <= v[4] <= MAX_REVISION for key, v in identities.items())):
             raise ValueError()
     except (TypeError, ValueError, RecursionError):
         raise StorageError('invalid_connection_management_record') from None

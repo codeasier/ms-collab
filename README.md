@@ -67,3 +67,11 @@ issue.
 ## License
 
 Released under the [MIT License](LICENSE).
+
+## Configured installation tooling
+
+The [service runtime](packages/service_runtime/README.md) adds strict configuration,
+explicit empty-store initialization, read-only installation checks, cold backups,
+new-directory restore and a fixed loopback TLS process. This is distinct from the
+local demo. Real GitCode login, production enrollment and deployment acceptance
+remain gated; a valid installation is not a production-ready service.

@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import sqlite3
+from packages.workspaces.tests.identity_fixture import simulate_identity
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -47,6 +48,34 @@ class InvitationTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:
             return tuple(db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
                          for table in ('workspace_invitations_v1','memberships','audit'))
+
+    def test_invitee_aba_and_reactivation_do_not_restore_invitation(self):
+        for first, second in [("subject='replacement'", "subject='outsider-sub'"), ("active=0", "active=1")]:
+            item = self.item()
+            with sqlite3.connect(self.path) as db:
+                simulate_identity(db, "UPDATE principals SET " + first + " WHERE id='outsider'")
+                simulate_identity(db, "UPDATE principals SET " + second + " WHERE id='outsider'")
+            self.assertEqual(self.respond(item)['status'],404)
+            self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])
+            self.assertEqual(self.request()['body']['data'][-1]['state'],'invalidated')
+
+    def test_inviter_aba_keeps_old_grant_invalidated(self):
+        item = self.item()
+        with sqlite3.connect(self.path) as db:
+            simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='admin'")
+            simulate_identity(db, "UPDATE principals SET subject='admin-sub' WHERE id='admin'")
+        self.assertEqual(self.respond(item)['status'],409)
+
+    def test_legacy_identity_digest_is_invalidated_not_backfilled(self):
+        from hashlib import sha256
+        import json
+        item = self.item()
+        digest = sha256(json.dumps([fixtures.ISSUER, 'outsider-sub'], ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest()
+        with sqlite3.connect(self.path) as db:
+            db.execute('UPDATE workspace_invitations_v1 SET binding=? WHERE id=?',(digest,item['id']))
+        self.assertEqual(self.respond(item)['status'],404)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute('SELECT binding,state FROM workspace_invitations_v1 WHERE id=?',(item['id'],)).fetchone(),(digest,'pending'))
 
     def test_factory_and_explicit_initialization(self):
         for value in (None,object(),self.app):
@@ -167,7 +196,7 @@ class InvitationTests(unittest.TestCase):
 
     def test_identity_rebind_cannot_inherit_invitation(self):
         item=self.item()
-        with sqlite3.connect(self.path) as db:db.execute("UPDATE principals SET subject='replacement' WHERE id='outsider'")
+        with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='outsider'")
         self.assertEqual(self.respond(item)['status'],401)
         # A fully verified replacement subject still cannot inherit old grant.
         from dataclasses import replace
@@ -178,7 +207,7 @@ class InvitationTests(unittest.TestCase):
 
     def test_inactive_target_is_denied(self):
         item=self.item()
-        with sqlite3.connect(self.path) as db:db.execute("UPDATE principals SET active=0 WHERE id='outsider'")
+        with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET active=0 WHERE id='outsider'")
         self.assertEqual(self.respond(item)['status'],401)
         self.assertEqual(self.request()['body']['data'][0]['state'],'invalidated')
 
@@ -272,6 +301,6 @@ class InvitationTests(unittest.TestCase):
 
     def test_inviter_binding_replacement_invalidates_old_grant(self):
         item=self.item()
-        with sqlite3.connect(self.path) as db:db.execute("UPDATE principals SET subject='replacement' WHERE id='admin'")
+        with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='admin'")
         self.assertEqual(self.respond(item)['status'],409)
         self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])
