@@ -12,14 +12,14 @@ async function main(){
   await context.addInitScript(()=>{const original=window.fetch;window.fetch=async(input,options={})=>{const {signal,...rest}=options;const response=await original.call(window,input,rest);window.__fetchDone=(window.__fetchDone||0)+1;return response}})
   const router=createScenarioRouter({origin,onExternal:()=>external.push('unexpected origin')})
   await context.route('**/*',route=>router.handle(route))
-  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('dialog',async d=>{dialogs.push(d.message());await d.dismiss()});page.on('download',()=>downloads.push(1))
+  const page=await context.newPage();page.on('pageerror',e=>{errors.push(e.message);console.error('Synthetic page error:',e.message)});page.on('dialog',async d=>{dialogs.push(d.message());await d.dismiss()});page.on('download',()=>downloads.push(1))
   page.on('request',r=>{assert.ok(!r.url().includes('test-admin')&&!r.url().includes('test-reader'));if(r.method()==='PUT')writes.push(r.url())})
   const base=origin+'/api/workspaces/alpha/responsibility/source/sample/project'
   const auth={Authorization:'Bearer test-admin'}
   const current=async()=>{const r=await context.request.get(base+'/config',{headers:auth});assert.equal(r.status(),200);return (await r.json()).data}
   const connect=async(who='admin')=>{await page.locator('#credential').fill('test-'+who);await page.locator('#connect button').click();assert.equal(await page.locator('#credential').inputValue(),'')}
   const scope=async(workspace='alpha')=>{await page.locator('#workspace').fill(workspace);await page.locator('#connection').fill('source');await page.locator('#owner').fill('sample');await page.locator('#repo').fill('project');await page.locator('#scope-form button').click()}
-  const revision=async n=>page.waitForFunction(n=>document.querySelector('#version').textContent.startsWith(`Record revision ${n} ·`),n)
+  const revision=async n=>{try{await page.waitForFunction(n=>document.querySelector('#version').textContent.startsWith(`Record revision ${n} ·`),n)}catch(error){throw new Error(`Expected record revision ${n}; synthetic UI status: ${await page.locator('#status').textContent()}`,{cause:error})}}
   const change=async(name)=>{await page.locator('#edit').click();await page.locator('#editor-fields [data-entry="name"]').first().fill(name);await page.locator('#save').click()}
   const confirm=async()=>page.locator('#confirm-submit').click()
   const flush=async()=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))
@@ -87,4 +87,4 @@ async function main(){
   console.log('Responsibility acceptance passed: real authorized API, config CAS, uncertainty, scope/identity fencing, XSS and responsive screenshots.')
  }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
 }
-main().catch(error=>{console.error(error.message);process.exitCode=1})
+main().catch(error=>{console.error(error.stack);if(error.cause)console.error(error.cause.stack);process.exitCode=1})

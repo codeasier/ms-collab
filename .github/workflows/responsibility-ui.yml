@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: responsibility-${{ github.event.pull_request.number || github.ref }}
+  group: responsibility-ui-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
