@@ -76,7 +76,12 @@ function clear(message='Verify the current session before loading a scope.'){
 $('scope-form').addEventListener('submit',event=>{event.preventDefault();if(!enabled)return;try{controller.load(inputScope(),filters())}catch(error){controller.clear();notice(messageFor(error),true)}})
 $('filter-form').addEventListener('submit',event=>{event.preventDefault();if(!enabled)return;try{controller.load(inputScope(),filters())}catch(error){controller.clear();notice(messageFor(error),true)}})
 for(const id of ['workspace','connection','repository'])$(id).addEventListener('input',()=>{controller.clear();$('filter-form').reset();$('scope-picker').open=true})
-for(const id of ['status-filter','source-filter','branch-filter','page-size'])$(id).addEventListener('input',()=>controller.clear())
+for(const id of ['status-filter','source-filter','branch-filter','page-size'])$(id).addEventListener('input',()=>{
+ // Clear the saved snapshot and request epoch, not the user's editing surface.
+ controller.clear();$('workspace-view').hidden=false;$('list-view').hidden=false
+ $('tasks').hidden=true;$('empty').hidden=false;$('empty').textContent='Filters changed. Apply filters to load a new snapshot.'
+ $('previous').disabled=true;$('next').disabled=true;notice('Filters changed. No previous snapshot is shown.')
+})
 $('clear').addEventListener('click',()=>{controller.clear();$('scope-picker').open=true})
 $('back').addEventListener('click',()=>{controller.back();$('tasks').querySelector('button')?.focus()})
 $('previous').addEventListener('click',()=>{const view=controller.view;if(enabled&&view)controller.page(Math.max(0,view.list.offset-view.list.limit))})
