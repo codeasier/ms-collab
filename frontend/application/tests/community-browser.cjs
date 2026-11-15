@@ -73,6 +73,6 @@ async function main(){
   await router.drain();await context.unrouteAll({behavior:'wait'});await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
   console.log('Community session acceptance: real S256 cookies; reader/reviewer/admin; 101-row full approval preservation; CSRF/CAS; hostile text; late reads and accepted writes after logout; current membership/session revocation; history; four responsive screenshots. Synthetic HTTPS only.')
- }finally{await browser?.close();await stopSyntheticFixture(child)fs.rmSync(temp,{recursive:true,force:true})}
+ }finally{await browser?.close();await stopSyntheticFixture(child);fs.rmSync(temp,{recursive:true,force:true})}
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})
