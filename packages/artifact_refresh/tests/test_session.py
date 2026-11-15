@@ -11,6 +11,9 @@ from packages.artifact_refresh import ArtifactRefreshConfiguration,ConfiguredArt
 from packages.artifact_refresh import service
 from packages.artifact_sync import ArtifactSynchronizer,ProviderError
 from packages.artifact_sync.tests.fixtures import credential
+from packages.artifact_sync.tests.authority_fixtures import configure_index_fixture
+from packages.artifact_sync import records as index_records
+from packages.artifacts import Scope
 from packages.session_api.application import _SESSION,_CSRF
 from packages.session_api.tests.test_application import cookie_header
 from packages.workspaces.tests.identity_fixture import simulate_identity
@@ -39,6 +42,10 @@ class RefreshTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:simulate_identity(db, statement)
     def state(self):return self.sql('SELECT revision,candidate,published,published_revision FROM artifact_indexes_v1 WHERE workspace=?',('alpha',))[0]
     def leases(self):return self.sql('SELECT actor,state,result_revision FROM artifact_refresh_leases_v1 ORDER BY rowid')
+    def configure(self, **changes):
+        scope=Scope('alpha','source','bucket')
+        config=self.policy._transaction(lambda p,c:index_records.load(c,scope).policy,write=False,with_connection=True)
+        configure_index_fixture(self.policy,replace(config,**changes),actor='admin',republish=False)
     def revoke(self):self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
     def catalog(self,session=None):return self.call('quarters',session=session,extra={'PATH_INFO':'/api/workspaces/alpha/artifacts/source/bucket/quarters','REQUEST_METHOD':'GET'})
     def test_private_refresh_then_complete_explicit_approval(self):
@@ -89,8 +96,8 @@ class RefreshTests(unittest.TestCase):
             lambda t:t.identity("UPDATE principals SET subject='changed' WHERE id='admin'"),
             lambda t:t.sql("UPDATE modules SET state='disabled' WHERE workspace_id='alpha' AND key='artifacts'"),
             lambda t:t.policy.set_workspace_state('admin','alpha',state='archived',expected_revision=1),
-            lambda t:t.sql("UPDATE artifact_indexes_v1 SET policy=replace(policy,'\"refreshers\":[\"admin\"]','\"refreshers\":[\"second\"]') WHERE workspace='alpha'"),
-            lambda t:t.sql("UPDATE artifact_indexes_v1 SET policy=replace(policy,'\"readers\":[\"admin\",\"reader\"]','\"readers\":[\"admin\"]') WHERE workspace='alpha'"),
+            lambda t:t.configure(refreshers=('second',)),
+            lambda t:t.configure(readers=('admin',)),
             lambda t:t.sql("UPDATE artifact_indexes_v1 SET revision=revision+1 WHERE workspace='alpha'"))
         for change in mutations:
             with self.subTest(change=change),tempfile.TemporaryDirectory() as d:
@@ -158,9 +165,10 @@ class RefreshTests(unittest.TestCase):
             for actor in ('admin','second','outsider'):
                 for scope in ('alpha','beta','commons'):
                     db.execute("INSERT OR REPLACE INTO memberships VALUES (?,?, 'admin','active',1)",(scope,actor))
-            for scope,raw in db.execute('SELECT workspace,policy FROM artifact_indexes_v1').fetchall():
-                value=json.loads(raw);value['refreshers']=['admin','outsider','second']
-                db.execute('UPDATE artifact_indexes_v1 SET policy=? WHERE workspace=?',(dump(value),scope))
+        for workspace in ('alpha','beta','commons'):
+            scope=Scope(workspace,'source','bucket')
+            config=self.policy._transaction(lambda p,c:index_records.load(c,scope).policy,write=False,with_connection=True)
+            configure_index_fixture(self.policy,replace(config,refreshers=('admin','outsider','second')),actor='admin')
         entered=threading.Barrier(3);release=threading.Event();self.addCleanup(release.set)
         self.pages.page_hook=lambda:(entered.wait(timeout=3),release.wait(5))
         config=ArtifactRefreshConfiguration(self.pages.load,self.pages)
