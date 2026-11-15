@@ -36,3 +36,4 @@
 - [Artifact refresh and approval administration](../packages/artifact_admin/README.md)：显式管理员能力、私有刷新、完整候选摘要校验与精确读者审批；并发冲突须重新检视，不含下载。
 
 - [Owner-scoped assistant saved history](../packages/assistant_history/README.md)：当前身份与权限隔离的只读事件、固定版本分页和可逆归档；不含 ACP 执行、真实网络或会话恢复。
+- [Content-bound artifact download API](../packages/artifact_download/README.md)：独立字节授权、固定 OBS GET、完整 hash 校验后限时输出与逐块撤权；仅合成 provider/HTTP 验证，无前端下载入口或真实云验收。
