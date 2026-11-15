@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {createClient,LatestOperation,scopeFrom,queryFrom,validateFields,validateCapabilities,validateConfig,validateCandidates} from '../client.mjs'
+import {createClient,LatestOperation,scopeFrom,queryFrom,validateFields,sameFields,validateCapabilities,validateConfig,validateCandidates} from '../client.mjs'
 const scope=scopeFrom('alpha','source','sample','project')
 const fields=[{id:'ui',name:'UI',kind:'developer',paths:['ui'],owner_ids:['local:alice'],backup:null}]
 const common={scope,revision:3,config_version:2,identity_namespace:'ms-collab.principal.id',workflow_enabled:false}
@@ -93,6 +93,16 @@ test('actual isolated HTTP service matches client schemas and CAS save',async()=
   }
   const updated=clone(config.fields);updated[0].name='😀'.repeat(60);updated[0].paths=['😀'.repeat(600)]
   const saved=validateConfig(await client.request(scope,'save',{fields:updated,revision:config.revision}),scope,{revision:config.revision+1,config_version:config.config_version+1})
-  assert.deepEqual(saved.fields,updated)
+  assert.deepEqual(saved.fields,updated);assert.equal(sameFields(saved.fields,updated),true)
  }finally{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
+})
+
+test('configuration equality ignores object key order but keeps semantic ordering',()=>{
+ const original=[{id:'ui',name:'UI',kind:'developer',paths:['ui','lib'],owner_ids:['admin','reader'],backup:{principal_id:'other',field_id:'docs'}},{id:'docs',name:'Docs',kind:'developer',paths:['docs'],owner_ids:['other'],backup:null}]
+ const wire=original.map(f=>Object.fromEntries(Object.entries(f).reverse()));wire[0].backup={field_id:'docs',principal_id:'other'}
+ assert.equal(sameFields(original,wire),true)
+ for(const key of ['paths','owner_ids']){const changed=clone(wire);changed[0][key].reverse();assert.equal(sameFields(original,changed),false)}
+ assert.equal(sameFields(original,[...wire].reverse()),false)
+ const renamed=clone(wire);renamed[0].name='Changed';assert.equal(sameFields(original,renamed),false)
+ assert.throws(()=>sameFields(original,[{...wire[0],extra:true}]))
 })

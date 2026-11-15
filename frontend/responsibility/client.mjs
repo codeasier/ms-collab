@@ -26,6 +26,11 @@ export function validateFields(value){
  for(const f of value){if(f.backup){const source=value.find(x=>x.id===f.backup.field_id);if(!source||source.id===f.id||source.kind!=='developer'||!source.owner_ids.includes(f.backup.principal_id)||f.owner_ids.includes(f.backup.principal_id))fail()}}
  return value
 }
+// JSON object key order is not semantic; field/path/owner order is semantic.
+export function sameFields(left,right){
+ const canonical=value=>validateFields(value).map(f=>[f.id,f.name,f.kind,f.paths,f.owner_ids,f.backup===null?null:[f.backup.principal_id,f.backup.field_id]])
+ return JSON.stringify(canonical(left))===JSON.stringify(canonical(right))
+}
 const common=['scope','revision','config_version','identity_namespace','workflow_enabled']
 function validateCommon(data,scope){
  if(!sameScope(data.scope,scope)||!integer(data.revision,1)||!integer(data.config_version,1)||data.identity_namespace!=='ms-collab.principal.id'||data.workflow_enabled!==false)fail()

@@ -1,4 +1,4 @@
-import {createClient,LatestOperation,scopeFrom,queryFrom,validateCapabilities,validateConfig,validateFields,validateCandidates} from './client.mjs'
+import {createClient,LatestOperation,scopeFrom,queryFrom,validateCapabilities,validateConfig,validateFields,sameFields,validateCandidates} from './client.mjs'
 const el=id=>document.getElementById(id),client=createClient(),gate=new LatestOperation()
 const secure=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
 let scope,capabilities,configuration,candidates,query,pending,busy=false
@@ -115,7 +115,7 @@ el('cancel-edit').addEventListener('click',()=>{if(!busy){clearEditor();el('pane
 el('configuration-form').addEventListener('submit',event=>{
  event.preventDefault();if(busy||!scope||!configuration||!capabilities?.edit)return
  try{
-  const fields=readDraft();if(JSON.stringify(fields)===JSON.stringify(configuration.fields)){el('status').textContent='No configuration changes to save.';return}
+  const fields=readDraft();if(sameFields(fields,configuration.fields)){el('status').textContent='No configuration changes to save.';return}
   pending={scope:{...scope},revision:configuration.revision,config_version:configuration.config_version,fields}
   el('confirm-scope').textContent=`${scope.workspace_id} / ${scope.connection_id} / ${scope.repository} · revision ${pending.revision}`
   el('confirm-summary').textContent=`Save the complete configuration of ${fields.length} fields. Owner IDs and current permissions will be rechecked by the service.`
@@ -129,7 +129,7 @@ el('confirm-form').addEventListener('submit',async event=>{
  try{
   const result=await client.request(selected.scope,'save',{fields:selected.fields,revision:selected.revision,signal:operation.signal});if(!gate.current(operation))return
   validateConfig(result,selected.scope,{revision:selected.revision+1,config_version:selected.config_version+1})
-  if(JSON.stringify(result.fields)!==JSON.stringify(selected.fields))throw new Error('Unexpected saved configuration.')
+  if(!sameFields(result.fields,selected.fields))throw new Error('Unexpected saved configuration.')
   await loadScope('Configuration saved and current state reloaded. No assignment or review workflow was executed.')
  }catch(error){failed(error,operation)}
 })

@@ -34,6 +34,7 @@ async function main(){
   await page.locator('#view').selectOption('field');await page.locator('#field').selectOption('review');await page.locator('#filters button').click();await page.waitForFunction(()=>document.querySelector('#page').textContent==='1–20 of 30')
   await page.locator('#view').selectOption('unassigned');await page.locator('#filters button').click();await page.waitForFunction(()=>document.querySelector('#page').textContent==='1–1 of 1');assert.match(await page.locator('#candidates').textContent(),/Assignment unknown/)
   await page.locator('#reload').click();await revision(3)
+  await page.locator('#edit').click();await page.locator('#save').click();assert.equal(writes.length,0);assert.equal(await page.locator('#confirmation').isVisible(),false);assert.match(await page.locator('#status').textContent(),/No configuration changes/);await page.locator('#cancel-edit').click()
   await change('Interface mapping');await page.locator('#cancel').click();assert.equal(await page.locator('#confirm-summary').textContent(),'');assert.equal(writes.length,0)
   await page.locator('#save').click();await page.keyboard.press('Escape');assert.equal(await page.locator('#confirm-scope').textContent(),'');assert.equal(writes.length,0)
   await page.locator('#add-field').click();const draft=page.locator('#editor-fields fieldset').last()
