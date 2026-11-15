@@ -44,3 +44,13 @@ coverage/
 # --- Misc ---
 *.log
 tmp/
+
+# --- Local runtime state ---
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+logs/
+runtime/

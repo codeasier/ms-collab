@@ -11,3 +11,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial repository scaffolding: README, MIT license, contribution guidelines,
   code of conduct, security policy, and GitHub issue/PR templates.
+- Product positioning, explicit migration boundaries, workspace design goals,
+  and a documentation index. These additions do not implement application features.

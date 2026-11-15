@@ -40,3 +40,18 @@ Do not open a public issue for vulnerabilities. See [SECURITY.md](SECURITY.md).
 
 All participants are expected to follow our
 [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Migration contributions
+
+- Agree on an explicit file allowlist and preserve required copyright and license
+  notices before importing code, examples, or documentation.
+- Do not copy an existing repository's complete history, production configuration,
+  private logs, credentials, or real organizational data.
+- Use synthetic examples. Review screenshots, CI logs, and artifacts as well as
+  source files for sensitive content.
+- Report what was tested and what remains unverified; a document or menu entry is
+  not proof that a feature is implemented.
+- Untrusted pull requests must not execute on persistent infrastructure with
+  production credentials, network access, or shared state.
+- See the [migration acceptance gates](docs/migration-plan.md) before proposing an
+  application-module import.
