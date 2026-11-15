@@ -10,3 +10,12 @@ Creation retries simulate an accepted request with a lost response; identical re
 An intervening successful creation must not discard another unresolved creation's
 retry key. Transport abort is disabled in browser acceptance so generation guards
 must independently stop stale rendering and multi-stage follow-up requests.
+
+## Invitations
+
+`node frontend/workspace-admin/tests/invitations.cjs` starts a separate temporary
+store and synthetic verifier. It covers cancel/no-write, lost create-response
+replay, addressed identity Join, revoked membership/old invitation denial,
+stale-revision revoke race, late inbox after disconnect with ineffective abort,
+mixed-scope rejection and pagehide/storage cleanup. It produces
+`invitations-desktop.png` and `invitations-mobile.png` beside the lifecycle images.

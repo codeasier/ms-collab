@@ -82,3 +82,10 @@ of synthetic data are uploaded. Real provider login, TLS/reverse-proxy behavior,
 server limits, enrollment/revocation operations and production usability remain
 unverified. All [API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
 continue to apply.
+
+## Optional identity-addressed invitations
+
+Compose the [invitation adapter](../workspace_invitations/README.md) to enable
+the signed-in inbox and administrator invite/revoke controls. These call the
+actual configured service; they are not synthetic authentication. The original
+base API without this extension still works and returns no fabricated inbox.

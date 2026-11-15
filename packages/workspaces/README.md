@@ -67,10 +67,11 @@ demo; this wording does not assert repository branch rules are configured.
 ## Intentionally not implemented
 
 - Real authentication, API keys, HTTP/UI integration or deployment readiness.
-- Enrollment/invitation acceptance or directory synchronization. Memberships are
-  trusted bootstrap inputs; edits can revoke or change an existing active member,
-  but cannot add a member or reactivate a revoked membership. This avoids treating
-  an invitation or a caller-supplied identity as membership.
+- Directory synchronization or anonymous enrollment. Core memberships remain
+  trusted inputs; ordinary edits cannot add or reactivate a revoked member. The
+  optional [invitation adapter](../workspace_invitations/README.md) now performs
+  explicit identity-addressed acceptance and membership insertion atomically; it
+  does not authenticate unverified identities or change the core edit contract.
 - Arbitrary module configuration, capability expansion or connector bindings.
   A separate [administration adapter](../workspace_admin_api/README.md) supplies a
   platform-approved catalog for disabled installation; the policy's installation

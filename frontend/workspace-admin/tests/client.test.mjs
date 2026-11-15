@@ -40,3 +40,24 @@ test('administration requests use fixed paths and explicit retry or revision hea
  for(const path of ['https://evil.example/control/workspaces','//evil.example/x','/api/control/principals'])await assert.rejects(()=>client.request(path))
  await assert.rejects(()=>client.request('/api/control/workspaces',{method:'DELETE'}))
 })
+
+test('invitation responses and routes are bounded, scoped, and non-secret',async()=>{
+ const {invitationURL,validateInvitations}=await import('../client.mjs')
+ const item={id:'invite-1',workspace_id:'alpha',workspace_name:'Alpha',principal_id:'newcomer',role:'viewer',state:'pending',created:100,expires:86500,revision:1}
+ assert.deepEqual(validateInvitations([item],'alpha'),[item]);assert.deepEqual(validateInvitations([item]),[item])
+ for(const bad of [[{...item,workspace_id:'beta'}],[{...item,role:'admin'}],[{...item,expires:100}],[{...item,state:'active'}],[item,item]])assert.throws(()=>validateInvitations(bad,'alpha'))
+ assert.equal(invitationURL(),'/api/invitations');assert.equal(invitationURL(undefined,'invite-1'),'/api/invitations/invite-1')
+ assert.equal(invitationURL('alpha','invite-1'),'/api/workspaces/alpha/invitations/invite-1')
+ assert.throws(()=>invitationURL('../beta'));assert.throws(()=>invitationURL(undefined,'?secret'))
+ const calls=[],client=createClient({fetcher:async(path,options)=>{calls.push({path,options});return{ok:true,json:async()=>({data:item})}}})
+ client.connect('synthetic-only');await client.request(invitationURL(),{});await client.request(invitationURL(undefined,item.id),{method:'PATCH',body:{state:'accepted'},revision:1})
+ assert.equal(calls[1].options.headers['If-Match'],'"1"');assert.equal(calls[1].options.credentials,'omit');assert.equal(calls[1].options.redirect,'error')
+ for(const path of ['/api/invitations?token=secret','/api/invitations/id/accept','https://bad.invalid/api/invitations'])await assert.rejects(()=>client.request(path))
+})
+
+test('control characters cannot alter canonical IDs or same-origin routes',async()=>{
+ const {validId}=await import('../client.mjs')
+ for(const value of ['alpha\n','alpha\r','alpha\u0000','alpha\t','alpha\u007f'])assert.equal(validId(value),false)
+ const client=createClient({fetcher:async()=>{throw new Error('must not fetch')}});client.connect('synthetic-only')
+ for(const value of ['/api/invitations\n','/api/workspaces/alpha/invitations\r'])await assert.rejects(()=>client.request(value),/Invalid service path/)
+})

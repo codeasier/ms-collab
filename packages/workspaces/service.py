@@ -32,9 +32,9 @@ def _unique(records, key):
 class WorkspaceService:
     """Trusted bootstrap data; no invitation, HTTP, secret or connector API.
 
-    Membership enrollment is deliberately bootstrap-only until verified,
-    single-use invitation acceptance is implemented. Existing memberships can be
-    demoted/revoked, but revoked memberships cannot be resurrected through edits.
+    This core exposes no enrollment command. A trusted invitation adapter may
+    add membership inside the shared policy transaction after verified single-use
+    acceptance. Revoked memberships cannot be resurrected through ordinary edits.
     """
 
     def __init__(self, *, principals: tuple[Principal, ...], workspaces: tuple[Workspace, ...],
