@@ -59,6 +59,15 @@ export function validateDurations(data,scope,version,items){
  }
  return data
 }
+export function readPath(scope,kind,{runID}={}){
+ let path
+ if(kind==='runs')path='/runs?limit=100'
+ else if(kind==='durations')path='/durations?limit=100'
+ else if(kind==='detail'&&id(runID))path='/runs/'+runID
+ else throw new Error('Unsupported read.')
+ return baseURL(scope)+path
+}
+function current(signal){if(signal?.aborted){const error=new Error('Read cancelled.');error.name='AbortError';throw error}}
 export function createClient({fetcher=fetch}={}){
  let credential=''
  return {
@@ -66,19 +75,17 @@ export function createClient({fetcher=fetch}={}){
   clear(){credential=''},
   async request(scope,kind,{runID,signal}={}){
    if(!credential)throw new Error('Disconnected.')
-   let path
-   if(kind==='runs')path='/runs?limit=100'
-   else if(kind==='durations')path='/durations?limit=100'
-   else if(kind==='detail'&&id(runID))path='/runs/'+runID
-   else throw new Error('Unsupported read.')
-   const response=await fetcher(baseURL(scope)+path,{method:'GET',headers:{Authorization:`Bearer ${credential}`},signal,credentials:'omit',cache:'no-store',redirect:'error'})
+   const response=await fetcher(readPath(scope,kind,{runID}),{method:'GET',headers:{Authorization:`Bearer ${credential}`},signal,credentials:'omit',cache:'no-store',redirect:'error'})
    if(!response.ok){const error=new Error(({401:'Authentication expired or was rejected. Reconnect.',403:'Current workspace permissions deny access.',404:'The scope or run is unavailable to your current identity.',409:'The workspace or pipeline module is unavailable.',503:'Stored pipeline data or the service is unavailable.'})[response.status]||'Unable to read this snapshot.');error.status=response.status;throw error}
    const payload=await response.json();if(!payload||!Object.hasOwn(payload,'data'))invalid();return payload.data
   }
  }
 }
 export async function loadSnapshot(client,scope,signal){
+ current(signal)
  const list=validateList(await client.request(scope,'runs',{signal}),scope)
+ current(signal)
  const durations=validateDurations(await client.request(scope,'durations',{signal}),scope,list.source.revision,list.items)
+ current(signal)
  return {list,durations,revision:list.source.revision}
 }

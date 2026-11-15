@@ -14,3 +14,7 @@ and [responsibility](../responsibility/README.md), with an explicit supplied cli
 Only their separate legacy `entry.mjs` scripts create bearer clients. New session
 pages never import those entry scripts and never copy or fabricate a credential.
 The server is [ApplicationUI](../../packages/application_ui/README.md).
+
+- `pipelines.html`: credential-free pipeline scope, runs, details and durations.
+  Its adapter uses the same session client, never a bearer or upstream token.
+- [Pipeline cookie acceptance](tests/README.md): independent synthetic HTTPS flow.

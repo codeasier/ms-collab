@@ -18,7 +18,9 @@ from packages.application_ui import ApplicationUI
 def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_APPLICATION_UI') != '1' or len(sys.argv) not in (3,4):
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
-    enabled=len(sys.argv)==3
+    mode=sys.argv[3] if len(sys.argv)==4 else ''
+    if mode not in {'','closed','pipelines'}:raise SystemExit('unknown synthetic mode')
+    enabled=mode!='closed'
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
         def get_environ(self):
@@ -32,6 +34,20 @@ def main():
         app=ApplicationUI(host=host)
         with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
             db.execute("UPDATE workspaces SET name=? WHERE id='alpha'",('<img src=x onerror=alert(1)> Synthetic alpha',))
+        if mode=='pipelines':
+            from packages.pipeline_api import encode_snapshots,resource_id
+            from packages.pipeline_api.tests.test_application import run
+            from packages.pipelines import PipelineScope
+            scope=PipelineScope('alpha','example-ci','build')
+            rows=[]
+            for n in range(1,21):
+                row=run(scope,id=f'run-{n:02d}',state='running' if n==19 else 'failure')
+                row['stages'][0]['name']='<b>Checks</b>'
+                row['stages'][0]['jobs'][0]['name']='<img src=x onerror=alert(1)>'
+                if n==19:row['stages']=None
+                rows.append(row)
+            with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
+                db.execute("UPDATE resources SET text=? WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(encode_snapshots(scope,rows),resource_id(scope)))
         def fixture(env,start):
             path=env.get('PATH_INFO')
             if path in {'/synthetic/revoke-membership','/synthetic/revoke-session'}:

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {csrfCookie,validateBootstrap,authorizationTarget,createSessionClient,createResponsibilitySessionClient} from '../client.mjs'
+import {csrfCookie,validateBootstrap,authorizationTarget,createSessionClient,createResponsibilitySessionClient,createPipelineSessionClient} from '../client.mjs'
 const csrf='A'.repeat(43),origin='https://app.example.invalid'
 const response=(data,status=200)=>({ok:status===200,status,text:async()=>JSON.stringify({data})})
 const bootstrap={service:'ms-collab',ui_modules:['workspaces','responsibility'],login_configured:true,authorization_endpoint:'https://identity.example.invalid/authorize'}
@@ -57,4 +57,13 @@ test('responsibility adapter preserves scope/CAS semantics without a credential 
  await client.request(scope,'candidates',{query:{view:'field',field_id:'review',offset:20,limit:20}});await client.request(scope,'save',{revision:3,fields:[]})
  assert.equal(calls[0].path,'/api/workspaces/alpha/responsibility/source/sample/project/candidates?view=field&offset=20&limit=20&field_id=review');assert.deepEqual(calls[1].options,{signal:undefined,method:'PUT',body:{fields:[]},revision:3})
  assert.equal(Object.hasOwn(client,'connect'),false);await assert.rejects(client.request({...scope,repository:'sample/project/other'},'config'))
+})
+
+test('pipeline cookie client only reads validated scoped paths without credential APIs',async()=>{
+ const {client:session,calls}=fixture();await session.inspect();const client=createPipelineSessionClient(session),scope={workspace_id:'alpha',connection_id:'ci',pipeline_id:'build'}
+ for(const kind of ['runs','durations','detail'])await client.request(scope,kind,{runID:'run-1'})
+ for(const {path,options}of calls.slice(1)){assert.match(path,/^\/api\/workspaces\/alpha\/pipelines\/ci\/build\//);assert.equal(options.method,'GET');assert.equal(options.credentials,'same-origin');assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,undefined);assert.equal(options.body,undefined)}
+ assert.equal(client.connect,undefined)
+ for(const kind of ['trigger','logs','refresh','cancel'])assert.throws(()=>client.request(scope,kind))
+ assert.throws(()=>client.request({...scope,workspace_id:'../beta'},'runs'));client.clear();await assert.rejects(client.request(scope,'runs'));assert.equal(calls.length,4)
 })
