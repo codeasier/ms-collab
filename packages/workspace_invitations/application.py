@@ -79,6 +79,8 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
                 if body['state'] == 'accepted':
                     # Current target, admin revision, lifecycle and prior member
                     # revision were checked in this same locked snapshot.
+                    prior = (item['member_revision'],) if item['member_revision'] else ()
+                    policy._check_change(item['revision'], *prior, policy=True, audits=2)
                     member = Membership(item['workspace_id'],actor,item['role'],
                                         revision=item['member_revision']+1)
                     policy._memberships[(item['workspace_id'],actor)] = member

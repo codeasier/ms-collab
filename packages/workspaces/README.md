@@ -102,3 +102,24 @@ future identity-administration implementation.
 explicit scoped grants. It does not mutate principals or authenticate requests;
 legacy decoders must never call capture as a fallback. First use is the
 [community grant adapter](../community_api/GRANTS.md).
+
+## Bounded mutation counters
+
+Policy record revisions, the policy epoch and audit sequences are exact integers
+in `1..9007199254740991` (the JavaScript safe-integer range). Model inputs and
+revision preconditions reject booleans, floats and larger values. Before any
+core mutation, the complete operation budgets its changed record revisions,
+policy epoch increment and all success-audit slots. Exhaustion returns
+`409 counter_exhausted` without changing records, epoch or audit. In particular,
+admin transfer budgets both members and both events before either promotion or
+demotion. Ordinary same-value membership edits still advance revisions; they do
+not become identity no-ops or reset exhausted counters.
+
+Reads of valid records at the maximum remain possible. An exhausted policy epoch
+blocks policy mutations but not otherwise-authorized reference-resource writes
+that do not change that epoch. A saturated membership cannot be edited, revoked
+or re-enrolled by wrapping/clamping its counter. There is no automatic reset,
+compaction or recovery migration; operator recovery needs a separately reviewed
+procedure. Authorization, last-admin and archived-space restrictions still apply.
+See [SQLite compatibility](SQLITE.md#bounded-counter-compatibility) and
+[counter regression evidence](tests/README.md#bounded-counter-regressions).
