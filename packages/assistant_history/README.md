@@ -109,7 +109,7 @@ Unknown fields are rejected, including raw tool objects, inputs/outputs and
 locators. This function is a small allowlist adapter, **not ACP wire compatibility
 or a secret scrubber**. The trusted caller must sanitize text before storing it.
 Titles/text/tool names are untrusted literal text: clients must not render HTML,
-execute commands or automatically fetch links in them. This API has no renderer.
+execute commands or automatically fetch links in them. The optional [saved-history UI](../../frontend/assistant/README.md) renders only these literal records through the unified cookie/session entry. This API itself has no renderer.
 
 Limits: 100 conversations per owner/workspace; 2,000 events and 1 MiB canonical
 ASCII JSON per conversation; 100 events per append. Revisions are safe integers.
@@ -135,6 +135,6 @@ process, uses a real login/provider or reads production data.
 Not implemented: ACP transport/runtime, prompt submission/cancellation, OS or
 container execution sandbox, native session persistence/resume, provider
 credentials, real network/MCP/tool invocation, resource-level lineage/redaction,
-permission approval UI, browser UI, streaming, retention/deletion/export or
+permission approval UI, streaming, retention/deletion/export or
 production integration. A private HOME alone is not a security sandbox. These
 remain independent prerequisites, not switches that this package enables.

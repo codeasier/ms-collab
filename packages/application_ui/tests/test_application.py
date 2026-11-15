@@ -65,11 +65,16 @@ class UITests(unittest.TestCase):
             for target in re.findall(r"from\s*['\"]([^'\"]+)['\"]",raw):
                 self.assertIn(urljoin(path,target),_FILES,(path,target))
     def test_html_never_prompts_for_credentials_or_contains_private_workspace_rows(self):
-        for path in ('/','/manage/','/responsibility/','/pipelines/','/community/'):
+        for path in ('/','/manage/','/responsibility/','/pipelines/','/community/','/assistant/'):
             raw=self.read(path,cookies='')['raw'].decode()
             self.assertNotIn('type="password"',raw);self.assertNotIn('id="credential"',raw)
             self.assertNotIn('value="alpha"',raw);self.assertNotIn('Private synthetic issue',raw)
             self.assertIn('/app/shell.mjs',raw);self.assertNotIn('/manage/entry.mjs',raw)
+    def test_static_html_has_unique_element_ids(self):
+        for path,(_,media) in _FILES.items():
+            if media != 'text/html':continue
+            ids=re.findall(r'\bid="([^"]+)"',self.read(path)['raw'].decode())
+            self.assertEqual(len(ids),len(set(ids)),path)
     def test_unknown_paths_queries_methods_and_legacy_entry_are_not_exposed(self):
         for path in ('/manage/entry.mjs','/responsibility/entry.mjs','/pipelines/entry.mjs','/app/../client.mjs','/app/%2e%2e/client.mjs','/unknown','/?x=y','/app/bootstrap?x=y'):
             self.assertEqual(self.read(path)['status'],404,path)
@@ -80,7 +85,7 @@ class UITests(unittest.TestCase):
                 self.assertEqual(self.read(path,extra=extra)['status'],401,(path,extra))
     def test_callback_navigation_exception_is_public_html_only(self):
         navigation={'HTTP_SEC_FETCH_SITE':'cross-site','HTTP_SEC_FETCH_MODE':'navigate','HTTP_SEC_FETCH_DEST':'document'}
-        for path in ('/','/manage/','/responsibility/','/pipelines/','/community/'):
+        for path in ('/','/manage/','/responsibility/','/pipelines/','/community/','/assistant/'):
             self.assertEqual(self.read(path,extra=navigation)['status'],200)
             for changed in ({'HTTP_SEC_FETCH_DEST':'iframe'},{'HTTP_SEC_FETCH_MODE':'cors'},{'HTTP_HOST':'other.invalid'},{'wsgi.url_scheme':'http'},{'HTTP_AUTHORIZATION':'Bearer not-used'},{'HTTP_ORIGIN':'https://other.invalid'},{'SCRIPT_NAME':'/prefix'}):
                 self.assertEqual(self.read(path,extra={**navigation,**changed})['status'],401)
@@ -89,7 +94,7 @@ class UITests(unittest.TestCase):
         self.assertEqual(self.read('/',method='HEAD',extra=navigation)['status'],401)
     def test_bootstrap_has_only_fixed_non_authorizing_configuration(self):
         data=self.read('/app/bootstrap',cookies='')['body']['data']
-        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines','community','research-assets','artifacts'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
+        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines','community','assistant','research-assets','artifacts'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
         self.assertNotIn('principal_id',data)
     def test_disabled_modules_and_provider_stay_fail_closed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -98,6 +103,7 @@ class UITests(unittest.TestCase):
             self.assertEqual(data['ui_modules'],['workspaces']);self.assertEqual(data['login_configured'],False);self.assertIsNone(data['authorization_endpoint'])
             self.assertEqual(request(app,'/responsibility/')['status'],404)
             self.assertEqual(request(app,'/community/')['status'],404)
+            self.assertEqual(request(app,'/assistant/')['status'],404)
             self.assertEqual(request(app,'/pipelines/')['status'],404)
             self.assertEqual(request(app,'/auth/start',method='POST',origin=fixtures.ORIGIN,body={},extra={'HTTP_X_MS_COLLAB_LOGIN':'1'})['status'],503)
             self.assertEqual(request(app,'/auth/session')['status'],401)

@@ -11,7 +11,7 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 const flush=()=>new Promise(r=>setImmediate(r))
 function harness({fetcher,activate=async()=>{}}){
  const elements=new Map(),calls=[],state={mounted:0,cleared:0,options:null}
- for(const id of ['app-sign-in','app-sign-out','app-recheck','app-principal','app-status','app-login-note','app-responsibility-link','app-community-link','app-pipelines-link'])elements.set(id,{textContent:'',hidden:false,disabled:false,handlers:{},addEventListener(name,fn){this.handlers[name]=fn},setAttribute(){},replaceChildren(){}})
+ for(const id of ['app-sign-in','app-sign-out','app-recheck','app-principal','app-status','app-login-note','app-responsibility-link','app-community-link','app-pipelines-link','app-assistant-link'])elements.set(id,{textContent:'',hidden:false,disabled:false,handlers:{},addEventListener(name,fn){this.handlers[name]=fn},setAttribute(){},replaceChildren(){}})
  const document={body:{dataset:{page:'manage'}},getElementById:id=>elements.get(id),createElement:()=>({})}
  vm.runInNewContext(source,{document,window:{addEventListener(){}},location:{protocol:'https:',origin:'https://app.example.invalid',assign(){}},createSessionClient:options=>createSessionClient({...options,cookie:()=>'__Host-ms-collab-csrf='+'A'.repeat(43),fetcher:async(path,options)=>{calls.push(path);return fetcher(path,options)}}),createResponsibilitySessionClient,validateBootstrap,authorizationTarget,validateWorkspaces,mountWorkspacePage:options=>{state.mounted++;state.options=options;return {activate,clear(){state.cleared++;options.client.clear()}}},mountResponsibilityPage(){throw new Error('unexpected module')}})
  return {elements,calls,state,click:id=>elements.get(id).handlers.click()}

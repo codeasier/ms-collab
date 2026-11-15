@@ -22,3 +22,4 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
 - `research_asset_fixtures.py` and `test_research_assets.py`: explicitly synthetic
   four-type projections, empty/unpublished distinction and current cookie policy.
   Browser fixture mode `assets` adds only test catalog/revision-control routes.
+- `test_assistant.py` and opt-in `assistant_browser_server.py`: current-owner cookie/CSRF/CAS, fixed-revision history and lifecycle cleanup, without real ACP or execution.
