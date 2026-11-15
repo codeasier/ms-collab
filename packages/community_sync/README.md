@@ -98,3 +98,11 @@ and connection-level authorization in a real hosting application remain unverifi
 - [Tests](tests/README.md)
 - [Existing read model](../community_board/README.md)
 - [Documentation index](../../docs/README.md)
+
+## Authorized HTTP integration
+
+The separate [community API](../community_api/README.md) now provides same-policy-
+database persistence, current-user authorization, explicit content approval and
+two-phase refresh. It deliberately does not read this package’s independent
+SQLite store during requests. Its integration does not add a default real login,
+production deployment or automatic sharing.

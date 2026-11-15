@@ -85,25 +85,26 @@ class WorkspaceApplication:
         # Protocol verification (possibly network I/O) occurs before any DB lock.
         return self._verifier.verify(self._provider_key, credential)
 
-    def _authenticated_transaction(self, assertion, callback, *, write=False):
+    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False):
         """Internal adapter seam, never an HTTP callback or reusable authority.
 
         Resolve the current subject binding and evaluate the complete adapter
         operation in the same policy snapshot. Callback is trusted Python code.
         """
-        def operation(policy):
+        def operation(policy, connection=None):
             # Recheck after waiting for the lock, not merely when token arrived.
             self._verifier.validate_current(self._provider_key, assertion)
             principal = next((p for p in policy._principals.values()
                               if (p.issuer, p.subject) == (assertion.issuer, assertion.subject)), None)
             if principal is None or not principal.active:
                 raise AuthenticationError()
-            result = callback(policy, principal.id)
+            result = (callback(policy, principal.id, connection) if with_connection
+                      else callback(policy, principal.id))
             # An expiry during policy evaluation rolls back mutations and audit.
             self._verifier.validate_current(self._provider_key, assertion)
             return result
 
-        return self._store._transaction(operation, write=write, before_commit=
+        return self._store._transaction(operation, write=write, with_connection=with_connection, before_commit=
             lambda: self._verifier.validate_current(self._provider_key, assertion))
 
     def _dispatch(self, environ):
