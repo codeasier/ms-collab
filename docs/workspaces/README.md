@@ -35,6 +35,8 @@ adopting this contract. Labels must never imply anonymous access.
 
 The [in-memory workspace policy core](../../packages/workspaces/README.md) is an
 independent server-side implementation slice with negative and concurrent tests.
-It is not connected to the demo HTTP routes, real authentication or persistence.
+An optional [SQLite adapter](../../packages/workspaces/SQLITE.md) adds local
+transactional persistence and cross-process negative tests. Neither is connected
+to the demo HTTP routes or real authentication.
 The API, sharing and durable isolation gates above remain proposals/unverified
 until their respective implementation and integration tests pass.

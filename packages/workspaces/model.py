@@ -105,7 +105,7 @@ class Decision:
 
 @dataclass(frozen=True)
 class AuditEvent:
-    """Metadata only, in memory. Not a durable audit log or outbox."""
+    """Metadata only. Backing store determines durability; not an outbox."""
     sequence: int
     actor_id: str
     workspace_id: str
