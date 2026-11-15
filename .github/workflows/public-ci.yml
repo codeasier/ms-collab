@@ -92,8 +92,6 @@ jobs:
     name: Synthetic browser acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
     steps:
       - name: Check out this revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,6 +108,8 @@ jobs:
           node-version: '22'
           package-manager-cache: false
       - name: Install locked browser tooling in temporary directory
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/ms-collab-browser-tools"
@@ -119,6 +119,7 @@ jobs:
       - name: Exercise synthetic loopback demo
         env:
           NODE_PATH: ${{ runner.temp }}/ms-collab-browser-tools/node_modules
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
         run: node frontend/checks/browser-smoke.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
