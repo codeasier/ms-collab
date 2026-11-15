@@ -82,7 +82,11 @@ to the exact allowlisted projection. It is never a normal source-resource fetch.
 - Workspace: `active -> suspended -> active`, or `active/suspended -> archived`.
   Suspension denies data access and execution; only a minimal platform recovery
   control surface remains. Archival stops execution and permits authorized
-  read-only access according to retention policy. Reactivating an archive and
+  read-only access according to retention policy. A separate membership control
+  path remains available to current admins for existing-member revocation or
+  role reduction, including revision checks and last-admin protection; archival
+  must not make retained data access irrevocable. New grants, promotions and
+  admin transfers are denied in an archive. Reactivating an archive and
   permanent deletion are deferred; no implicit delete or public fallback.
 - Module: `disabled -> enabled -> disabling -> disabled`. Only admins can change
   configuration. Disabling rejects new module actions immediately, cancels queued
