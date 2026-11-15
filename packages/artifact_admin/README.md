@@ -102,3 +102,8 @@ retains three synthetic screenshots for three days.
 Real cloud compatibility, identity enrollment and secret management, production
 operations, large-scale history/deletion reconciliation and protected downloads
 remain outside this slice. [Documentation index](../../docs/README.md).
+
+The unified cookie host can explicitly enable [configured refresh](../artifact_refresh/README.md).
+It reuses these routes but adds same-session persistent admission and bounded
+provider ownership. Neither a browser nor a workspace name can configure secrets
+or endpoints. An omitted host flag keeps refresh unavailable.

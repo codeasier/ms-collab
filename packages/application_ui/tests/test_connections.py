@@ -47,6 +47,11 @@ class ConnectionEntryTests(UITests):
         self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
         self.assertEqual(self.read(BASE+'/manage')['status'],404)
         self.login.revoke_subject('admin-sub');self.assertEqual(self.read(BASE)['status'],401)
+    def test_existing_host_positional_refresh_flag_is_preserved(self):
+        config=HostConfig('https://app.example.invalid',('artifacts',),(),(),True,False,True)
+        self.assertTrue(config.artifact_refresh)
+        self.assertEqual(config.community_connections,())
+
     def test_absent_config_routes_remain_unmounted(self):
         self.app=ApplicationUI(host=self.host)
         self.assertEqual(self.read(BASE)['status'],404);self.assertEqual(self.read('/connections/')['status'],404)

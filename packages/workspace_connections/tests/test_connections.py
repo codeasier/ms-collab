@@ -217,6 +217,15 @@ class ConnectionTests(CommunityTests):
         self.assertEqual(self.request('/manage')['status'],200)
         self.assertEqual(self.change()['status'],403)
 
+    def test_platform_option_budget_keeps_whole_management_response_bounded(self):
+        from packages.workspace_connections.records import templates
+        people=tuple('person-'+str(n) for n in range(100))
+        values=tuple(CommunityConnectionTemplate('scope-'+str(n),replace(self.maximum,
+            connection=replace(self.maximum.connection,scope=replace(SCOPE,connection_id='source-'+str(n))),
+            reader_ids=people,refresher_ids=people,approver_ids=people),('admin',)) for n in range(11))
+        self.assertEqual(templates(values[:10]),values[:10])
+        with self.assertRaises(ValueError):templates(values)
+
     def test_revision_limit_does_not_advance_outside_safe_json_integer(self):
         with sqlite3.connect(self.path) as c:c.execute('UPDATE community_connections SET revision=?',(MAX_REVISION,))
         self.assertEqual(self.change()['status'],409)

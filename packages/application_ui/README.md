@@ -36,8 +36,10 @@ rechecked. A synthetic fixture is never imported by the production factory.
 - `/artifact-admin/` exists only with `HostConfig.artifact_administration=True`.
   It reviews and approves an existing staged candidate, including every metadata
   row and current reader, with independent digest verification and explicit CAS
-  confirmation. Refresh is unavailable: this host has no provider credential
-  loader. An unconfigured refresh request fails closed.
+  confirmation. Refresh is disabled by default; a separate `artifact_refresh`
+  host flag, trusted provider configuration and current refresher grant enable
+  private acquisition only. Unconfigured refresh fails closed. See
+  [configured refresh](../artifact_refresh/README.md).
 - `HostConfig.artifact_downloads=True` and explicit trusted download configuration
   optionally add a catalog Check download/Confirm interaction. Availability is
   independently authorized; the browser shows size/hash and verifies all bytes
@@ -84,7 +86,7 @@ is added. Existing server-issued retry keys for uncertain workspace/invitation
 creation remain page-memory-only and clear with the lifecycle.
 
 This slice does not add module/repository discovery, real GitCode login evidence,
-external acquisition/execution, production TLS setup or deployment acceptance.
+real-provider compatibility, execution, production TLS setup or deployment acceptance.
 Responsibility path observations remain unpinned and unverified for review; Issue
 assignment stays unknown. Other module UIs are not silently routed through a
 legacy bearer wrapper.

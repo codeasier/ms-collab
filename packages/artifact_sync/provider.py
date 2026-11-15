@@ -224,10 +224,11 @@ class Observation:
     scanned: int
 
 
-def collect(connection,credential,*,before_read,clock=lambda:datetime.now(timezone.utc),transport=None):
+def collect(connection,credential,*,before_read,clock=lambda:datetime.now(timezone.utc),transport=None,after_read=None):
     """Bounded recent-window subset; this low-level library is NOT authorization."""
     _bound(connection,credential)
-    if not callable(before_read):raise ValueError('current authorization callback required')
+    if not callable(before_read) or (after_read is not None and not callable(after_read)):
+        raise ValueError('current authorization callback required')
     cutoff=_now(clock);since=cutoff-timedelta(hours=connection.window_hours)
     transport=transport or OBSReadTransport();marker='';rows=[];seen=set();scanned=0
     for page in range(1,connection.max_pages+1):
@@ -235,6 +236,7 @@ def collect(connection,credential,*,before_read,clock=lambda:datetime.now(timezo
         try:raw=transport.list_page(connection,credential,marker,_now(clock))
         except ProviderError:raise
         except Exception:raise ProviderError('provider_unavailable') from None
+        if after_read is not None:after_read()
         values,next_marker=parse_page(raw,connection,marker)
         for value in values:
             if value.key in seen or instant(value.modified_at)>cutoff:raise ProviderError('moving_or_invalid_listing')

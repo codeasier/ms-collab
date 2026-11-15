@@ -6,6 +6,7 @@ from packages.assistant_history import AssistantHistoryApplication
 from packages.gui_smoke import GuiSmokeApplication, SmokeConnection
 from packages.artifact_sync import IndexedArtifactApplication, ArtifactSynchronizer, ProviderError
 from packages.artifact_admin import ArtifactAdministrationAPI
+from packages.artifact_refresh import ArtifactRefreshConfiguration, ConfiguredArtifactRefresh
 from packages.artifact_download import ArtifactDownloader, ArtifactDownloadConfiguration, ArtifactSessionDownloadAPI
 from packages.community_api import CommunityApplication
 from packages.pipeline_api import PipelineApplication
@@ -31,6 +32,7 @@ class HostConfig:
     gui_smoke_connections: tuple[SmokeConnection, ...] = ()
     artifact_administration: bool = False
     artifact_downloads: bool = False
+    artifact_refresh: bool = False
     community_connections: tuple[CommunityConnectionTemplate, ...] = ()
 
     def __post_init__(self):
@@ -52,6 +54,8 @@ class HostConfig:
         connection_templates(self.community_connections)
         if self.community_connections and "community" not in self.modules:
             raise ValueError("connection management requires its explicit community module")
+        if type(self.artifact_refresh) is not bool or (self.artifact_refresh and not self.artifact_administration):
+            raise ValueError('artifact refresh requires explicit administration')
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -65,12 +69,15 @@ class ApplicationHost:
     """
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
-                 clock=lambda: datetime.now(timezone.utc), artifact_downloads=None):
+                 clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
         if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
                 or not config.artifact_downloads and artifact_downloads is not None):
             raise ValueError('explicit download switch and trusted configuration required together')
+        if (config.artifact_refresh and type(artifact_refresh) is not ArtifactRefreshConfiguration
+                or not config.artifact_refresh and artifact_refresh is not None):
+            raise ValueError('explicit refresh switch and trusted configuration required together')
         self._config = config
         self._boundary = SessionWorkspaceApplication(sessions=sessions, origin=config.origin,
             exchange=exchange, authorization_endpoint=authorization_endpoint,
@@ -89,11 +96,12 @@ class ApplicationHost:
         self._artifact_admin = None
         if config.artifact_administration:
             def unavailable_provider(*_):
-                # The unified host has no external acquisition configuration.
+                # The default host has no external acquisition configuration.
                 raise ProviderError('credential_unavailable')
             sync = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,
-                                        credential_loader=unavailable_provider)
-            self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=False)
+                                        credential_loader=artifact_refresh.credential_loader if config.artifact_refresh else unavailable_provider)
+            refresher = ConfiguredArtifactRefresh(service=sync, transport=artifact_refresh.transport) if config.artifact_refresh else None
+            self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=config.artifact_refresh, refresher=refresher)
         self._artifact_downloads = None
         if config.artifact_downloads:
             download_service = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,

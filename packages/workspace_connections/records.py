@@ -60,7 +60,8 @@ class CommunityConnectionTemplate:
 def templates(values):
     if (type(values) is not tuple or len(values) > 100 or any(type(t) is not CommunityConnectionTemplate for t in values)
             or len({(t.scope.workspace_id, t.id) for t in values}) != len(values)
-            or len({t.scope for t in values}) != len(values)):
+            or len({t.scope for t in values}) != len(values)
+            or sum(len(set().union(*(getattr(t.maximum, k) for k in GRANTS))) for t in values) > 1000):
         raise ValueError('explicit_unique_connection_templates_required')
     return values
 

@@ -141,3 +141,8 @@ now expose configured refresh and complete-candidate approval. They require the
 same trusted synchronizer and add mandatory exact-reader comparison to HTTP
 approval. The original package remains a trusted service, not a default listener.
 Protected downloads and live cloud compatibility acceptance are still separate.
+
+For the cookie host, [configured refresh](../artifact_refresh/README.md) adds same-store
+2/1/1 admission, bounded transport, original-session page guards and atomic lease
+completion. Its internal lifecycle hook adds restrictions only; this package's
+legacy explicit-provider API and approval contract remain unchanged.

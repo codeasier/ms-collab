@@ -21,6 +21,12 @@ production data, or enable a real identity/refresh provider.
    the default: API and `/connections/` are not mounted. No HTTP request creates
    tables, loads credentials, provisions identities or initializes connections.
 
+The configured tuple is capped at 100 templates and 1,000 total distinct-principal
+option rows across those templates (at most 100 IDs per capability per template).
+This bounds the unpaginated management response below the shared client limit,
+including long principal IDs. Exceeding the budget is rejected at configuration,
+not turned into a truncated or partly authorized response.
+
 Template fingerprints bind the **entire** configuration, including maxima,
 manager list, credential routing and provider limits. Host/template or database
 immutable-binding drift fails closed. A template is an editable-policy ceiling,
