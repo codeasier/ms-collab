@@ -73,7 +73,8 @@ class WorkspaceApplication:
         start_response(f"{status} {HTTPStatus(status).phrase}", headers)
         return [payload]
 
-    def _dispatch(self, environ):
+    def _verify_request(self, environ):
+        """Verify an opaque bearer credential using trusted factory configuration."""
         authorization = environ.get("HTTP_AUTHORIZATION", "")
         if type(authorization) is not str or not authorization.startswith("Bearer "):
             raise AuthenticationError()
@@ -82,9 +83,14 @@ class WorkspaceApplication:
         except ValueError:
             raise AuthenticationError() from None
         # Protocol verification (possibly network I/O) occurs before any DB lock.
-        assertion = self._verifier.verify(self._provider_key, credential)
-        method, args, kwargs, write, shape = self._command(environ)
+        return self._verifier.verify(self._provider_key, credential)
 
+    def _authenticated_transaction(self, assertion, callback, *, write=False):
+        """Internal adapter seam, never an HTTP callback or reusable authority.
+
+        Resolve the current subject binding and evaluate the complete adapter
+        operation in the same policy snapshot. Callback is trusted Python code.
+        """
         def operation(policy):
             # Recheck after waiting for the lock, not merely when token arrived.
             self._verifier.validate_current(self._provider_key, assertion)
@@ -92,9 +98,20 @@ class WorkspaceApplication:
                               if (p.issuer, p.subject) == (assertion.issuer, assertion.subject)), None)
             if principal is None or not principal.active:
                 raise AuthenticationError()
-            result = getattr(policy, method)(principal.id, *args, **kwargs)
+            result = callback(policy, principal.id)
             # An expiry during policy evaluation rolls back mutations and audit.
             self._verifier.validate_current(self._provider_key, assertion)
+            return result
+
+        return self._store._transaction(operation, write=write, before_commit=
+            lambda: self._verifier.validate_current(self._provider_key, assertion))
+
+    def _dispatch(self, environ):
+        assertion = self._verify_request(environ)
+        method, args, kwargs, write, shape = self._command(environ)
+
+        def operation(policy, actor):
+            result = getattr(policy, method)(actor, *args, **kwargs)
             if shape == "page":
                 total, records = result
                 return {"total": total, "items": [asdict(item) for item in records]}
@@ -102,8 +119,7 @@ class WorkspaceApplication:
                 return [asdict(item) for item in result]
             return asdict(result)
 
-        return self._store._transaction(operation, write=write, before_commit=
-            lambda: self._verifier.validate_current(self._provider_key, assertion))
+        return self._authenticated_transaction(assertion, operation, write=write)
 
     @staticmethod
     def _body(environ, keys):
