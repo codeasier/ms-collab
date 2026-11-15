@@ -28,3 +28,7 @@ cannot affect a new identity/scope. Back/Forward requires reconnecting.
 
 Desktop/mobile layouts, real-HTTP synthetic browser acceptance, client tests and
 remaining deployment limits are documented in [tests](tests/README.md).
+
+The business controller now exports an explicit mount function. `entry.mjs` is
+the standalone bearer bootstrap; the [unified session entry](../application/README.md)
+injects cookie-only requests without importing that legacy entry.

@@ -112,3 +112,9 @@ server reads, operational rate limits/logging, service supervision, backup and
 recovery, production filesystem behavior and real identity-provider acceptance
 remain deployment prerequisites. Existing bearer APIs remain separately
 available for their original explicitly configured hosts, not on this host.
+
+## Optional product entry
+
+[ApplicationUI](../application_ui/README.md) can wrap this configured host with
+workspace and responsibility pages. It does not enable a provider, change the
+session authority or mount a legacy bearer wrapper.

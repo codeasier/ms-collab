@@ -1,5 +1,7 @@
-import {createClient,LatestOperation,scopeFrom,queryFrom,validateCapabilities,validateConfig,validateFields,sameFields,validateCandidates} from './client.mjs'
-const el=id=>document.getElementById(id),client=createClient(),gate=new LatestOperation()
+import {LatestOperation,scopeFrom,queryFrom,validateCapabilities,validateConfig,validateFields,sameFields,validateCandidates} from './client.mjs'
+export function mountResponsibilityPage({client,sessionMode=false,onSignOut=()=>{}}) {
+if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
+const el=id=>document.getElementById(id),gate=new LatestOperation()
 const secure=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
 let scope,capabilities,configuration,candidates,query,pending,busy=false
 const node=(tag,value,className)=>{const n=document.createElement(tag);n.textContent=value;if(className)n.className=className;return n}
@@ -17,8 +19,8 @@ function controls(){
 }
 function resetRequest(){gate.clear();busy=false;clearPanel();controls()}
 function disconnect(message='Disconnected. If a save was interrupted, reconnect and reload to verify its outcome.'){
- resetRequest();client.clear();scope=query=undefined;el('session').hidden=true;el('connect').hidden=!secure
- for(const id of ['credential','workspace','connection','owner','repo'])el(id).value=''
+ resetRequest();client.clear();scope=query=undefined;el('session').hidden=true;if(el('connect'))el('connect').hidden=!secure
+ for(const id of ['credential','workspace','connection','owner','repo'])if(el(id))el(id).value=''
  el('view').value='all';el('field-label').hidden=true;controls();el('status').textContent=message
 }
 function failed(error,operation){
@@ -100,8 +102,8 @@ function readDraft(){
  })
  validateFields(value);return value
 }
-el('connect').addEventListener('submit',event=>{event.preventDefault();if(!secure)return;const value=el('credential').value;resetRequest();try{client.connect(value)}catch{client.clear();el('credential').value='';el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter exact scope IDs supplied by your administrator.'})
-el('disconnect').addEventListener('click',()=>disconnect())
+if(!sessionMode)el('connect').addEventListener('submit',event=>{event.preventDefault();if(!secure)return;const value=el('credential').value;resetRequest();try{client.connect(value)}catch{client.clear();el('credential').value='';el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter exact scope IDs supplied by your administrator.'})
+el('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})
 for(const id of ['workspace','connection','owner','repo'])el(id).addEventListener('input',()=>{resetRequest();scope=query=undefined;controls();el('status').textContent='Scope changed. Load current state again before viewing or editing.'})
 el('scope-form').addEventListener('submit',event=>{event.preventDefault();resetRequest();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('owner').value,el('repo').value)}catch(error){scope=undefined;controls();el('status').textContent=error.message;return}loadScope()})
 el('reload').addEventListener('click',()=>loadScope())
@@ -134,4 +136,7 @@ el('confirm-form').addEventListener('submit',async event=>{
  }catch(error){failed(error,operation)}
 })
 window.addEventListener('pagehide',()=>disconnect('Disconnected. Reconnect to load current state.'))
-if(!secure){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+if(!sessionMode&&!secure){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+
+return {activate(){el('session').hidden=false;el('status').textContent='Enter exact scope IDs supplied by your administrator.'},clear:disconnect}
+}

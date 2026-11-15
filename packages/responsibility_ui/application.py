@@ -6,6 +6,7 @@ from packages.responsibility_api import ResponsibilityApplication
 
 _ROOT = Path(__file__).resolve().parents[2] / "frontend" / "responsibility"
 _FILES = {"/responsibility/": ("index.html", "text/html"),
+          "/responsibility/entry.mjs": ("entry.mjs", "text/javascript"),
           "/responsibility/browser.mjs": ("browser.mjs", "text/javascript"),
           "/responsibility/client.mjs": ("client.mjs", "text/javascript"),
           "/responsibility/style.css": ("style.css", "text/css")}
