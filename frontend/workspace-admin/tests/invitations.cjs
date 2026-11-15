@@ -72,7 +72,8 @@ async function main(){
   const startedB=new Promise(r=>seenB=r),gateB=new Promise(r=>releaseB=r),handledB=new Promise(r=>doneB=r)
   await page.route('**/api/workspaces/alpha/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenA();await gateA;const response=await route.fetch();await route.fulfill({response});doneA()})
   await invite();await page.locator('#invite-save').click();await within(startedA)
-  await page.locator('#disconnect').click();await connect('synthetic-admin');await page.locator('#workspace').selectOption('commons');await page.waitForFunction(()=>document.querySelector('#title').textContent==='Shared collaboration'&&!document.querySelector('#invite-open').hidden)
+  // pagehide is the supported interruption while the modal owns focus.
+  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));await connect('synthetic-admin');await page.locator('#workspace').selectOption('commons');await page.waitForFunction(()=>document.querySelector('#title').textContent==='Shared collaboration'&&!document.querySelector('#invite-open').hidden)
   await page.route('**/api/workspaces/commons/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenB();await gateB;const response=await route.fetch();await route.fulfill({response});doneB()})
   await invite();assert.equal(await page.locator('#invite-save').isDisabled(),false);await page.locator('#invite-save').click();await within(startedB)
   const completed=await page.evaluate(()=>window.finishedInvitationWrites.length);releaseA();await within(handledA)
