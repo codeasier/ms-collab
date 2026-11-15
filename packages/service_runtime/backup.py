@@ -18,6 +18,13 @@ from .schema import POLICY_DIGEST, LOGIN_DIGEST, schema_digest, _APPLICATION_ID,
 BACKUP_MANIFEST = 'backup.json'
 
 
+def _disjoint(source, destination):
+    # Never mutate a source installation/checkpoint by placing output inside it.
+    # Callers already require absolute canonical paths without symlink ancestors.
+    if source.is_relative_to(destination) or destination.is_relative_to(source):
+        raise RuntimeFailure('overlapping_paths')
+
+
 def _verify(config, source):
     private(source, directory=True)
     if set(p.name for p in source.iterdir()) != {POLICY, BACKUP_MANIFEST}:
@@ -61,6 +68,7 @@ def verify_backup(config_path, source):
 
 def backup(config_path, destination):
     config = load_config(config_path); destination = absolute(str(destination))
+    _disjoint(config.directory, destination)
     try:
         # No service using this runtime may remain open. SQLite additionally
         # reserves both attached DBs before capturing policy and security time.
@@ -85,6 +93,7 @@ def backup(config_path, destination):
 
 def restore(config_path, source):
     config = load_config(config_path); source = absolute(str(source))
+    _disjoint(source, config.directory)
     try:
         meta, content = _verify(config, source)
         allocate_directory(config.directory)

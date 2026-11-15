@@ -194,6 +194,21 @@ class RuntimeTests(unittest.TestCase):
         with sqlite3.connect(self.root/'restored'/'policy.sqlite') as db:
             self.assertEqual(db.execute("SELECT active FROM principals WHERE id='member'").fetchall(),[(0,)])
             self.assertEqual(db.execute('SELECT state,revision FROM workspaces').fetchall(),[('suspended',2)])
+    def test_nested_backup_output_does_not_modify_source_installation(self):
+        self.init(); before=self.hashes();names={p.name for p in self.directory.iterdir()}
+        for destination in (self.directory, self.directory/'checkpoint', self.root):
+            with self.assertRaisesRegex(RuntimeFailure,'overlapping_paths'):backup(self.config,destination)
+        self.assertFalse((self.directory/'checkpoint').exists())
+        self.assertEqual(before,self.hashes());self.assertEqual(names,{p.name for p in self.directory.iterdir()})
+    def test_overlapping_restore_target_does_not_damage_source_checkpoint(self):
+        self.init();source=self.root/'backup';backup(self.config,source)
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        for target in (source,source/'restored',self.root):
+            self.value['data_directory']=str(target);self.save()
+            with self.assertRaisesRegex(RuntimeFailure,'overlapping_paths'):restore(self.config,source)
+            self.assertTrue(verify_backup(self.config,source)['backup_valid'])
+            self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
+        self.assertFalse((source/'restored').exists())
     def test_restore_refuses_live_existing_destination_and_corrupt_backup(self):
         self.init();backup(self.config,self.root/'backup')
         with self.assertRaisesRegex(RuntimeFailure,'destination_exists'):restore(self.config,self.root/'backup')

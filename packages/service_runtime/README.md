@@ -136,7 +136,10 @@ For a restore drill, make a private copy of configuration with a **new absent**
 .venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/restore.json check
 ```
 
-The existing live directory is never replaced. Source layout/hash and current code
+Source and target paths must be disjoint: identical paths and either nesting
+direction are rejected before output is allocated, so a restore cannot damage
+the source checkpoint by creating a child directory inside it. The existing live
+directory is never replaced. Source layout/hash and current code
 schema must agree before allocating the target. Restoration cannot revive a
 backed-up login session because none is copied; everyone must authenticate again
 through a future separately accepted provider. A policy backup can still predate
