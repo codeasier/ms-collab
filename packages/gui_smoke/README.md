@@ -39,12 +39,16 @@ closed rather than being silently upgraded or imported.
 
 ## Current authorization and visibility
 
-Every read requires a trusted bearer credential, current active principal,
+Every read requires a trusted bearer credential in standalone mode, or the
+[unified host](../application_host/README.md)'s exclusive cookie/session boundary,
+plus a current active principal,
 explicit workspace membership, module read permission and the current connection
 reader allowlist. Workspace administrators and platform operators receive no
 implicit connection access. Shared workspaces are not public or cross-space
-aggregates. Responses are `no-store`; cookies, actor/role headers and caller URL
-parameters are not credentials or configuration.
+aggregates. Responses are `no-store`. Standalone mode does not accept cookies;
+the configured unified host instead rejects all bearer headers. Actor/role headers
+and caller URL parameters are never credentials or configuration. See the
+[session UI](../gui_smoke_ui/README.md) for the optional read-only browser.
 
 The stored envelope binds the exact workspace/connection/repository coordinates,
 revision and observation time. It also captures workspace/module revisions and,

@@ -1,9 +1,9 @@
 # Configured unified service host
 
 `ApplicationHost` composes the existing workspace administration/invitation API
-and six module APIs behind **one** HTTPS cookie/session and SQLite policy
+and seven module APIs behind **one** HTTPS cookie/session and SQLite policy
 boundary. It is a WSGI factory, not a listener, deployment, production bootstrap,
-UI migration or working real GitCode login. No synthetic identity, default
+full UI migration or working real GitCode login. No synthetic identity, default
 account, database creation or fixture import exists in the factory.
 
 ## Explicit composition
@@ -50,8 +50,13 @@ reason to weaken the contract. See [login state](../login_state/README.md) and
   - `responsibility`: existing config/CAS and approved candidate queries. Requires
     `community` also configured, plus both current per-space policy grants.
   - `assistant`: owner-scoped saved history and reversible archive metadata.
+  - `gui-smoke`: saved task briefs/details/state counts only. Its policy/catalog
+    key is `gui_smoke`; an explicit `HostConfig.gui_smoke_connections` tuple is
+    required for any scope to be readable. No panel proxy or execution route.
 - `GET /` returns only fixed, non-sensitive service metadata. It is not a product
-  frontend or an authorized module/workspace discovery response.
+  frontend or an authorized module/workspace discovery response. An optional
+  [GUI smoke shell](../gui_smoke_ui/README.md) replaces this root page and serves
+  only fixed static assets while forwarding auth/API requests unchanged.
 
 The configured module list is **not** a user's authorization. Workspace/module
 lifecycle, current membership, explicit scope reader/approver grants, content

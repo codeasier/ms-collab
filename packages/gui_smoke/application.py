@@ -15,9 +15,10 @@ _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 class GuiSmokeApplication(WorkspaceApplication):
-    def __init__(self, *, store, providers, provider_key, connections,
-                 clock=lambda: datetime.now(timezone.utc)):
-        super().__init__(store=store, providers=providers, provider_key=provider_key, clock=clock)
+    def __init__(self, *, store=None, providers=None, provider_key=None, connections,
+                 clock=lambda: datetime.now(timezone.utc), session_boundary=None):
+        super().__init__(store=store, providers=providers, provider_key=provider_key, clock=clock,
+                         session_boundary=session_boundary)
         if type(connections) is not tuple or len(connections) > 100 or any(type(c) is not SmokeConnection for c in connections):
             raise ValueError("explicit_connections_required")
         self._connections = {c.scope: c for c in connections}
