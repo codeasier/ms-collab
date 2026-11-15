@@ -55,11 +55,14 @@ export function createClient({fetcher = fetch} = {}) {
     }
   }
 }
-export async function loadSnapshot(client, scope, view, version, signal) {
+export async function loadSnapshot(client, scope, view, version, signal, isCurrent=()=>true) {
+  const guard=()=>{if(signal?.aborted||!isCurrent()){const error=new Error('Cancelled scoped read.');error.name='AbortError';throw error}}
   const records = [], keys = new Set(), fingerprints = new Set()
   let total, observation
   for (let offset=0; offset<10000; offset+=100) {
-    const page = validatePage(await client.request(scope,view,{offset,signal}),scope,view,version,offset)
+    guard()
+    const result=await client.request(scope,view,{offset,signal});guard()
+    const page = validatePage(result,scope,view,version,offset)
     if (!page.available) return {items:[],available:false,observed_at:null}
     if (total === undefined) { total=page.total; observation=page.sources[0].observed_at }
     if (page.total !== total || page.sources[0].observed_at !== observation) invalid()

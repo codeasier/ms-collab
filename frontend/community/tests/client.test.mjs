@@ -39,3 +39,16 @@ test('service error text is fixed and never echoes upstream private payload',asy
  const client=createClient({fetcher:async()=>({ok:false,status:412,json:()=>{throw Error('must not read')}})})
  client.connect('synthetic');await assert.rejects(client.request(scope,'capabilities'),/changed elsewhere/)
 })
+
+test('abandoned snapshot stops before new page requests even if transport cancellation fails',async()=>{
+ for(const abortSignal of [false,true]){
+  let resolve,calls=0,current=true;const controller=new AbortController()
+  const client={request:()=>{calls++;return new Promise(r=>resolve=r)}}
+  const loading=loadSnapshot(client,scope,'review',2,controller.signal,()=>current)
+  current=false;if(abortSignal)controller.abort()
+  resolve(page(Array.from({length:100},(_,i)=>row(i+1)),0,101))
+  await assert.rejects(loading,e=>e.name==='AbortError');assert.equal(calls,1)
+ }
+ const controller=new AbortController();controller.abort();let called=0
+ await assert.rejects(loadSnapshot({request:()=>{called++}},scope,'review',2,controller.signal),e=>e.name==='AbortError');assert.equal(called,0)
+})
