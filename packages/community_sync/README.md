@@ -106,3 +106,8 @@ database persistence, current-user authorization, explicit content approval and
 two-phase refresh. It deliberately does not read this package’s independent
 SQLite store during requests. Its integration does not add a default real login,
 production deployment or automatic sharing.
+
+The authorized integration supplies a trusted `before_read` callback to
+`GitCodeProvider.observe`. It runs before and after each page GET, not only around
+the entire scan. Standalone calls without it still make no workspace-authority
+claim. See [community grant and I/O boundaries](../community_api/GRANTS.md).

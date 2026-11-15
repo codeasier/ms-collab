@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Current-user authorization, scoped sharing and two-phase refresh orchestration."""
 from datetime import datetime, timezone
+from dataclasses import replace
 import json
 import hashlib
 import re
@@ -13,8 +14,10 @@ from packages.community_board.delta import compare_snapshots
 from packages.community_sync import BoundCredential, GitCodeProvider, ProviderError
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
-from packages.workspaces import PolicyError
-from .records import read, encode, snapshot_data, fingerprint, _HASH
+from packages.workspaces import PolicyError, StorageError
+from packages.workspaces.authority import authority_current, principal_pin
+from packages.identity import AuthenticationError, AuthenticationUnavailable
+from .records import read, encode, snapshot_data, fingerprint, _HASH, approval_text, capture_approval, approval_current, _MAX_REVISION
 
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -37,10 +40,12 @@ class CommunityApplication(WorkspaceApplication):
             raise PolicyError(404, "not_found")
         allowed = {"items":state.policy.reader_ids, "review":state.policy.approver_ids,
                    "approve":state.policy.approver_ids, "refresh":state.policy.refresher_ids}[action]
-        if actor not in allowed:
+        if actor not in allowed or not authority_current(policy, actor, state.authority):
             raise PolicyError(404, "not_found")
         if action != "items":
             policy._admin(actor, scope.workspace_id)
+        if not approval_current(policy,state):
+            state=replace(state,approvals=frozenset(),provenance=None)
         return state
 
     def _dispatch(self, environ):
@@ -71,7 +76,8 @@ class CommunityApplication(WorkspaceApplication):
                 available = {fingerprint(scope, item) for item in state.snapshot.items} if state.snapshot else set()
                 if not approved <= available:
                     raise PolicyError(400, "invalid_approval")
-                self._save(policy, actor, connection, state, state.snapshot, approved)
+                proof=capture_approval(policy,state,actor) if approved else None
+                self._save(policy, actor, connection, state, state.snapshot, approved, proof)
                 return {"scope":scope.as_dict(), "revision":state.revision + 1, "approved_count":len(approved)}
             return self._authenticated_transaction(assertion, approve, write=True, with_connection=True)
         def query(policy, actor, connection):
@@ -93,13 +99,29 @@ class CommunityApplication(WorkspaceApplication):
         return self._authenticated_transaction(assertion, query, with_connection=True)
 
     def _refresh(self, assertion, scope, expected, _):
+        def flow_pin(policy, actor):
+            return (principal_pin(policy,actor),
+                    policy._memberships[(scope.workspace_id,actor)].revision,
+                    policy._workspaces[scope.workspace_id].revision,
+                    policy._modules[(scope.workspace_id,"community")].revision)
         def preflight(policy, actor, connection):
             state = self._state(policy, actor, connection, scope, "refresh")
             policy._match(expected, state.revision)
-            return actor, state
-        actor, prior = self._authenticated_transaction(assertion, preflight, with_connection=True)
+            if state.revision >= _MAX_REVISION:
+                raise PolicyError(409, "connection_revision_exhausted")
+            return flow_pin(policy,actor), state
+        actor_pin, prior = self._authenticated_transaction(assertion, preflight, with_connection=True)
+        def current(policy, actor, connection):
+            state=self._state(policy,actor,connection,scope,"refresh")
+            if flow_pin(policy,actor)!=actor_pin:raise PolicyError(409,"refresh_authority_changed")
+            policy._match(prior.revision,state.revision)
+            if state.config_raw!=prior.config_raw:raise PolicyError(409,"connection_changed")
+            return state
+        def before_read():
+            self._authenticated_transaction(assertion,current,with_connection=True)
         if self._credential_loader is None:
             raise PolicyError(503, "refresh_unconfigured")
+        before_read()
         try:
             credential = self._credential_loader(scope, prior.policy.credential_ref)
             if type(credential) is not BoundCredential or credential.scope != scope:
@@ -108,45 +130,44 @@ class CommunityApplication(WorkspaceApplication):
             if cutoff.tzinfo is None or cutoff.utcoffset() is None:
                 raise ValueError("aware_clock_required")
             observed_at = cutoff.astimezone(timezone.utc).isoformat()
-            snapshot = self._provider.observe(prior.policy.connection, credential, observed_at=observed_at)
+            before_read()
+            snapshot = self._provider.observe(prior.policy.connection, credential, observed_at=observed_at, before_read=before_read)
+            before_read()
             if type(snapshot) is not Snapshot or snapshot.scope != scope:
                 raise ProviderError("snapshot_scope_mismatch")
             # Enforce the dedicated record bound before opening a write lock.
             encode(snapshot_data(snapshot))
+        except (PolicyError,AuthenticationError,AuthenticationUnavailable,StorageError):
+            raise
         except Exception:
             raise PolicyError(502, "provider_unavailable") from None
         def publish(policy, current_actor, connection):
-            current = self._state(policy, current_actor, connection, scope, "refresh")
-            # The same verified subject must still resolve to the same principal;
-            # configuration, approvals or another refresh can invalidate the work.
-            if current_actor != actor:
-                raise PolicyError(409, "identity_changed")
-            policy._match(prior.revision, current.revision)
-            if current.policy != prior.policy:
-                raise PolicyError(409, "connection_changed")
-            if current.snapshot is not None:
+            state = current(policy, current_actor, connection)
+            if state.snapshot is not None:
                 try:
-                    compare_snapshots(current.snapshot, snapshot)
-                    before = {item.key:item for item in current.snapshot.items}
+                    compare_snapshots(state.snapshot, snapshot)
+                    before = {item.key:item for item in state.snapshot.items}
                     for item in snapshot.items:
                         old = before.get(item.key)
                         if old and utc_time(item.updated_at) == utc_time(old.updated_at) and item != old:
                             raise ValueError()
-                    if snapshot != current.snapshot and utc_time(snapshot.observed_at) == utc_time(current.snapshot.observed_at):
+                    if snapshot != state.snapshot and utc_time(snapshot.observed_at) == utc_time(state.snapshot.observed_at):
                         raise ValueError()
                 except (ValueError, OverflowError):
                     raise PolicyError(409, "stale_observation") from None
-            approvals = current.approvals & {fingerprint(scope, item) for item in snapshot.items}
-            self._save(policy, current_actor, connection, current, snapshot, approvals)
-            return {"scope":scope.as_dict(), "revision":current.revision + 1,
+            approvals = state.approvals & {fingerprint(scope, item) for item in snapshot.items}
+            self._save(policy, current_actor, connection, state, snapshot, approvals, state.provenance if approvals else None)
+            return {"scope":scope.as_dict(), "revision":state.revision + 1,
                     "observed_at":snapshot.observed_at, "approved_count":len(approvals)}
         return self._authenticated_transaction(assertion, publish, write=True, with_connection=True)
 
     @staticmethod
-    def _save(policy, actor, connection, state, snapshot, approvals):
+    def _save(policy, actor, connection, state, snapshot, approvals, provenance):
+        if state.revision >= _MAX_REVISION:
+            raise PolicyError(409, "connection_revision_exhausted")
         scope = state.policy.scope
         changed = connection.execute("UPDATE community_connections SET snapshot=?,approvals=?,revision=revision+1 WHERE workspace_id=? AND connection_id=? AND repository=? AND revision=?",
-                           (encode(snapshot_data(snapshot)) if snapshot else None, encode(sorted(approvals)),
+                           (encode(snapshot_data(snapshot)) if snapshot else None, approval_text(approvals,provenance),
                             scope.workspace_id, scope.connection_id, scope.repository, state.revision)).rowcount
         if changed != 1:
             raise PolicyError(412, "stale_revision")

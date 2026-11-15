@@ -9,7 +9,7 @@ from packages.artifact_sync import Connection as ArtifactConnection, IndexPolicy
 from packages.artifact_sync.records import snapshot_text
 from packages.assistant_history import initialize as initialize_history, create_conversation, append_events, DisplayEvent
 from packages.community_api import ConnectionPolicy, initialize as initialize_community
-from packages.community_api.records import encode, snapshot_data, fingerprint
+from packages.community_api.records import encode, snapshot_data, fingerprint, read as community_state, approval_text, capture_approval
 from packages.community_board.model import Scope, Snapshot, BoardItem
 from packages.community_sync import Connection
 from packages.identity import AuthenticationError, VerifiedIdentity
@@ -78,10 +78,11 @@ def initialize(path):
     append_events(store,owner='admin',workspace='alpha',conversation='one',events=(DisplayEvent('assistant_message','Synthetic answer'),),expected_revision=1,clock=lambda:NOW)
     # Fixture provisioning only, not an ingestion endpoint or production migration.
     with sqlite3.connect(path) as db:
+        current_policy=store._load(db)
         for s in community_scopes:
             snapshot=Snapshot(s,'2026-01-01T00:00:00Z',(BoardItem('issue',1,'Approved synthetic issue','open','2026-01-01T00:00:00Z'),BoardItem('issue',2,'Private synthetic issue','open','2026-01-01T00:00:00Z')))
             db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?',
-                       (encode(snapshot_data(snapshot)),encode([fingerprint(s,snapshot.items[0])]),s.workspace_id))
+                       (encode(snapshot_data(snapshot)),approval_text([fingerprint(s,snapshot.items[0])],capture_approval(current_policy,community_state(db,s),"admin")) if s.workspace_id=="alpha" else approval_text([],None),s.workspace_id))
         for s in artifacts:
             db.execute('UPDATE artifact_indexes_v1 SET published=?,published_revision=1 WHERE workspace=?',
                        (snapshot_text(ArtifactSnapshot(s,'2026-01-01T00:00:00Z',())),s.workspace_id))

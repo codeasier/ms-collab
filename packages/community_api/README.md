@@ -9,7 +9,9 @@ The separate synthetic demo remains unchanged.
 
 A trusted `ConnectionPolicy` binds one `Connection` (workspace, connection ID,
 repository and bounded provider limits), an opaque `credential_ref`, and three
-explicit principal-ID allowlists:
+explicit principal-ID lists. Persisted grants additionally pin realm and principal
+generation; the DTO alone is not authority. See [persistent grants and regrant](GRANTS.md).
+The three lists are:
 
 - `reader_ids`: may see **only content explicitly approved for this connection**,
   while currently a workspace member with enabled community read capability.
@@ -69,7 +71,8 @@ Refresh has two phases with no network inside a database lock:
 
 1. An authenticated transaction verifies current refresh authority and `If-Match`.
 2. A trusted factory callback supplies a `BoundCredential` for exactly that scope
-   and credential reference. The provider performs its bounded, GET-only scan.
+   and credential reference. The provider performs its bounded, GET-only scan,
+   with current actor/grant/config checks before and after every page request.
 3. A new `BEGIN IMMEDIATE` transaction resolves identity and authorization again,
    checks the original principal binding and unchanged connection revision,
    validates monotonic observations, then stores the new snapshot, retained
@@ -157,5 +160,5 @@ connection administration and operational review are still required before
 exposure. The companion board UI is a separate integration, not proof of these
 production prerequisites.
 
-[Tests](tests/README.md) · [Provider contract](../community_sync/README.md) ·
+[Persistent grants and regrant](GRANTS.md) · [Tests](tests/README.md) · [Provider contract](../community_sync/README.md) ·
 [Workspace API](../workspace_api/README.md) · [Documentation](../../docs/README.md)

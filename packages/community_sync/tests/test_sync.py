@@ -55,6 +55,27 @@ class ProviderTests(unittest.TestCase):
         return GitCodeProvider(transport or FakeTransport()).observe(
             Connection(SCOPE, **limits), BoundCredential(SCOPE, TOKEN), observed_at=LATER)
 
+    def test_guard_wraps_every_page_and_propagates_rejection_unchanged(self):
+        events=[]
+        class Transport:
+            def get(self,*args):events.append('get');return []
+        def guard():events.append('guard')
+        GitCodeProvider(Transport()).observe(Connection(SCOPE),BoundCredential(SCOPE,TOKEN),observed_at=LATER,before_read=guard)
+        self.assertEqual(events,['guard','get','guard','guard','get','guard'])
+        class Rejected(RuntimeError):pass
+        for reject_at,gets in ((1,0),(2,1),(3,1),(4,2)):
+            events.clear();counter=[0]
+            def rejecting():
+                counter[0]+=1
+                if counter[0]==reject_at:raise Rejected('synthetic')
+            with self.assertRaises(Rejected):
+                GitCodeProvider(Transport()).observe(Connection(SCOPE),BoundCredential(SCOPE,TOKEN),observed_at=LATER,before_read=rejecting)
+            self.assertEqual(len(events),gets)
+        events.clear()
+        with self.assertRaises(ValueError):
+            GitCodeProvider(Transport()).observe(Connection(SCOPE),BoundCredential(SCOPE,TOKEN),observed_at=LATER,before_read='request-string')
+        self.assertFalse(events)
+
     def test_normalized_allowlist(self):
         result = self.observe(FakeTransport({("issues", 1): [row("2", state="opened")],
                                            ("pulls", 1): [row(2, state="merged")]}))

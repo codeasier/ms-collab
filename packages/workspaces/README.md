@@ -97,3 +97,8 @@ implementations, with database guards on the persisted directory. No flag enable
 rebinding, disable/reenable or provisioning. The [foundation contract](../../docs/principal-authority.md)
 describes explicit schema upgrades, retained legacy grants and gates before a
 future identity-administration implementation.
+
+`authority.py` supplies strict pure capture/validation/current-binding helpers for
+explicit scoped grants. It does not mutate principals or authenticate requests;
+legacy decoders must never call capture as a fallback. First use is the
+[community grant adapter](../community_api/GRANTS.md).

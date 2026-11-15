@@ -7,7 +7,7 @@ from socketserver import ThreadingMixIn
 
 from packages.identity import AuthenticationError, Provider, VerifiedIdentity
 from packages.community_api import CommunityApplication, ConnectionPolicy, initialize
-from packages.community_api.records import read, encode, fingerprint, snapshot_data
+from packages.community_api.records import read, encode, fingerprint, snapshot_data, approval_text, capture_approval
 from packages.community_sync import Connection, BoundCredential
 from packages.community_board import Scope, Snapshot, BoardItem
 from packages.community_ui import CommunityUI
@@ -26,7 +26,8 @@ class TestVerifier:
 
 
 class TestProvider:
-    def observe(self, connection, credential, *, observed_at):
+    def observe(self, connection, credential, *, observed_at, before_read=None):
+        if before_read is not None: before_read()
         # Refresh advances every changed record version; old fingerprints must not survive.
         return Snapshot(connection.scope, observed_at, tuple(
             BoardItem("issue", number, "Changed synthetic issue" if number == 101 else f"Synthetic issue {number}", "open", observed_at, ("fixture",))
@@ -55,7 +56,7 @@ def make_api(path):
             items=tuple(BoardItem("issue",n,"<img src=x onerror=alert(1)>" if n == 101 else f"Synthetic issue {n}","open","2026-01-01T00:00:00Z",("<b>plain label</b>",)) for n in range(1,102))
             snapshot=Snapshot(scope,"2026-01-02T00:00:00Z",items)
             approvals=[fingerprint(scope,item) for item in items if item.number in (1,101)]
-            connection.execute("UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?",(encode(snapshot_data(snapshot)),encode(approvals),scope.workspace_id))
+            connection.execute("UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?",(encode(snapshot_data(snapshot)),approval_text(approvals,capture_approval(policy,read(connection,scope),"admin")),scope.workspace_id))
     store._transaction(seed,write=True,with_connection=True)
     return CommunityApplication(store=store,providers=(Provider("test",ISSUER,"ui-tests",TestVerifier()),),provider_key="test",provider=TestProvider(),credential_loader=lambda scope,ref: BoundCredential(scope,"synthetic-provider"))
 
