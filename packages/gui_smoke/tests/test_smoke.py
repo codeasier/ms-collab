@@ -222,7 +222,11 @@ class SmokeTests(unittest.TestCase):
     def test_revocation_is_current_and_restoring_membership_does_not_resurrect(self):
         self.store.set_membership("admin", "alpha", "alice", role="viewer", state="revoked", expected_revision=1)
         self.assertEqual(request(self.app)["status"], 404)
-        self.store.set_membership("admin", "alpha", "alice", role="viewer", state="active", expected_revision=2)
+        with self.assertRaisesRegex(PolicyError, "membership_revoked"):
+            self.store.set_membership("admin", "alpha", "alice", role="viewer", state="active", expected_revision=2)
+        # Synthetic trusted restoration, not an application shortcut around the
+        # core's permanent revocation rule. A newer membership cannot reuse grants.
+        self.sql("UPDATE memberships SET state='active',revision=3 WHERE workspace_id='alpha' AND principal_id='alice'")
         self.assertEqual(request(self.app)["status"], 404)
         self.assertEqual(request(self.app, token="synthetic-bob")["status"], 200)
         self.publish(expected_revision=1, observed_at=NOW.isoformat())
@@ -234,6 +238,14 @@ class SmokeTests(unittest.TestCase):
         removed = SmokeConnection(self.scope, frozenset({"bob"}), self.configured.publishers)
         self.assertEqual(request(self.application((removed,)))["status"], 404)
         self.assertEqual(request(self.application((removed,)), token="synthetic-bob")["status"], 200)
+
+    def test_unapproved_snapshot_reader_does_not_interpret_task_payloads(self):
+        raw = json.loads(self.sql("SELECT record FROM gui_smoke_snapshots")[0][0])
+        raw["tasks"][0]["log"] = "synthetic-private-marker"
+        self.sql("UPDATE gui_smoke_snapshots SET record=?", (json.dumps(raw),))
+        expanded = SmokeConnection(self.scope, self.configured.readers | {"outsider"}, self.configured.publishers)
+        self.assertEqual(request(self.application((expanded,)), token="synthetic-outsider")["status"], 404)
+        self.assertEqual(request(self.app)["status"], 503)
 
     def test_module_disable_and_reenable_requires_explicit_republication(self):
         self.store.set_module_state("admin", "alpha", "gui_smoke", state="disabling", expected_revision=1)

@@ -65,7 +65,7 @@ def _now(clock):
     return value.astimezone(timezone.utc)
 
 
-def _load(connection, scope, now):
+def _load(connection, scope, now, check_fence=None):
     validate_schema(connection)
     row = connection.execute("SELECT revision,record FROM gui_smoke_snapshots WHERE workspace_id=? AND connection_id=? AND repository_id=?",
                              tuple(scope.as_dict().values())).fetchone()
@@ -92,6 +92,8 @@ def _load(connection, scope, now):
             text(binding["issuer"], 200)
             text(binding["subject"], 200)
             integer(binding["membership_revision"], 1, MAX_REVISION)
+        if check_fence is not None:
+            check_fence(record)
         if type(record["tasks"]) is not list or len(record["tasks"]) > MAX_TASKS:
             raise ValueError("invalid_tasks")
         tasks = [stored_task(task, record["observed_at"]) for task in record["tasks"]]
@@ -107,13 +109,13 @@ def read_snapshot(policy, connection, actor, configured, now):
         raise PolicyError(404, "not_found")
     scope = configured.scope
     binding = _binding(policy, actor, scope)
-    record = _load(connection, scope, now)
-    if record is not None:
+    def check_fence(record):
         if (record["readers"].get(actor) != binding
                 or record["workspace_revision"] != policy._workspaces[scope.workspace_id].revision
                 or record["module_revision"] != policy._modules[(scope.workspace_id, "gui_smoke")].revision):
             raise PolicyError(404, "not_found")
-    return record
+    # Evaluate saved audience/current fences before interpreting task payloads.
+    return _load(connection, scope, now, check_fence)
 
 
 def publish_snapshot(store, configured, *, actor, tasks, observed_at, expected_revision,
