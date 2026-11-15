@@ -14,3 +14,7 @@ Invitation controls use the [identity-addressed adapter](../../packages/workspac
 explicit existing principal, bounded role, 24-hour validity, signed-in inbox and
 confirm/cancel Join/revoke. No secret link or external message is generated.
 Uncertain invite creation retains a scope/body retry key in page memory only.
+
+The business controller now exports an explicit mount function. `entry.mjs` is
+the standalone bearer bootstrap; the [unified session entry](../application/README.md)
+injects cookie-only requests without importing that legacy entry.

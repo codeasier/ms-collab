@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ms-collab · Workspace administration</title><link rel="stylesheet" href="/manage/style.css"><script type="module" src="/manage/admin.mjs"></script></head>
+<title>ms-collab · Workspace administration</title><link rel="stylesheet" href="/manage/style.css"><script type="module" src="/manage/entry.mjs"></script></head>
 <body><header><p class="eyebrow">ms-collab / Administration</p><h1>Workspace administration</h1><p>Isolated member, module and platform lifecycle controls using the configured transactional service.</p></header>
 <main><aside class="notice"><strong>Integration preview.</strong> No built-in login or default identity. Supply an opaque credential accepted by your explicitly configured verifier. The local demo is separate. Do not use production data before deployment security review.</aside>
 <form id="connect"><label for="credential">Access credential</label><input id="credential" type="password" autocomplete="off" maxlength="8192" required><button type="submit">Connect</button><p>Held only in this page's memory; never stored in the URL or browser storage. Disconnect clears the page, but does not revoke the credential at its issuer.</p></form>

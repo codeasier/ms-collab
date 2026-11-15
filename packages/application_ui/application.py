@@ -1,0 +1,65 @@
+"""Static product entry composed only around the configured cookie/session host."""
+import json
+from pathlib import Path
+
+from packages.application_host import ApplicationHost
+from packages.identity import AuthenticationError
+
+_ROOT = Path(__file__).resolve().parents[2] / 'frontend'
+_FILES = {
+    '/': ('application/index.html', 'text/html'),
+    '/manage/': ('application/manage.html', 'text/html'),
+    '/responsibility/': ('application/responsibility.html', 'text/html'),
+    '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),
+    '/app/client.mjs': ('application/client.mjs', 'text/javascript'),
+    '/app/style.css': ('application/style.css', 'text/css'),
+    '/manage/admin.mjs': ('workspace-admin/admin.mjs', 'text/javascript'),
+    '/manage/client.mjs': ('workspace-admin/client.mjs', 'text/javascript'),
+    '/manage/style.css': ('workspace-admin/style.css', 'text/css'),
+    '/responsibility/browser.mjs': ('responsibility/browser.mjs', 'text/javascript'),
+    '/responsibility/client.mjs': ('responsibility/client.mjs', 'text/javascript'),
+    '/responsibility/style.css': ('responsibility/style.css', 'text/css'),
+}
+
+
+class ApplicationUI:
+    """Explicit static wrapper, not a listener, provider, verifier or deployment.
+
+    The exact existing ApplicationHost owns every API/auth request. Static HTML
+    contains no identity, scopes, credentials or cached data. No bearer adapters,
+    synthetic fixtures, cookie copying or session-to-token conversion are used.
+    The trusted host's own transport check protects static/bootstrap requests too.
+    """
+    def __init__(self, *, host):
+        if type(host) is not ApplicationHost:
+            raise ValueError('explicit configured ApplicationHost required')
+        self._host = host
+
+    def __call__(self, environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        if type(path) is str and (path.startswith('/api/') or path.startswith('/auth/')):
+            return self._host(environ, start_response)
+        headers = [('Cache-Control', 'no-store'), ('Pragma', 'no-cache'),
+                   ('Referrer-Policy', 'no-referrer'), ('X-Content-Type-Options', 'nosniff'),
+                   ('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"),
+                   ('Vary', 'Cookie, Origin')]
+        def respond(status, body, media='text/plain'):
+            start_response(status, headers + [('Content-Type', media+'; charset=utf-8'), ('Content-Length', str(len(body)))])
+            return [b'' if environ.get('REQUEST_METHOD') == 'HEAD' else body]
+        try:
+            self._host._boundary._transport_security(environ)
+        except AuthenticationError:
+            return respond('401 Unauthorized', b'authentication_required')
+        if environ.get('REQUEST_METHOD') not in {'GET', 'HEAD'} or environ.get('QUERY_STRING'):
+            return respond('404 Not Found', b'not_found')
+        enabled = 'responsibility' in self._host._config.modules
+        if path == '/app/bootstrap':
+            endpoint = self._host._boundary._authorization_endpoint
+            body = {'data': {'service': 'ms-collab',
+                'ui_modules': ['workspaces'] + (['responsibility'] if enabled else []),
+                'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
+            return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
+        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled):
+            return respond('404 Not Found', b'not_found')
+        filename, media = _FILES[path]
+        return respond('200 OK', (_ROOT / filename).read_bytes(), media)

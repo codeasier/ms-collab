@@ -1,6 +1,7 @@
-import {createClient, validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations} from './client.mjs'
+import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations} from './client.mjs'
+export function mountWorkspacePage({client,sessionMode=false,onSignOut=()=>{}}) {
+if (!client || typeof client.request !== 'function' || typeof client.clear !== 'function') throw new Error('Explicit request client required.')
 const el = id => document.getElementById(id)
-const client = createClient()
 const pendingCreations = new Map(), pendingInvitations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
 let managementAvailable = false, saveGeneration = 0
@@ -36,7 +37,7 @@ function disconnect(message='Disconnected. Any already accepted change may have 
   managementAvailable = false; pendingCreations.clear(); pendingInvitations.clear()
   el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
   el('workspace').replaceChildren(); el('control-spaces').replaceChildren(); el('operator-panel').hidden = true
-  el('session').hidden = true; el('connect').hidden = false; el('credential').value = ''; el('status').textContent = message
+  el('session').hidden = true; if(el('connect'))el('connect').hidden = false; if(el('credential'))el('credential').value = ''; el('status').textContent = message
 }
 function failed(error, current) {
   if (current !== generation || error.name === 'AbortError') return
@@ -220,12 +221,12 @@ async function mutationError(error, current, statusId, scope) {
   const notice = [403,404,412].includes(error.status) ? error.message : 'Result uncertain. Current state reloaded; verify before retrying. A repeated identical creation in this page uses the same retry key.'
   if (scope) await loadMembers(scope,notice); else await reload(notice)
 }
-el('connect').addEventListener('submit', event => {
+if (!sessionMode) el('connect').addEventListener('submit', event => {
   event.preventDefault()
   try { client.connect(el('credential').value) } catch { el('status').textContent = 'Enter a valid opaque credential.'; return }
   el('credential').value = ''; el('connect').hidden = true; el('session').hidden = false; reload()
 })
-el('disconnect').addEventListener('click', () => disconnect())
+el('disconnect').addEventListener('click', () => {disconnect();if(sessionMode)onSignOut()})
 el('reload').addEventListener('click', () => reload())
 el('workspace').addEventListener('change', event => loadMembers(event.target.value))
 for (const [dialog,button,close] of [['editor','cancel',closeEditor],['create-dialog','create-cancel',closeCreate],['action-dialog','action-cancel',closeAction],['invite-dialog','invite-cancel',closeInvite]]) {
@@ -304,6 +305,9 @@ el('invite-form').addEventListener('submit',async event=>{
   finally { busy(false,saveTurn) }
 })
 window.addEventListener('pagehide', () => disconnect('Disconnected. Reconnect and verify any uncertain creation before submitting another request.'))
-if (location.protocol !== 'https:' && !(location.protocol === 'http:' && location.hostname === '127.0.0.1')) {
+if (!sessionMode && location.protocol !== 'https:' && !(location.protocol === 'http:' && location.hostname === '127.0.0.1')) {
   el('connect').hidden = true; el('status').textContent = 'HTTPS is required outside numeric loopback.'
+}
+
+return {activate(){el('session').hidden=false;return reload()},clear:disconnect}
 }
