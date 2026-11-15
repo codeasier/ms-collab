@@ -71,7 +71,10 @@ demo; this wording does not assert repository branch rules are configured.
   trusted bootstrap inputs; edits can revoke or change an existing active member,
   but cannot add a member or reactivate a revoked membership. This avoids treating
   an invitation or a caller-supplied identity as membership.
-- Module installation/configuration, capability expansion or connector bindings.
+- Arbitrary module configuration, capability expansion or connector bindings.
+  A separate [administration adapter](../workspace_admin_api/README.md) supplies a
+  platform-approved catalog for disabled installation; the policy's installation
+  method accepts capabilities only from trusted server code, never HTTP claims.
 - Explicit sharing, caches/cursors, idempotency, queues/SSE/downloads/exports,
   resource-specific restrictions, filesystem/Agent isolation or provider scope.
 - External transactions/outbox, read/denial audit and request correlation.

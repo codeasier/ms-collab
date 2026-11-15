@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {createClient,validateWorkspaces,validateMembers,membershipURL,messageFor} from '../client.mjs'
+import {createClient,validateWorkspaces,validateMembers,membershipURL,messageFor,moduleURL,validateModules,validateCatalog} from '../client.mjs'
 const space={id:'alpha',name:'Alpha',kind:'product',state:'active',revision:1}
 const member={workspace_id:'alpha',principal_id:'reader',role:'viewer',state:'active',revision:1}
 test('strict response scope and revisions',()=>{
@@ -22,4 +22,21 @@ test('credential is memory only and requests fixed same-origin with no redirect'
 test('errors never echo server response body',async()=>{
  const client=createClient({fetcher:async()=>({ok:false,status:401,json:async()=>{throw new Error('must not inspect raw server body')}})})
  client.connect('synthetic-only');await assert.rejects(client.request('/api/workspaces'),{message:messageFor(401),status:401})
+})
+test('module responses preserve exact scope and fixed capabilities',()=>{
+ const module={workspace_id:'alpha',key:'board',capabilities:['read'],state:'disabled',revision:1}
+ assert.deepEqual(validateModules([module],'alpha'),[module]);assert.deepEqual(validateCatalog([{key:'board',capabilities:['read']}]),[{key:'board',capabilities:['read']}])
+ for(const value of [[{...module,workspace_id:'beta'}],[{...module,capabilities:['execute']}],[module,module],[{...module,state:'running'}]])assert.throws(()=>validateModules(value,'alpha'))
+ for(const value of [null,[{key:'../secret',capabilities:['read']}],[{key:'board',capabilities:[]}],[{key:'board',capabilities:['read','read']}]])assert.throws(()=>validateCatalog(value))
+ assert.equal(moduleURL('alpha','board'),'/api/workspaces/alpha/modules/board');assert.throws(()=>moduleURL('../beta'))
+})
+test('administration requests use fixed paths and explicit retry or revision headers',async()=>{
+ const requests=[],client=createClient({fetcher:async(path,options)=>{requests.push({path,options});return {ok:true,json:async()=>({data:{}})}}})
+ client.connect('opaque-test')
+ await client.request('/api/control/workspaces',{method:'POST',body:{name:'Example'},requestKey:'fixture'})
+ await client.request(moduleURL('alpha','board'),{method:'PATCH',body:{state:'enabled'},revision:3})
+ assert.equal(requests[0].options.headers['Idempotency-Key'],'fixture');assert.equal(requests[0].options.headers['If-Match'],undefined)
+ assert.equal(requests[1].options.headers['If-Match'],'"3"');assert.equal(requests[1].options.headers['Idempotency-Key'],undefined)
+ for(const path of ['https://evil.example/control/workspaces','//evil.example/x','/api/control/principals'])await assert.rejects(()=>client.request(path))
+ await assert.rejects(()=>client.request('/api/control/workspaces',{method:'DELETE'}))
 })
