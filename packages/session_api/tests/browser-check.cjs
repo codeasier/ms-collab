@@ -50,13 +50,29 @@ const readline = require('node:readline');
       const csrf=document.cookie.split('; ').find(s=>s.startsWith('__Host-ms-collab-csrf=')).split('=')[1];
       const noCsrf=await fetch(path,{method:'PUT',headers:{'Content-Type':'application/json','If-Match':'"1"'},body:JSON.stringify({text:'denied'})});
       const good=await fetch(path,{method:'PUT',headers:{'Content-Type':'application/json','If-Match':'"1"','X-CSRF-Token':csrf},body:JSON.stringify({text:'synthetic-cookie-write'})});
-      const out=await fetch('/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'});
-      const after=await fetch(path);
-      return [noCsrf.status,good.status,out.status,after.status];
+      const revoked=await fetch('/synthetic-revoke',{method:'POST'});
+      const stale=await fetch('/auth/start',{method:'POST',headers:{'Content-Type':'application/json','X-MS-Collab-Login':'1','X-CSRF-Token':csrf},body:'{}'});
+      return [noCsrf.status,good.status,revoked.status,stale.status];
     });
     assert.deepEqual(statuses,[401,200,200,401]);
     assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
-    console.log('Synthetic HTTPS cross-site callback, host cookie flags, HttpOnly isolation, CSRF and logout checks passed. Not live GitCode/TLS trust acceptance.');
+    const retry = await page.evaluate(async()=>{
+      const r=await fetch('/auth/start',{method:'POST',headers:{'Content-Type':'application/json','X-MS-Collab-Login':'1'},body:'{}'});
+      return {status:r.status,body:await r.json()};
+    });
+    assert.equal(retry.status,200);
+    await page.goto(retry.body.data.authorization_url);
+    await page.waitForURL(startup.origin+'/');
+    assert.notEqual((await context.cookies()).find(c=>c.name==='__Host-ms-collab-session').value,session.value);
+    const logout = await page.evaluate(async()=>{
+      const csrf=document.cookie.split('; ').find(s=>s.startsWith('__Host-ms-collab-csrf=')).split('=')[1];
+      const out=await fetch('/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'});
+      const after=await fetch('/api/workspaces/alpha/modules/board/resources/same');
+      return [out.status,after.status];
+    });
+    assert.deepEqual(logout,[200,401]);
+    assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
+    console.log('Synthetic HTTPS cross-site callback, host cookie flags, HttpOnly isolation, CSRF, stale-cookie recovery and logout checks passed. Not live GitCode/TLS trust acceptance.');
   } finally {
     if(browser) await browser.close();
     if(server && server.exitCode===null){server.kill('SIGTERM');await new Promise(resolve=>{server.once('exit',resolve);setTimeout(()=>{if(server.exitCode===null)server.kill('SIGKILL');resolve();},3000);});}

@@ -74,6 +74,14 @@ def _cookie(name, value, *, expires=None, now=None, readable=False):
             + ("" if readable else "HttpOnly; ") + ("SameSite=Strict" if readable else "SameSite=Lax"))
 
 
+class _StaleSession(AuthenticationError):
+    """Same-origin recovery only: clear unusable cookies, never log in silently."""
+
+
+def _clear_cookies():
+    return [_cookie(_SESSION, None), _cookie(_CSRF, None, readable=True), _cookie(_BROWSER, None)]
+
+
 class SessionWorkspaceApplication(WorkspaceApplication):
     """Cookie version of existing workspace routes and closed-default login routes.
 
@@ -135,6 +143,23 @@ class SessionWorkspaceApplication(WorkspaceApplication):
         return self._sessions.transaction(request, callback, write=write,
             with_connection=with_connection, before_commit=before_commit)
 
+    def _reject_or_clear_stale(self, token):
+        # Recovery only, never an authorization snapshot. Do not turn storage
+        # failures into anonymous state or clear a valid session on bad CSRF.
+        try:
+            self._sessions.login.inspect_session(token)
+        except AuthenticationError:
+            raise _StaleSession() from None
+        raise AuthenticationError()
+
+    def _existing_token(self, cookies):
+        if _SESSION not in cookies:
+            raise AuthenticationError()
+        try:
+            return _credential(cookies[_SESSION])
+        except AuthenticationError:
+            raise _StaleSession() from None
+
     def _auth(self, environ):
         path, method = environ.get("PATH_INFO"), environ.get("REQUEST_METHOD")
         callback = path == "/auth/callback"
@@ -146,8 +171,12 @@ class SessionWorkspaceApplication(WorkspaceApplication):
                 raise AuthenticationError()
             self._body(environ, set())
             if _SESSION in cookies:
+                self._existing_token(cookies)
                 request = self._verify_request(environ)
-                self._sessions.transaction(request, lambda policy, actor: None, write=True)
+                try:
+                    self._sessions.transaction(request, lambda policy, actor: None, write=True)
+                except AuthenticationError:
+                    self._reject_or_clear_stale(request.token)
             attempt = self._coordinator.begin()  # Unconfigured provider: no attempt or cookie.
             params = {"response_type": "code", "client_id": self._sessions.login.binding.audience,
                       "redirect_uri": self._sessions.login.binding.callback_uri,
@@ -175,9 +204,13 @@ class SessionWorkspaceApplication(WorkspaceApplication):
                 _cookie(_CSRF, session.csrf, expires=session.expires_at, now=now, readable=True)]
         if path == "/auth/logout" and method == "POST" and not query:
             self._body(environ, set())
+            self._existing_token(cookies)
             request = self._verify_request(environ)
-            self._sessions.login.logout(request.token, request.csrf)
-            return 200, {"logged_out": True}, [_cookie(_SESSION, None), _cookie(_CSRF, None, readable=True), _cookie(_BROWSER, None)]
+            try:
+                self._sessions.login.logout(request.token, request.csrf)
+            except AuthenticationError:
+                self._reject_or_clear_stale(request.token)
+            return 200, {"logged_out": True}, _clear_cookies()
         if path == "/auth/session" and method == "GET" and not query:
             request = self._verify_request(environ)
             result = self._sessions.transaction(request, lambda policy, actor: {"principal_id": actor})
@@ -194,6 +227,8 @@ class SessionWorkspaceApplication(WorkspaceApplication):
                 result = super()._dispatch(environ)
                 status = 200
             body = {"data": result}
+        except _StaleSession:
+            status, body, extra = 401, {"error": "authentication_required"}, _clear_cookies()
         except AuthenticationError:
             status, body = 401, {"error": "authentication_required"}
         except AuthenticationUnavailable:

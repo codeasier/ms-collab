@@ -14,5 +14,6 @@ OpenSSL creates a disposable local test key/certificate outside the repository.
 The disposable browser context ignores only that test certificate's trust errors;
 no OS/browser profile trust setting is modified. This is not live TLS/provider
 acceptance. It verifies Secure/HttpOnly/SameSite behavior, CSRF rejection, protected
-mutation, cookie deletion and post-logout denial. No browser screenshots contain
+mutation, revoked-cookie recovery through explicit re-login, cookie deletion
+and post-logout denial. No browser screenshots contain
 real users or data, and the fixture suppresses request logs.

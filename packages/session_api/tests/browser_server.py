@@ -48,6 +48,12 @@ def main():
                 body = b"<!doctype html><title>Synthetic session boundary test</title><p>Offline provider and temporary databases only.</p>"
                 start("200 OK", [("Content-Type", "text/html"),("Content-Length",str(len(body))), ("Cache-Control","no-store")])
                 return [body]
+            if env.get("PATH_INFO") == "/synthetic-revoke" and env.get("REQUEST_METHOD") == "POST":
+                # Explicit fixture-only external revocation to test stale cookies.
+                if env.get("HTTP_ORIGIN") != origin:
+                    start("403 Forbidden",[("Content-Length","0")]); return [b""]
+                login.revoke_subject("admin-sub")
+                start("200 OK",[("Content-Length","0"),("Cache-Control","no-store")]); return [b""]
             if env.get("PATH_INFO") == "/synthetic-provider":
                 params = parse_qs(env.get("QUERY_STRING", ""), strict_parsing=True)
                 if params.get("code_challenge_method") != ["S256"] or params.get("redirect_uri") != [binding.callback_uri]:

@@ -55,6 +55,12 @@ other module APIs, administration wrappers or existing browser UIs to cookies.
 - `POST /auth/logout`: exact Origin, JSON `{}` and valid session/CSRF pair; revokes
   that session and clears all three cookies. GET is not a logout operation.
 
+A strictly same-origin start/logout request carrying a revoked, expired or invalid
+old session receives 401 with clearing cookies; the user must explicitly retry
+start. A valid session with missing/wrong CSRF keeps its cookies, as do dependency
+failures (503) and cross-origin requests. This permits recovery without treating
+an unavailable session store as anonymous authentication.
+
 All routes require a trusted `wsgi.url_scheme=https` and exact configured Host.
 Forwarded headers never override them. Authorization headers are rejected, not
 mixed with cookie credentials. The fronting HTTP server must reject duplicate raw
@@ -64,8 +70,9 @@ headers that a proxy already collapsed.
 Protected mutations require the exact Origin plus `X-CSRF-Token`, the matching
 CSRF cookie and the server-stored hash bound to that session. SameSite alone is
 not treated as CSRF protection. Cross-site/same-site Fetch Metadata is rejected
-on protected routes, with a callback-specific navigation exception. Unknown,
-malformed, duplicate or oversized cookies fail closed. No CORS policy is enabled.
+on protected routes, with a callback-specific navigation exception. Unknown
+session tokens and malformed, duplicate or oversized cookies fail closed;
+unrelated, well-formed cookies are allowed. No CORS policy is enabled.
 
 ## Cookies and response controls
 

@@ -232,6 +232,56 @@ class SessionHTTPTests(unittest.TestCase):
         result = self.request(path="/auth/start",method="POST",origin=ORIGIN,body={},extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
         self.assertEqual(result["status"],401)
 
+    def test_revoked_cookie_cleared_before_explicit_new_login(self):
+        self.login.revoke_subject("admin-sub")
+        failed = self.request(path="/auth/start",method="POST",origin=ORIGIN,body={},
+            csrf=self.session.csrf.value,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+        self.assertEqual(failed["status"],401)
+        self.assertEqual(cookie_values(failed),{_SESSION:"",_CSRF:"",_BROWSER:""})
+        self.assertEqual(self.count("attempts"),0)
+        self.assertEqual(self.begin_http()["status"],200)
+
+    def test_expired_and_forged_old_cookies_recover_via_same_origin_logout(self):
+        self.clock.now=self.session.expires_at
+        failed=self.request(path="/auth/logout",method="POST",origin=ORIGIN,body={},csrf=self.session.csrf.value)
+        self.assertEqual(failed["status"],401)
+        self.assertEqual(cookie_values(failed),{_SESSION:"",_CSRF:"",_BROWSER:""})
+        for token in ("x"*43,"malformed"):
+            cookies=cookie_header({_SESSION:token,_CSRF:"y"*43})
+            failed=self.request(path="/auth/start",method="POST",origin=ORIGIN,body={},cookies=cookies,
+                csrf="y"*43,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+            self.assertEqual(failed["status"],401)
+            self.assertEqual(cookie_values(failed),{_SESSION:"",_CSRF:"",_BROWSER:""})
+        self.assertEqual(self.begin_http()["status"],200)
+
+    def test_valid_session_bad_csrf_does_not_clear_cookies(self):
+        for path in ("/auth/start","/auth/logout"):
+            for csrf,cookies in ((None,self.cookies),("x"*43,self.cookies),
+                ("x"*43,cookie_header({_SESSION:self.session.token.value,_CSRF:"x"*43}))):
+                failed=self.request(path=path,method="POST",origin=ORIGIN,body={},cookies=cookies,
+                    csrf=csrf,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+                self.assertEqual(failed["status"],401)
+                self.assertFalse(cookie_values(failed))
+        self.assertEqual(self.request()["status"],200)
+
+    def test_cross_origin_cannot_clear_revoked_or_malformed_cookies(self):
+        self.login.revoke_subject("admin-sub")
+        for path in ("/auth/start","/auth/logout"):
+            for cookies in (self.cookies,cookie_header({_SESSION:"bad",_CSRF:"x"*43})):
+                failed=self.request(path=path,method="POST",origin="https://evil.example.invalid",body={},
+                    cookies=cookies,csrf=self.session.csrf.value,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+                self.assertEqual(failed["status"],401)
+                self.assertFalse(cookie_values(failed))
+
+    def test_unavailable_session_is_not_cleared_as_anonymous(self):
+        for path in ("/auth/start","/auth/logout"):
+            with patch.object(self.login,"_now",side_effect=AuthenticationUnavailable):
+                failed=self.request(path=path,method="POST",origin=ORIGIN,body={},
+                    csrf=self.session.csrf.value,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+            self.assertEqual(failed["status"],503)
+            self.assertFalse(cookie_values(failed))
+        self.assertEqual(self.request()["status"],200)
+
     def test_callback_duplicate_unknown_bad_encoding_and_browser_denied(self):
         start = self.begin_http(); p = parse_qs(urlsplit(start["body"]["data"]["authorization_url"]).query)
         code = self.exchange.authorize(p["code_challenge"][0])
