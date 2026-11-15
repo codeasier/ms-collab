@@ -40,6 +40,8 @@ async function main(){
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
   const before=writes.length;await page.locator('#create-open').click();await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin');await page.locator('#create-cancel').click();assert.equal(writes.length,before)
   await page.locator('#invite-open').click();await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
+  // Membership success notice precedes the separately awaited module/invitation reads.
+  await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('outsider · developer · pending'))
   assert.match(await page.locator('#invitations').textContent(),/outsider · developer · pending/)
   await page.screenshot({path:path.join(folder,'manage.png'),fullPage:true})
   await page.locator('nav a[href="/responsibility/"]').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#session').hidden)
