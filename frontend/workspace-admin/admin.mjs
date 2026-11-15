@@ -3,7 +3,7 @@ const el = id => document.getElementById(id)
 const client = createClient()
 let generation = 0, controller, workspaces = [], selection, editing, saving = false
 function cancelRequests() { generation++; controller?.abort(); controller = new AbortController(); return generation }
-function closeEditor() { editing = undefined; el('editor').close(); el('edit-status').textContent = '' }
+function closeEditor() { editing = undefined; el('editor').close(); for (const id of ['editing','edit-status']) el(id).textContent = ''; for (const id of ['role','member-state']) el(id).selectedIndex = -1 }
 function clearPanel() { closeEditor(); el('panel').hidden = true; el('members').replaceChildren(); el('title').textContent = ''; el('state').textContent = '' }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
   cancelRequests(); client.clear(); clearPanel(); workspaces=[]; selection=undefined

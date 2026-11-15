@@ -40,6 +40,12 @@ async function main(){
   await page.screenshot({path:path.join(folder,'desktop.png'),fullPage:true})
   await page.setViewportSize({width:390,height:844});await page.locator('#workspace').selectOption('alpha');await page.waitForFunction(()=>document.querySelector('#title').textContent==='Product Alpha')
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
+  // Lifecycle cleanup clears even the closed editor's private display state.
+  await page.getByRole('button',{name:'Edit admin',exact:true}).click()
+  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
+  assert.deepEqual(await page.evaluate(()=>({editing:document.querySelector('#editing').textContent,role:document.querySelector('#role').value,state:document.querySelector('#member-state').value,members:document.querySelector('#members').textContent})),{editing:'',role:'',state:'',members:''})
+  assert.equal(await page.locator('#editor').isVisible(),false)
+  await page.locator('#credential').fill('synthetic-admin');await page.locator('#connect button').click();await page.locator('#panel:not([hidden])').waitFor()
   await page.route('**/api/workspaces/alpha/members',route=>route.fulfill({status:401,contentType:'application/json',body:'{"error":"authentication_required"}'}))
   await page.locator('#reload').click();await page.waitForFunction(()=>!document.querySelector('#connect').hidden);assert.equal(await page.locator('#members').textContent(),'')
   await page.unroute('**/api/workspaces/alpha/members');await page.locator('#credential').fill('synthetic-reader');await page.locator('#connect button').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('administrator permission'))
