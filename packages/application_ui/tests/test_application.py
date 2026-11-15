@@ -49,7 +49,10 @@ class UITests(unittest.TestCase):
             with self.assertRaises(ValueError):ApplicationUI(host=value)
     def test_all_static_assets_are_bounded_public_content_with_csp(self):
         for path in _FILES:
-            response=self.read(path,cookies='');self.assertEqual(response['status'],200,path)
+            response=self.read(path,cookies='')
+            if path=='/artifact-admin/':
+                self.assertEqual(response['status'],404);continue
+            self.assertEqual(response['status'],200,path)
             headers=dict(response['headers']);self.assertEqual(headers['Cache-Control'],'no-store')
             self.assertEqual(headers['X-Content-Type-Options'],'nosniff');self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
             self.assertIn("script-src 'self'",headers['Content-Security-Policy']);self.assertNotIn("'unsafe-inline'",headers['Content-Security-Policy'])
@@ -86,7 +89,7 @@ class UITests(unittest.TestCase):
         self.assertEqual(self.read('/',method='HEAD',extra=navigation)['status'],401)
     def test_bootstrap_has_only_fixed_non_authorizing_configuration(self):
         data=self.read('/app/bootstrap',cookies='')['body']['data']
-        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
+        self.assertEqual(data,{'service':'ms-collab','ui_modules':['workspaces','responsibility','pipelines','artifacts'],'login_configured':True,'authorization_endpoint':fixtures.ISSUER+'/authorize'})
         self.assertNotIn('principal_id',data)
     def test_disabled_modules_and_provider_stay_fail_closed(self):
         with tempfile.TemporaryDirectory() as d:

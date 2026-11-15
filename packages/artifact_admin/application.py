@@ -18,10 +18,12 @@ _CONFIRM = 'approve_complete_candidate_to_reviewed_readers'
 
 class ArtifactAdministrationAPI(WorkspaceApplication):
     """Trusted factory only; reuse the SAME verifier, store and sync dependencies."""
-    def __init__(self, *, service):
+    def __init__(self, *, service, allow_refresh=True):
         if type(service) is not ArtifactSynchronizer:
             raise ValueError('configured artifact synchronizer required')
-        self._service = service
+        if type(allow_refresh) is not bool:
+            raise ValueError('explicit refresh availability required')
+        self._service, self._allow_refresh = service, allow_refresh
 
     def _dispatch(self, environ):
         assertion = self._service._verify_request(environ)
@@ -41,6 +43,7 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
                 # Approval UI requires preview permission even if write-only host
                 # module configuration would allow the trusted service operation.
                 grants['approve'] = grants['approve'] and grants['review']
+                grants['refresh'] = grants['refresh'] and self._allow_refresh
                 if not any(grants.values()):
                     raise PolicyError(404, 'not_found')
                 return {'scope': scope.as_dict(), 'revision': current.revision,
@@ -58,6 +61,12 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
         if action == 'refresh':
             if body != {}:
                 raise PolicyError(400, 'invalid_request')
+            if not self._allow_refresh:
+                def unavailable(policy, actor, connection):
+                    record = authorized(policy, actor, connection, scope, 'refresh')
+                    policy._match(expected, record.revision)
+                    raise PolicyError(503, 'provider_unavailable')
+                return self._service._authenticated_transaction(assertion, unavailable, with_connection=True)
             try:
                 result = self._service._refresh_verified(assertion, scope, expected_revision=expected)
             except ProviderError:

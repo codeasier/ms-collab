@@ -46,6 +46,13 @@ export function createClient({fetcher=fetch}={}) {
   return {
     connect(value){if(typeof value!=='string'||!value||value.length>8192||/\s/.test(value))throw new Error('Enter a valid opaque credential.');credential=value},
     clear(){credential=''},
+    ...createCatalogOperations(request)
+  }
+}
+
+export function createCatalogOperations(request){
+ if(typeof request!=='function')throw new Error('Explicit request transport required.')
+ return {
     async quarters(scope,signal){return validateQuarters(await request(base(scope)+'/quarters',{signal}),scope)},
     async query({scope,selected,definition,page=1,pageSize=10,view=''},signal){
       if(!text(selected,6)||!quarter.test(selected)||!integer(page,1)||page>1000000||![10,20,50].includes(pageSize)||typeof view!=='string'||(view&&!validId(view)))throw new Error('Invalid query.')
@@ -57,5 +64,5 @@ export function createClient({fetcher=fetch}={}) {
       }
       return validateResult(result,{scope,selected,page,pageSize,view})
     }
-  }
+ }
 }

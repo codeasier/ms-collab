@@ -69,9 +69,14 @@ rights.
 The host never forwards to the local demo or generic raw resource API. In
 particular `/modules/*/resources/*` is not mounted: it must not become a shortcut
 around a module's finer publication and ownership fences. Unknown/disabled routes
-return 404. Legacy module browser wrappers, artifact administration/download,
+return 404. Legacy module browser wrappers and artifact download,
 asset synchronization, responsibility evidence ingestion and pipeline collection
-are **not mounted**. Community refresh has no credential loader and returns 503;
+are **not mounted**. `HostConfig.artifact_administration=True` optionally mounts
+existing artifact status/review/approve routes, requiring the artifacts module.
+It uses the same session transaction boundary and explicitly disables refresh:
+the host has no external artifact credential loader. Current complete candidate,
+reader set, permission and revision are rechecked on approval; configuration is
+not a grant. Community refresh has no credential loader and returns 503;
 its capability reports false. There is no external acquisition or background
 worker configuration in this increment.
 
@@ -116,5 +121,5 @@ available for their original explicitly configured hosts, not on this host.
 ## Optional product entry
 
 [ApplicationUI](../application_ui/README.md) can wrap this configured host with
-workspace and responsibility pages. It does not enable a provider, change the
+workspace, responsibility and explicitly configured artifact pages. It does not enable a provider, change the
 session authority or mount a legacy bearer wrapper.

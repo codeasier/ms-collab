@@ -6,6 +6,7 @@ from packages.artifacts_api import ArtifactApplication
 
 _ROOT = Path(__file__).resolve().parents[2] / "frontend" / "artifacts"
 _FILES = {"/artifacts/": ("index.html", "text/html"),
+          "/artifacts/entry.mjs": ("entry.mjs", "text/javascript"),
           "/artifacts/browser.mjs": ("browser.mjs", "text/javascript"),
           "/artifacts/client.mjs": ("client.mjs", "text/javascript"),
           "/artifacts/style.css": ("style.css", "text/css")}

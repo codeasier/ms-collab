@@ -1,0 +1,13 @@
+/* Scoped product-entry theme. Standalone artifact pages keep their own theme. */
+body[data-page="artifacts"],body[data-page="artifact-admin"]{color-scheme:light;background:#f3f6f8;color:#173044;--bg:#f3f6f8;--panel:#fff;--edge:#b9cbd8;--text:#173044;--muted:#526a7c;--accent:#285b75}
+body[data-page="artifacts"] main,body[data-page="artifact-admin"] main{max-width:1320px}
+body[data-page="artifacts"] .notice,body[data-page="artifact-admin"] .notice{background:#fff9eb;color:#173044;border-color:#d9c49c}
+body[data-page="artifacts"] input,body[data-page="artifacts"] select,body[data-page="artifact-admin"] input:not([type=checkbox]){background:#fff;color:#173044;border-color:#9eb4c4}
+body[data-page="artifacts"] button,body[data-page="artifact-admin"] button{background:#205d74;color:#fff;border-color:#205d74}
+body[data-page="artifacts"] .secondary,body[data-page="artifact-admin"] .secondary,body[data-page="artifacts"] .folder{background:#fff;color:#21485c;border-color:#adc4d1}
+body[data-page="artifact-admin"] section,body[data-page="artifact-admin"] dialog{background:#fff;color:#173044;border-color:#adc4d1}
+body[data-page="artifact-admin"] .intro,body[data-page="artifact-admin"] .hint,body[data-page="artifact-admin"] .row-detail,body[data-page="artifact-admin"] footer{color:#526a7c}
+body[data-page="artifact-admin"] .eyebrow,body[data-page="artifact-admin"] .digest{color:#285b75}
+body[data-page="artifacts"] .type{color:#285b75;background:#edf4f8;border-color:#9eb4c4}
+body[data-page="artifacts"] :focus-visible,body[data-page="artifact-admin"] :focus-visible{outline-color:#327993}
+body[data-page="artifact-admin"] .rows,body[data-page="artifact-admin"] .rows li,body[data-page="artifact-admin"] .readers li{border-color:#9eb4c4}

@@ -2,7 +2,7 @@
 
 `ApplicationUI(host=...)` wraps the exact, explicitly configured
 [ApplicationHost](../application_host/README.md). It adds an overview, workspace
-administration, responsibility and pipeline pages using one current server session. It is
+administration, responsibility, pipeline and configured artifact pages using one current server session. It is
 not a listener, deployment bootstrap or real-provider enablement switch.
 
 ```python
@@ -27,6 +27,13 @@ rechecked. A synthetic fixture is never imported by the production factory.
 - `/pipelines/` reuses the scoped run/detail/duration controller through the
   cookie-only read client, only when `pipelines` is configured. No bearer input,
   session-to-token conversion, upstream refresh, logs or execution is added.
+- `/artifacts/` reuses the catalog controller against **published index** quarters,
+  query and named views. No unapproved candidate or raw resource fallback is used.
+- `/artifact-admin/` exists only with `HostConfig.artifact_administration=True`.
+  It reviews and approves an existing staged candidate, including every metadata
+  row and current reader, with independent digest verification and explicit CAS
+  confirmation. Refresh is unavailable: this host has no provider credential
+  loader. An unconfigured refresh request fails closed. Downloads remain unmounted.
 - `/app/bootstrap` is fixed public process configuration: available UI modules
   and the configured authorization endpoint. It is **not** user/module discovery
   or a grant. No principal, workspace, credential or provider secret is returned.
@@ -79,7 +86,7 @@ legacy bearer wrapper.
 - [Tests](tests/README.md): static boundary, fail-closed provider, current cookie
   permissions, CSRF, CAS, logout/expiry/revocation and real HTTPS browser flows.
 - Existing standalone UI wrappers remain compatible through explicit legacy entry
-  scripts. All old browser workflows remain required, alongside the new one.
+  scripts. Legacy module browser workflows remain required, alongside the session workflows.
 - [Workflow](../../.github/workflows/application-ui.yml): locked Chromium and only
   synthetic screenshots. A test-context self-signed certificate exception never
   changes the OS trust store. No live provider/production result is claimed.
@@ -94,3 +101,9 @@ request or rendering after logout/recheck/Back. A new view requires explicit
 scope submission; no cached connection discovery or upstream acquisition occurs.
 The separate [cookie pipeline workflow](../../.github/workflows/pipeline-cookie-ui.yml)
 exercises synthetic HTTPS and writes only three synthetic screenshots.
+- [Artifact session workflow](../../.github/workflows/artifact-session-ui.yml):
+  actual HTTPS catalog/approval pages with synthetic index and provider. It checks
+  cross-space/session revocation, CSRF, whole-set approval/CAS, Cancel/Escape,
+  double submission, ineffective abort and late writes, pagehide/restoration,
+  computed text contrast and five desktop/mobile screenshots. These are not live
+  OBS, real identity-provider, deployment or download acceptance evidence.

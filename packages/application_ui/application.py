@@ -14,6 +14,10 @@ _FILES = {
     '/': ('application/index.html', 'text/html'),
     '/manage/': ('application/manage.html', 'text/html'),
     '/responsibility/': ('application/responsibility.html', 'text/html'),
+    '/artifacts/': ('application/artifacts.html', 'text/html'),
+    '/artifact-admin/': ('application/artifact-admin.html', 'text/html'),
+    '/app/artifacts-session.mjs': ('application/artifacts-session.mjs', 'text/javascript'),
+    '/app/artifacts.css': ('application/artifacts.css', 'text/css'),
     '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),
     '/app/client.mjs': ('application/client.mjs', 'text/javascript'),
     '/app/style.css': ('application/style.css', 'text/css'),
@@ -23,6 +27,12 @@ _FILES = {
     '/responsibility/browser.mjs': ('responsibility/browser.mjs', 'text/javascript'),
     '/responsibility/client.mjs': ('responsibility/client.mjs', 'text/javascript'),
     '/responsibility/style.css': ('responsibility/style.css', 'text/css'),
+    '/artifacts/browser.mjs': ('artifacts/browser.mjs', 'text/javascript'),
+    '/artifacts/client.mjs': ('artifacts/client.mjs', 'text/javascript'),
+    '/artifacts/style.css': ('artifacts/style.css', 'text/css'),
+    '/artifact-admin/browser.mjs': ('artifact-admin/browser.mjs', 'text/javascript'),
+    '/artifact-admin/client.mjs': ('artifact-admin/client.mjs', 'text/javascript'),
+    '/artifact-admin/style.css': ('artifact-admin/style.css', 'text/css'),
 }
 
 
@@ -55,7 +65,7 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (path in {'/', '/manage/', '/responsibility/', '/pipelines/'}
+            navigation = (path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/artifacts/', '/artifact-admin/'}
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -68,12 +78,15 @@ class ApplicationUI:
             return respond('404 Not Found', b'not_found')
         enabled = 'responsibility' in self._host._config.modules
         pipelines = 'pipelines' in self._host._config.modules
+        artifact_pages = (['artifacts'] if 'artifacts' in self._host._config.modules else []) + (['artifact-admin'] if self._host._config.artifact_administration else [])
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + (['responsibility'] if enabled else []) + (['pipelines'] if pipelines else []),
+                'ui_modules': ['workspaces'] + (['responsibility'] if enabled else []) + (['pipelines'] if pipelines else []) + artifact_pages,
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
+        if path in {'/artifacts/', '/artifact-admin/'} and path.strip('/') not in artifact_pages:
+            return respond('404 Not Found', b'not_found')
         if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines):
             return respond('404 Not Found', b'not_found')
         filename, media = _FILES[path]

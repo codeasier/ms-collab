@@ -43,7 +43,7 @@
 - [Configured unified service host](../packages/application_host/README.md)：同一Cookie/session与策略事务下的七类模块和工作空间/邀请API；真实GitCode仍fail-closed，不挂载同步、下载、旧Bearer UI或生产入口。
 - [Content-bound artifact download API](../packages/artifact_download/README.md)：独立字节授权、固定 OBS GET、完整 hash 校验后限时输出与逐块撤权；仅合成 provider/HTTP 验证，无前端下载入口或真实云验收。
 
-- [Unified cookie-only frontend](../packages/application_ui/README.md): workspace and responsibility pages on one current session; real provider remains fail-closed.
+- [Unified cookie-only frontend](../packages/application_ui/README.md): workspace, responsibility and configured artifact catalog/whole-candidate approval pages on one current session; artifact refresh/download are unmounted and real provider remains unverified.
 - [GUI smoke session UI](../packages/gui_smoke_ui/README.md)：统一 HTTPS Cookie/session 下的已发布任务、状态摘要与详情；无 Token 输入、外部面板、执行或下载，真实登录仍 fail-closed。
 
 - [Cookie-only pipeline entry](../packages/application_ui/README.md#pipeline-lifecycle)：同一 session 下读取准确作用域的运行、详情和耗时；取消/版本一致性，不含日志、执行或上游刷新。

@@ -4,6 +4,12 @@
   session gating, stale replies, pinned login navigation and responsibility CAS.
 - `shell.test.mjs`: actual shell/client state-machine regressions for delayed
   bootstrap, explicit setup retry and Sign out during pending module activation.
+- `artifacts.test.mjs`: shared session catalog/approval adapters, exact scope,
+  current CSRF/CAS, no bearer, malformed calls and stale replies after clear.
+- `artifacts.cjs`: actual HTTPS catalog and complete-candidate approval, conflict,
+  Cancel/Escape/double submit, delayed accepted write after pagehide/recheck,
+  ineffective abort, delayed review across explicit logout, workspace/session revoke and computed contrast. Five images
+  are uploaded by the [artifact session workflow](../../../.github/workflows/artifact-session-ui.yml).
 - `browser.cjs`: actual product pages over temporary HTTPS, synthetic provider and
   SQLite policy, explicit sign-in/out, management/invitation writes, responsibility
   save/conflict, no bearer, XSS text, cross-space/session revocation, interrupted
