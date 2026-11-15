@@ -36,3 +36,5 @@
 - [Artifact refresh and approval administration](../packages/artifact_admin/README.md)：显式管理员能力、私有刷新、完整候选摘要校验与精确读者审批；并发冲突须重新检视，不含下载。
 
 - [Owner-scoped assistant saved history](../packages/assistant_history/README.md)：当前身份与权限隔离的只读事件、固定版本分页和可逆归档；不含 ACP 执行、真实网络或会话恢复。
+
+- [Configured unified service host](../packages/application_host/README.md)：同一Cookie/session与策略事务下的六类模块和工作空间/邀请API；真实GitCode仍fail-closed，不挂载同步、下载、旧Bearer UI或生产入口。
