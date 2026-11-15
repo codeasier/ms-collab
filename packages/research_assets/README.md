@@ -99,13 +99,17 @@ implementation in this increment. A real provider needs its own reviewed
 credential/destination binding, traversal/SSRF/budget controls and evidence of
 protocol compatibility.
 
-1. Verify the user assertion and current binding/permissions/revision.
-2. Before each source preparation, repeat current authorization and the baseline
-   check; detach/validate/bound its result before preparing another source.
+1. Verify the user assertion and current binding/permissions/revision. Capture
+   an in-flight fence of policy realm, actor ID, issuer, subject, generation,
+   workspace and membership revisions, and both research module revisions.
+2. Before **and immediately after** each source preparation, repeat current
+   authorization and match that exact admission fence and catalog baseline.
+   Only then detach/validate/bound its result before preparing another source.
 3. Reject unexpected/duplicate sources, out-of-scope data, disallowed types or
    entities, future/malformed observations, oversized data or business conflicts.
-4. In one write transaction, re-resolve the same actor, authorize again and CAS
-   the catalog revision/configuration. Replace **all** source projections and
+4. In one write transaction, after acquiring the writer reservation, re-resolve
+   current authority, match the same fence again and CAS the catalog
+   revision/configuration. Replace **all** source projections and
    advance catalog revision together with the existing policy audit.
 5. An older observation, a changed source at the same observation time, or changed
    content claiming the same immutable source revision is rejected. Exact replay
@@ -117,7 +121,19 @@ commit guard rolls back everything. There is no database lock held while calling
 the provider. A preparation already past its local authorization check may still
 start/complete if access is subsequently revoked; the next source check and final
 publication revalidate. Revocation cannot atomically retract external work or
-already returned bytes. Providers must enforce their own per-request limits.
+already returned bytes. A subject/issuer ABA or disable/reenable cannot restore
+an older generation's flow. Membership, workspace or either module revocation
+and restoration also invalidate the old flow by revision. Unrelated principals
+and other workspaces do not invalidate a flow merely by changing global epoch.
+No captured fence is returned as a credential or stored as a future grant.
+
+The unchanged `prepare(scope, source)` interface is one trusted acquisition
+boundary. This package cannot inspect or authorize each internal network/page
+request hidden inside a provider's implementation. Real adapters must define
+and review their own per-request authority, destination and budget controls;
+this change does not certify such an adapter. Identity mutation remains hard
+closed, and test-only transitions never become a production directory workflow.
+Restoring a prior database snapshot is not defeated by a local generation fence.
 
 Bounds: 16 required sources, 32 entities, 1,000 total assets, 32 KiB normalized
 input document, 8,192 characters per section and 2 MiB aggregate projected content. All
@@ -132,7 +148,11 @@ python3 -m unittest discover -s packages/research_assets/tests -v
 
 Tests cover stable IDs, type-specific safe projections, all-source failure,
 source movement, current authorization, scope isolation, stale revisions,
-concurrency, revocation/expiry and audit rollback. No live provider, real data,
+concurrency, revocation/expiry and audit rollback. In-flight tests include
+realm replacement, identity/permission ABA, pre-source and post-source checks,
+and a final writer waiting behind a real SQLite transaction before seeing the
+new generation. Retained catalog rows and publication audit remain unchanged
+on every denied flow. No live provider, real data,
 legacy database upgrade, browser interaction, production deployment or source
 execution was tested or enabled. The separate [cookie-only UI](../../frontend/research-assets/README.md) adds
 synthetic HTTPS/browser acceptance. Actual read-only source adapters, legacy
