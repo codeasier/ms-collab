@@ -62,9 +62,11 @@ function renderControls(spaces) {
 }
 async function loadModules(space, current) {
   if (!managementAvailable) return
+  const signal = controller.signal
   try {
-    const modules = validateModules(await client.request(moduleURL(space.id), {signal:controller.signal}), space.id)
-    const catalog = space.state === 'active' ? validateCatalog(await client.request(`/api/workspaces/${encodeURIComponent(space.id)}/module-catalog`, {signal:controller.signal})) : []
+    const modules = validateModules(await client.request(moduleURL(space.id), {signal}), space.id)
+    if (current !== generation) return
+    const catalog = space.state === 'active' ? validateCatalog(await client.request(`/api/workspaces/${encodeURIComponent(space.id)}/module-catalog`, {signal})) : []
     if (current !== generation) return
     for (const module of modules) {
       const row = document.createElement('li'), label = document.createElement('span')
@@ -119,21 +121,23 @@ async function loadMembers(id, notice='') {
 }
 async function reload(notice='') {
   const current = cancelRequests(); clearPanel(); el('workspace').disabled = true
+  const signal = controller.signal
   el('operator-panel').hidden = true; el('control-spaces').replaceChildren(); managementAvailable = false
   el('status').textContent = 'Loading workspaces…'
   try {
     try {
-      const capabilities = await client.request('/api/control/capabilities', {signal:controller.signal})
+      const capabilities = await client.request('/api/control/capabilities', {signal})
       if (!capabilities || typeof capabilities.manage_workspaces !== 'boolean') throw new Error('Invalid service response')
       if (current !== generation) return
       managementAvailable = true
       if (capabilities.manage_workspaces) {
-        const controls = validateWorkspaces(await client.request('/api/control/workspaces', {signal:controller.signal}))
+        const controls = validateWorkspaces(await client.request('/api/control/workspaces', {signal}))
         if (current !== generation) return
         renderControls(controls)
       }
     } catch (error) { if (error.status !== 404) throw error }
-    const result = validateWorkspaces(await client.request('/api/workspaces', {signal:controller.signal}))
+    if (current !== generation) return
+    const result = validateWorkspaces(await client.request('/api/workspaces', {signal}))
     if (current !== generation) return
     workspaces = result; el('workspace').replaceChildren()
     for (const space of result) { const option = document.createElement('option'); option.value = space.id; option.textContent = space.name; el('workspace').append(option) }

@@ -8,6 +8,13 @@ async function main(){
  try{
   const origin=await within(new Promise((resolve,reject)=>{let s='';child.stdout.on('data',c=>{s+=c;const m=s.match(/http:\/\/127\.0\.0\.1:\d+/);if(m)resolve(m[0])});child.once('exit',()=>reject(new Error('server stopped')))}))
   browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000}})
+  // Disable transport cancellation: generation guards must stand on their own.
+  await context.addInitScript(()=>{
+    AbortController.prototype.abort=function(){}
+    const original=window.fetch.bind(window)
+    window.acceptanceRequests=[];window.acceptanceCompleted=[]
+    window.fetch=async(...args)=>{window.acceptanceRequests.push(String(args[0]));const response=await original(...args);window.acceptanceCompleted.push(String(args[0]));return response}
+  })
   const external=[], errors=[], mutations=[], writes=[]
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();external.push(route.request().url());return route.abort()})
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='PATCH')mutations.push(r.url());if(['PATCH','POST'].includes(r.method()))writes.push({method:r.method(),url:r.url(),key:r.headers()['idempotency-key']});assert.ok(!r.url().includes('synthetic-admin'))})
@@ -96,6 +103,20 @@ async function main(){
   await page.route(modulesPattern,async route=>{const response=await route.fetch();const value=await response.json();value.data[0].workspace_id='alpha';await route.fulfill({response,json:value})})
   await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#module-status').textContent.includes('valid module state'));assert.equal(await page.locator('#modules').textContent(),'')
   await page.unroute(modulesPattern);await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#modules').textContent.includes('artifacts · enabled'))
+  // A late first-stage module read must not issue a second-stage catalog read
+  // for the old workspace after selection changes, even when abort does nothing.
+  let moduleSeen,moduleRelease,moduleDone
+  const moduleStarted=new Promise(r=>moduleSeen=r),moduleGate=new Promise(r=>moduleRelease=r),moduleHandled=new Promise(r=>moduleDone=r)
+  const oldModulePath=`/api/workspaces/${team.id}/modules`,oldCatalogPath=`/api/workspaces/${team.id}/module-catalog`
+  const catalogBefore=await page.evaluate(path=>window.acceptanceRequests.filter(p=>p===path).length,oldCatalogPath)
+  const completedBefore=await page.evaluate(path=>window.acceptanceCompleted.filter(p=>p===path).length,oldModulePath)
+  await page.route(modulesPattern,async route=>{moduleSeen();await moduleGate;await route.continue();moduleDone()})
+  await page.locator('#reload').click();await within(moduleStarted);await page.locator('#workspace').selectOption('alpha');moduleRelease();await within(moduleHandled)
+  await page.waitForFunction(()=>document.querySelector('#title').textContent==='Product Alpha')
+  await page.waitForFunction(({path,count})=>window.acceptanceCompleted.filter(p=>p===path).length>count,{path:oldModulePath,count:completedBefore})
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  assert.equal(await page.evaluate(path=>window.acceptanceRequests.filter(p=>p===path).length,oldCatalogPath),catalogBefore)
+  await page.unroute(modulesPattern);await page.locator('#workspace').selectOption(team.id);await page.waitForFunction(()=>document.querySelector('#modules').textContent.includes('artifacts · enabled'))
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
   await page.locator('#disconnect').click();await page.locator('#credential').fill('synthetic-operator');await page.locator('#connect button').click();await page.locator('#operator-panel:not([hidden])').waitFor()
   await page.getByRole('button',{name:'Archive Retry Team',exact:true}).click();assert.match(await page.locator('#action-description').textContent(),/irreversible/);await page.locator('#action-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('lifecycle updated'))
