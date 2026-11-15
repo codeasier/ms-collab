@@ -52,7 +52,11 @@ jobs:
           python3 -m unittest discover -s packages/workspace_invitations/tests -v
           node --test frontend/workspace-admin/tests/*.test.mjs
           node frontend/workspace-admin/tests/browser.cjs
-          node frontend/workspace-admin/tests/invitations.cjs
+          # Three independent runs are a lifecycle regression gate, not retries.
+          # Any failure stops the job immediately; screenshots remain synthetic.
+          for attempt in 1 2 3; do
+            node frontend/workspace-admin/tests/invitations.cjs
+          done
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
