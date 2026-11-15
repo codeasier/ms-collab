@@ -57,3 +57,5 @@
 - [Pipeline stage/task observations and log boundary](../packages/pipeline_api/LOG_BOUNDARY.md)：固定版本的阶段计数与任务分页，重复ID不等于执行身份；原始日志因隐私契约未建立仍关闭。
 
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.
+
+- [Workspace connection self-service](../packages/workspace_connections/README.md)：平台固定绑定及能力上限内的社区授权自维护、同事务清快照/审批和当前作用域发现；不创建连接、读取凭据或启用真实 provider。

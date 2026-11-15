@@ -29,7 +29,7 @@ class GuiEntryTests(unittest.TestCase):
             self.assertEqual(self.read(path,extra={'HTTP_SEC_FETCH_SITE':'cross-site','HTTP_SEC_FETCH_MODE':'navigate','HTTP_SEC_FETCH_DEST':'document'})['status'],401)
     def test_every_supported_module_has_exact_entry_and_identical_navigation(self):
         root=Path(__file__).resolve().parents[3]/'frontend'
-        expected={'/','/manage/','/artifact-admin/'}|{'/'+name+'/' for name in _MODULES}
+        expected={'/','/manage/','/artifact-admin/','/connections/'}|{'/'+name+'/' for name in _MODULES}
         self.assertEqual({path for path,(_,media) in _FILES.items() if media=='text/html'},expected)
         navigation=None
         for path,(filename,media) in _FILES.items():

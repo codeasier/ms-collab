@@ -44,3 +44,8 @@ Return to [frontend](../README.md).
   HTTPS navigation, pagination/CAS, empty/unpublished distinction, literal markup,
   scope/filter clear, ineffective abort, logout, pagehide and current revocation.
   Four screenshots are uploaded by [GUI entry CI](../../../.github/workflows/gui-entry.yml).
+
+- `connections.test.mjs`, `connections.cjs`: mounted grant edits/confirmation,
+  current readable scope picker, strict responses, conflict, ignored-abort and
+  lifecycle cleanup. [Connection CI](../../../.github/workflows/workspace-connections.yml)
+  runs the real synthetic HTTPS flow and uploads four responsive screenshots.

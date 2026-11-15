@@ -15,6 +15,8 @@ from packages.session_api import SessionPolicyStore, SessionWorkspaceApplication
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_admin_api import ModuleTemplate, WorkspaceAdministrationApplication
 from packages.workspace_invitations import WorkspaceInvitationApplication
+from packages.workspace_connections import CommunityConnectionTemplate, WorkspaceConnectionsApplication
+from packages.workspace_connections.records import templates as connection_templates
 from packages.workspaces import PolicyError
 
 _MODULES = frozenset({"community", "pipelines", "artifacts", "research-assets", "responsibility", "assistant", "gui-smoke"})
@@ -29,6 +31,7 @@ class HostConfig:
     gui_smoke_connections: tuple[SmokeConnection, ...] = ()
     artifact_administration: bool = False
     artifact_downloads: bool = False
+    community_connections: tuple[CommunityConnectionTemplate, ...] = ()
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
@@ -46,6 +49,9 @@ class HostConfig:
             raise ValueError("artifact administration requires its explicit hosted module")
         if type(self.artifact_downloads) is not bool or (self.artifact_downloads and "artifacts" not in self.modules):
             raise ValueError("artifact downloads require the explicit hosted module")
+        connection_templates(self.community_connections)
+        if self.community_connections and "community" not in self.modules:
+            raise ValueError("connection management requires its explicit community module")
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -71,6 +77,7 @@ class ApplicationHost:
             authorization_scopes=authorization_scopes)
         authority = WorkspaceApplication(session_boundary=self._boundary)
         administration = WorkspaceAdministrationApplication(api=authority, module_catalog=config.module_catalog)
+        self._connections = WorkspaceConnectionsApplication(api=authority, connections=config.community_connections) if config.community_connections else None
         self._workspaces = WorkspaceInvitationApplication(api=administration, clock=clock)
         constructors = {"community": CommunityApplication, "pipelines": PipelineApplication,
                         "artifacts": IndexedArtifactApplication, "research-assets": AssetApplication,
@@ -121,6 +128,10 @@ class ApplicationHost:
         if parts[:3] in (["", "api", "control"], ["", "api", "invitations"]):
             return self._workspaces._dispatch(environ)
         if parts[:3] == ["", "api", "workspaces"]:
+            if len(parts) >= 5 and parts[4] == "connections":
+                if self._connections is None:
+                    raise PolicyError(404, "not_found")
+                return self._connections._dispatch(environ)
             if len(parts) >= 5 and parts[4] == "artifact-admin":
                 if self._artifact_admin is None:
                     raise PolicyError(404, "not_found")

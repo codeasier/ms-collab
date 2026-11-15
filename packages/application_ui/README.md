@@ -191,3 +191,14 @@ Scope/filter edits, clear, pagehide, logout and 401 discard the private display.
 No second sign-in, bearer adapter, provider request or execution control is added.
 See the [capability map](../../docs/unified-entry.md) for all supported pages and
 explicit remaining limits, and the [GUI contract](../../frontend/gui-smoke/README.md).
+
+## Community connection self-service
+
+An explicitly configured `HostConfig.community_connections` tuple enables
+`/connections/` and the community scope picker. This uses the same cookie-only
+session, not another identity flow. Current workspace admins additionally need a
+platform manager delegation; grant edits are bounded by approved principals and
+clear old observations/approvals atomically. Ordinary discovery only returns
+current readable, registered scopes. No credential or endpoint form exists.
+See the [connection contract](../workspace_connections/README.md) for deployment
+pins, revision handling, invalidation and deliberately unimplemented providers.

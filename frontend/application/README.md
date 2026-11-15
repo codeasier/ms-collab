@@ -37,3 +37,7 @@ The `/community/` page mounts the reviewed community board with `createCommunity
   reused; authentication remains exclusively in the common shell.
 - [Capability/navigation audit](../../docs/unified-entry.md): identical fixed
   navigation is checked against every supported host module.
+
+- `connections.html`, `connections.mjs`, `connections.css`: opt-in current-session
+  community policy management and authorized scope picker. The form cannot create
+  connections or credentials, and grant changes invalidate old shared content.

@@ -67,3 +67,17 @@ See [configured entry](../packages/application_ui/README.md),
 [host boundary](../packages/application_host/README.md),
 [GUI presentation](../frontend/gui-smoke/README.md), and
 [documentation index](README.md).
+
+## Connection self-service
+
+With an explicitly installed community template tuple, the unified navigation
+adds **Connections**. Current workspace admins with an explicit platform manager
+delegation can replace reader/refresher/approver sets only within approved bounds.
+Any actual change clears the old snapshot and all approvals in the same audited
+transaction. Current readable-scope discovery also feeds the existing community
+form, without placing private scopes in page URLs or browser storage.
+
+This is one community vertical slice, not generic provider provisioning. No
+credentials, URLs or secret references are accepted or returned. Artifact and
+pipeline configuration remains separate, and no real provider is enabled by this
+page. See [the contract](../packages/workspace_connections/README.md).

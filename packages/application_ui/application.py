@@ -7,6 +7,9 @@ from packages.identity import AuthenticationError
 
 _ROOT = Path(__file__).resolve().parents[2] / 'frontend'
 _FILES = {
+    '/connections/': ('application/connections.html', 'text/html'),
+    '/app/connections.mjs': ('application/connections.mjs', 'text/javascript'),
+    '/app/connections.css': ('application/connections.css', 'text/css'),
     '/gui-smoke/': ('application/gui-smoke.html', 'text/html'),
     '/gui-smoke/view.mjs': ('gui-smoke/view.mjs', 'text/javascript'),
     '/gui-smoke/client.mjs': ('gui-smoke/client.mjs', 'text/javascript'),
@@ -85,7 +88,7 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/', '/research-assets/', '/gui-smoke/'}
+            navigation = (type(path) is str and path in {'/', '/manage/', '/connections/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/', '/research-assets/', '/gui-smoke/'}
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -102,9 +105,11 @@ class ApplicationUI:
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant', 'research-assets', 'gui-smoke') if name in self._host._config.modules] + artifact_pages + (['artifact-downloads'] if self._host._config.artifact_downloads else []),
+                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant', 'research-assets', 'gui-smoke') if name in self._host._config.modules] + artifact_pages + (['connections'] if self._host._config.community_connections else []) + (['artifact-downloads'] if self._host._config.artifact_downloads else []),
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
+        if path == '/connections/' and not self._host._config.community_connections:
+            return respond('404 Not Found', b'not_found')
         if type(path) is str and path in {'/artifacts/', '/artifact-admin/'} and path.strip('/') not in artifact_pages:
             return respond('404 Not Found', b'not_found')
         if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/assistant/' and 'assistant' not in self._host._config.modules) or (path == '/community/' and 'community' not in self._host._config.modules) or (path == '/research-assets/' and 'research-assets' not in self._host._config.modules) or (path == '/gui-smoke/' and 'gui-smoke' not in self._host._config.modules):

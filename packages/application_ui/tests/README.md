@@ -30,3 +30,7 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
 - `test_gui_smoke.py`, `gui_browser_server.py`: supported-module/navigation
   parity, GUI static boundary, current cookie authority and opt-in synthetic HTTPS
   fixture. The fixture is not imported by production code.
+
+- `test_connections.py`, `connections_browser_server.py`: opt-in community policy
+  management, real cookie/CSRF denial, exact static routing and synthetic HTTPS.
+  The provider, identities, policy and observations remain test fixtures only.
