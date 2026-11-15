@@ -32,7 +32,7 @@ class PreflightTests(unittest.TestCase):
         self.store = SQLiteWorkspaceService.initialize(self.path,
             principals=tuple(Principal(p, ISSUER, p) for p in ('alice', 'bob', 'admin', 'operator')),
             workspaces=tuple(Workspace(w, w, 'shared' if w == 'commons' else 'product') for w in ('alpha', 'beta', 'commons')),
-            memberships=tuple(Membership(w, p, 'admin' if p == 'admin' else 'developer') for w in ('alpha', 'beta') for p in ('alice', 'bob', 'admin')),
+            memberships=tuple(Membership(w, p, 'admin' if p == 'admin' else 'developer') for w in ('alpha', 'beta') for p in ('alice', 'bob', 'admin'))+(Membership('commons','admin','admin'),),
             modules=tuple(ModuleInstance(w, m, ('read', 'write')) for w in ('alpha', 'beta', 'commons') for m in ('assistant', 'pipelines')),
             operators=frozenset({'operator'}))
         history_initialize(self.store); initialize(self.store); self.now = NOW
