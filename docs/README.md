@@ -31,4 +31,6 @@
 - [Scoped artifact acquisition and index](../packages/artifact_sync/README.md)：OBS 有界只读分页、同库权限/元数据索引及精确内容审批；合成验证，真实账号兼容和受权下载未完成。
 - [Authorized pipeline observations UI](../packages/pipeline_ui/README.md)：同源受权运行列表、详情及耗时展示；版本一致性与取消竞态防护，不含日志、执行或上游刷新。
 
+- [Scoped research-asset catalog](../packages/research_assets/README.md)：类型/实体、稳定业务身份、全来源原子发布与同事务受权查询；不含真实来源凭据、镜像读取或执行。
+
 - [Owner-scoped assistant saved history](../packages/assistant_history/README.md)：当前身份与权限隔离的只读事件、固定版本分页和可逆归档；不含 ACP 执行、真实网络或会话恢复。
