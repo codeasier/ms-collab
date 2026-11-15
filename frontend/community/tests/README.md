@@ -20,4 +20,4 @@ refresh-only roles; safe title/label rendering; complete review pagination;
 filters preserving off-page approvals; cancel/Escape; duplicate confirmation;
 version conflict without blind retry; refresh invalidation; cross-scope late
 responses; malformed payload fail-closed; empty observations; mobile overflow;
-page lifecycle/disconnect cleanup and authentication expiry.
+Back/Forward lifecycle cleanup, disconnect during an accepted mutation and authentication expiry.

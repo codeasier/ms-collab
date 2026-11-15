@@ -1,5 +1,6 @@
 import {createClient, scopeFrom, validateCapabilities, validateMutation, loadSnapshot} from './client.mjs'
 const el = id => document.getElementById(id), client = createClient()
+const transportAllowed = location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
 let generation=0, controller, scope, capabilities, version, snapshot, view='items', page=0, pending, saving=false
 let approved=new Set(), draft=new Set(), filter={query:'',kind:'',state:''}
 const current = value => value === generation
@@ -12,7 +13,7 @@ function clearPanel() {
   el('save').disabled=true
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed. Reconnect and reload to verify.') {
-  cancelRequests();client.clear();clearPanel();scope=undefined;el('session').hidden=true;el('connect').hidden=false
+  cancelRequests();client.clear();clearPanel();scope=undefined;el('session').hidden=true;el('connect').hidden=!transportAllowed
   for(const id of ['credential','workspace','connection','repository','query'])el(id).value=''
   el('kind').value='';el('state').value='';filter={query:'',kind:'',state:''};el('status').textContent=message
 }
@@ -47,7 +48,7 @@ function render(){
     }
     el('items').append(row)
   }
-  el('summary').textContent=!snapshot.available?'No snapshot exists yet. An authorized refresh is required.':`${rows.length} matching items of ${snapshot.items.length} loaded. Observed subset, not a complete repository inventory.`
+  el('summary').textContent=!capabilities[view]?'This identity cannot read or review snapshot contents. Only the explicitly granted refresh action is available.':!snapshot.available?'No snapshot exists yet. An authorized refresh is required.':`${rows.length} matching items of ${snapshot.items.length} loaded. Observed subset, not a complete repository inventory.`
   if(snapshot.available&&!rows.length)el('items').append(textNode('li','No items match this view. Unapproved provider-visible content is never included in Shared items.'))
   el('page').textContent=`Page ${page+1} of ${pages}`;el('previous').disabled=page===0;el('next').disabled=page===pages-1
   el('filters').hidden=!snapshot.available;el('approval-panel').hidden=view!=='review'||!capabilities.approve||!snapshot.available;updateApprovals()
@@ -81,7 +82,7 @@ function confirmAction(action){
   el('confirm-note').textContent=action==='approve'?`Add ${added}, remove ${removed}; ${draft.size} total approved content versions for the configured reader audience. This replaces the complete approval set, not only the visible page. It does not create anonymous public access.`:'Fetch a fresh authorized provider snapshot. Changed content loses its previous approval. This does not approve any new content. Unsaved approval choices will be discarded.'
   el('confirmation').showModal()
 }
-el('connect').addEventListener('submit',event=>{event.preventDefault();try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided scope to verify access.'})
+el('connect').addEventListener('submit',event=>{event.preventDefault();if(!transportAllowed)return;try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque credential.';return}el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided scope to verify access.'})
 el('disconnect').addEventListener('click',()=>disconnect())
 el('scope-form').addEventListener('submit',event=>{event.preventDefault();cancelRequests();clearPanel();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('repository').value)}catch{scope=undefined;el('status').textContent='Enter valid workspace, connection and owner/name identifiers.';return}filter={query:'',kind:'',state:''};for(const id of ['query','kind','state'])el(id).value='';load('items')})
 el('reload').addEventListener('click',()=>load())
@@ -107,4 +108,4 @@ el('confirm-form').addEventListener('submit',async event=>{
   }finally{saving=false;for(const id of ['refresh','review-view','items-view','reload'])el(id).disabled=false;render()}
 })
 window.addEventListener('pagehide',()=>disconnect('Disconnected. Reconnect to load current state.'))
-if(location.protocol!=='https:'&&!(location.protocol==='http:'&&location.hostname==='127.0.0.1')){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
+if(!transportAllowed){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}

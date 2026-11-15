@@ -50,12 +50,18 @@ async function main(){
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
   await open('empty');assert.match(await page.locator('#summary').textContent(),/No snapshot/)
   // Page lifecycle clears credential, private content, scope, draft and dialog.
-  await page.locator('#refresh').click();await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
+  await page.locator('#refresh').click();await page.goto(origin+'/unavailable');await page.goBack();await page.locator('#connect:not([hidden])').waitFor();await page.goForward();await page.goBack();await page.locator('#connect:not([hidden])').waitFor()
   assert.equal(await page.locator('#confirmation').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'');assert.equal(await page.locator('#confirm-note').textContent(),'');assert.equal(await page.locator('#workspace').inputValue(),'')
   // Non-reader approver and refresher still get only their explicit capabilities.
   await connect('synthetic-reviewer');await open();assert.equal(await page.locator('#items-view').isVisible(),false);assert.equal(await page.locator('#refresh').isVisible(),false);assert.equal(await page.locator('#approval-panel').isVisible(),true)
   await page.locator('#disconnect').click();await connect('synthetic-refresh');await open();assert.equal(await page.locator('#items-view').isVisible(),false);assert.equal(await page.locator('#review-view').isVisible(),false);assert.equal(await page.locator('#refresh').isVisible(),true);assert.equal(await page.locator('#items').textContent(),'')
   await page.locator('#disconnect').click();await connect('synthetic-admin');await open()
+  // An accepted mutation may finish after disconnect; its late reply must not restore data.
+  let writeSeen,writeRelease,writeDone;const writeStarted=new Promise(r=>writeSeen=r),writeGate=new Promise(r=>writeRelease=r),writeHandled=new Promise(r=>writeDone=r)
+  await page.route('**/alpha/community/source/sample/project/refresh',async route=>{const response=await route.fetch();writeSeen();await writeGate;await route.fulfill({response}).catch(()=>{});writeDone()})
+  await page.locator('#refresh').click();await page.locator('#confirm').click();await within(writeStarted);await page.locator('#disconnect').click();writeRelease();await within(writeHandled)
+  assert.equal(await page.locator('#panel').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'');assert.match(await page.locator('#status').textContent(),/may have completed/)
+  await page.unroute('**/alpha/community/source/sample/project/refresh');await connect('synthetic-admin');await open()
   await page.route('**/alpha/community/source/sample/project/capabilities',route=>route.fulfill({status:401,contentType:'application/json',body:'{"error":"expired"}'}))
   await page.locator('#reload').click();await page.waitForFunction(()=>!document.querySelector('#connect').hidden);assert.equal(await page.locator('#items').textContent(),'')
   assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length})),{local:0,session:0});assert.deepEqual(external,[]);assert.deepEqual(errors,[])
