@@ -30,3 +30,11 @@ positive and cross-scope negative cases. Do not move production data during this
 code migration. Real authentication, durable view changes, query authorization,
 provider sync, protected downloads and a user-facing artifact page remain separate
 implementation and acceptance work.
+
+## Subsequent slices
+
+The [authorized API](../artifacts_api/README.md), [browser](../artifacts_ui/README.md)
+and [bounded acquisition/index](../artifact_sync/README.md) now provide explicit
+integration seams beyond this original core. The original scope above is retained
+as a baseline, not a current whole-project completion claim. Real identity-provider
+onboarding, cloud compatibility acceptance and protected downloads remain open.
