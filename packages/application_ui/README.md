@@ -2,7 +2,7 @@
 
 `ApplicationUI(host=...)` wraps the exact, explicitly configured
 [ApplicationHost](../application_host/README.md). It adds an overview, workspace
-administration, responsibility and community pages using one current server session. It is
+administration, responsibility, pipeline and community pages using one current server session. It is
 not a listener, deployment bootstrap or real-provider enablement switch.
 
 ```python
@@ -27,6 +27,10 @@ rechecked. A synthetic fixture is never imported by the production factory.
 - `/community/` reuses the explicit-content sharing board with exact-scope
   capability discovery, full review pagination and complete-set approval. It
   exists only when community is configured; static navigation is never a grant.
+
+- `/pipelines/` reuses the scoped run/detail/duration controller through the
+  cookie-only read client, only when `pipelines` is configured. No bearer input,
+  session-to-token conversion, upstream refresh, logs or execution is added.
 - `/app/bootstrap` is fixed public process configuration: available UI modules
   and the configured authorization endpoint. It is **not** user/module discovery
   or a grant. No principal, workspace, credential or provider secret is returned.
@@ -79,7 +83,7 @@ legacy bearer wrapper.
 - [Tests](tests/README.md): static boundary, fail-closed provider, current cookie
   permissions, CSRF, CAS, logout/expiry/revocation and real HTTPS browser flows.
 - Existing standalone UI wrappers remain compatible through explicit legacy entry
-  scripts. Standalone browser workflows remain required, alongside the new one.
+  scripts. All old browser workflows remain required, alongside the new one.
 - [Workflow](../../.github/workflows/application-ui.yml): locked Chromium and only
   synthetic screenshots. A test-context self-signed certificate exception never
   changes the OS trust store. No live provider/production result is claimed.
@@ -114,3 +118,14 @@ sharing grant. The dedicated community session workflow uses only synthetic loca
 HTTPS, S256 identity, 101-row content, cookie/CSRF/CAS and lifecycle probes, with
 four desktop/mobile list/confirmation screenshots. It is not real GitCode or
 production-provider acceptance.
+
+### Pipeline lifecycle
+
+Editing any scope identifier immediately clears old rows/details and cancels the
+previous scope. List and duration views still require one exact scope/revision;
+details must match the selected run summary. Even if transport abort is
+ineffective, cancellation prevents an old list from starting its follow-up
+request or rendering after logout/recheck/Back. A new view requires explicit
+scope submission; no cached connection discovery or upstream acquisition occurs.
+The separate [cookie pipeline workflow](../../.github/workflows/pipeline-cookie-ui.yml)
+exercises synthetic HTTPS and writes only three synthetic screenshots.

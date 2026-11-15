@@ -1,5 +1,10 @@
 # Authorized pipeline observations UI
 
+The unified [cookie-only product entry](../application_ui/README.md) also mounts
+this controller at `/pipelines/` when the host enables pipelines. That entry
+has no credential form and uses the existing HttpOnly session/current-policy
+boundary. It does not route through this standalone bearer wrapper.
+
 A separate static wrapper for an explicitly configured `PipelineApplication`.
 It reads current, authorized stored observations: runs, stage/job details, and
 successful-job durations. It does **not** expose pipeline execution, cancellation,
@@ -32,7 +37,7 @@ No listener, default verifier or credential discovery is bundled.
   A detail read must match the same scope, revision and selected run ID.
   Malformed, missing, unauthorized or mixed-revision responses clear the panel
   rather than combining stale data. Nothing is automatically retried.
-- Scope changes, reloads, detail Close/Escape, Disconnect and page lifecycle exit
+- Scope input edits, reloads, detail Close/Escape, Disconnect and page lifecycle exit
   abort obsolete requests. Epoch checks also ignore late results after abort.
   Real Back/Forward cannot restore the previous credential or private rows.
   Revocation cannot retract already authorized bytes; subsequent API calls must
@@ -79,3 +84,8 @@ and detail), not logs, browser profiles or traces.
 - [Browser acceptance and tests](../../frontend/pipelines/tests/README.md)
 - [Pipeline API](../pipeline_api/README.md)
 - [Documentation index](../../docs/README.md)
+
+The shared `runs.mjs` controller receives an explicit request client. Only the
+standalone `entry.mjs` constructs the original bearer client; the cookie host
+does not serve that entry script. Both wrappers use the same snapshot validators
+and cancellation checks, and both browser workflows remain required.

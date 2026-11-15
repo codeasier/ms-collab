@@ -21,3 +21,12 @@ test('details and duration samples must agree with the fully loaded run summarie
  for(const change of [{run_id:'absent'},{run_status:'success'},{observed_at:'2026-01-01T13:00:00Z'}]){const r=report();Object.assign(r.groups[0].samples[0],change);assert.throws(()=>validateDurations(r,scope,2,[run]))}
  const r=report();r.groups[0].count=2;r.groups[0].samples.push(r.groups[0].samples[0]);assert.throws(()=>validateDurations(r,scope,2,[run]))
 })
+
+test('ineffective transport abort still fences chained reads and delayed durations',async()=>{
+ for(const kind of ['runs','durations']){
+  const controller=new AbortController(),calls=[]
+  const client={request:async(_scope,action)=>{calls.push(action);if(action===kind)controller.abort();return action==='runs'?list():report()}}
+  await assert.rejects(loadSnapshot(client,scope,controller.signal),error=>error.name==='AbortError')
+  assert.deepEqual(calls,kind==='runs'?['runs']:['runs','durations'])
+ }
+})

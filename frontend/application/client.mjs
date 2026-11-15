@@ -1,4 +1,5 @@
 // Cookie-only transport. No session-token getter, bearer construction or storage.
+import {readPath} from '../pipelines/client.mjs'
 import {scopeFrom,queryFrom,validateFields} from '../responsibility/client.mjs'
 const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',')
 const token=/^[A-Za-z0-9_-]{43}$/
@@ -14,7 +15,7 @@ export function csrfCookie(raw){
  return value
 }
 export function validateBootstrap(data,origin){
- if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','community'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
+ if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','pipelines','community'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
  if(data.login_configured){const target=new URL(data.authorization_endpoint);if(target.protocol!=='https:'||target.username||target.password||target.search||target.hash||target.href!==data.authorization_endpoint)throw new Error('Invalid login configuration.')}
  else if(data.authorization_endpoint!==null)throw new Error('Invalid login configuration.')
  if(new URL(origin).protocol!=='https:')throw new Error('HTTPS is required.')
@@ -70,4 +71,8 @@ export function createResponsibilitySessionClient(session){
   if(action==='candidates'){const q=queryFrom(query?.view,query?.field_id,query?.offset);if(query.limit!==20)throw new Error('Invalid request.');const params=new URLSearchParams({view:q.view,offset:String(q.offset),limit:String(q.limit)});if(q.view==='field')params.set('field_id',q.field_id);suffix+='?'+params}
   return session.request(`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,options)
  }}
+}
+
+export function createPipelineSessionClient(session){
+ return {clear:()=>session.clear(),request(scope,kind,{runID,signal}={}){return session.request(readPath(scope,kind,{runID}),{signal})}}
 }

@@ -29,3 +29,15 @@ body[data-page="community"] li p,body[data-page="community"] #status,body[data-p
 body[data-page="community"] dialog{background:#fff;color:#173044;border-color:#adc4d1}
 body[data-page="community"] :focus-visible{outline-color:#327993}
 @media(max-width:700px){body[data-page="community"] main{padding:24px 16px}}
+
+/* Pipeline standalone dark theme stays standalone; cookie entry is light. */
+body[data-page="pipelines"]{max-width:none;padding:0;color:#173044;color-scheme:light}
+body[data-page="pipelines"]>header:not(.app-shell),body[data-page="pipelines"] main,body[data-page="pipelines"]>footer{max-width:1180px;margin:0 auto;padding:24px 28px}
+body[data-page="pipelines"] .notice,body[data-page="pipelines"] .boundary{background:#eef4f8;border-color:#8caabd;color:#173044}
+body[data-page="pipelines"] input,body[data-page="pipelines"] button,body[data-page="pipelines"] select,body[data-page="pipelines"] dialog{background:#fff;color:#21485c;border-color:#adc4d1}
+body[data-page="pipelines"] button:hover:not(:disabled){background:#e4eef5}
+body[data-page="pipelines"] .eyebrow,body[data-page="pipelines"] .badge,body[data-page="pipelines"] summary{color:#245f80}
+body[data-page="pipelines"] :is(#revision,#summary,#coverage,#status,dt,footer){color:#526a7c}
+body[data-page="pipelines"] :is(#panel,.trend){background:#fff;border-color:#c8d8e3}
+body[data-page="pipelines"] :focus-visible{outline-color:#327993}
+@media(max-width:600px){body[data-page="pipelines"]>header:not(.app-shell),body[data-page="pipelines"] main{padding:20px 16px}}

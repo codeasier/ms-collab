@@ -7,6 +7,10 @@ from packages.identity import AuthenticationError
 
 _ROOT = Path(__file__).resolve().parents[2] / 'frontend'
 _FILES = {
+    '/pipelines/': ('application/pipelines.html', 'text/html'),
+    '/pipelines/runs.mjs': ('pipelines/runs.mjs', 'text/javascript'),
+    '/pipelines/client.mjs': ('pipelines/client.mjs', 'text/javascript'),
+    '/pipelines/style.css': ('pipelines/style.css', 'text/css'),
     '/': ('application/index.html', 'text/html'),
     '/manage/': ('application/manage.html', 'text/html'),
     '/community/': ('application/community.html', 'text/html'),
@@ -56,7 +60,7 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/community/'}
+            navigation = (type(path) is str and path in {'/', '/manage/', '/responsibility/', '/pipelines/', '/community/'}
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -68,13 +72,14 @@ class ApplicationUI:
         if environ.get('REQUEST_METHOD') not in {'GET', 'HEAD'} or environ.get('QUERY_STRING'):
             return respond('404 Not Found', b'not_found')
         enabled = 'responsibility' in self._host._config.modules
+        pipelines = 'pipelines' in self._host._config.modules
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
-                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'community') if name in self._host._config.modules],
+                'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community') if name in self._host._config.modules],
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
-        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/community/' and 'community' not in self._host._config.modules):
+        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/community/' and 'community' not in self._host._config.modules):
             return respond('404 Not Found', b'not_found')
         filename, media = _FILES[path]
         return respond('200 OK', (_ROOT / filename).read_bytes(), media)

@@ -41,7 +41,7 @@ async function main(){
   await page.getByRole('checkbox',{name:'Approve issue 100',exact:true}).check();await page.locator('#save').click();assert.match(await page.locator('#confirm-note').textContent(),/Add 1, remove 0; 3 total/)
   await page.screenshot({path:path.join(folder,'desktop-confirm.png'),fullPage:true});await page.locator('#cancel').click();assert.equal(writes.length,0)
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'mobile-list.png'),fullPage:true})
-  await page.locator('#save').click();await page.screenshot({path:path.join(folder,'mobile-confirm.png'),fullPage:true});await page.keyboard.press('Escape');assert.equal(writes.length,0);await page.setViewportSize({width:1440,height:1050})
+  await page.locator('#save').click();await page.screenshot({path:path.join(folder,'mobile-confirm.png'),fullPage:true});await page.keyboard.press('Escape');assert.equal(writes.length,0);assert.equal(await page.locator('#confirm-note').textContent(),'');await page.setViewportSize({width:1440,height:1050})
   // Filtering excludes both previously approved rows but does not discard them.
   await page.locator('#query').fill('Synthetic issue 100');await page.locator('#filters button').click();assert.match(await page.locator('#summary').textContent(),/1 matching/)
   await page.locator('#save').click();await page.evaluate(()=>{document.querySelector('#confirm-form').requestSubmit();document.querySelector('#confirm-form').requestSubmit()});await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Approval set saved'));await settled()

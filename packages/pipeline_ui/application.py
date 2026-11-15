@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from packages.pipeline_api import PipelineApplication
 
 _ROOT = Path(__file__).resolve().parents[2] / "frontend" / "pipelines"
-_FILES = {"/pipelines/": ("index.html", "text/html"),
+_FILES = {"/pipelines/entry.mjs": ("entry.mjs", "text/javascript"),"/pipelines/": ("index.html", "text/html"),
           "/pipelines/runs.mjs": ("runs.mjs", "text/javascript"),
           "/pipelines/client.mjs": ("client.mjs", "text/javascript"),
           "/pipelines/style.css": ("style.css", "text/css")}

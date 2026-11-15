@@ -1,8 +1,9 @@
 import {mountCommunityPage} from '../community/board.mjs'
 import {createCommunitySessionClient} from './community-client.mjs'
-import {createSessionClient,createResponsibilitySessionClient,validateBootstrap,authorizationTarget} from './client.mjs'
+import {createSessionClient,createResponsibilitySessionClient,createPipelineSessionClient,validateBootstrap,authorizationTarget} from './client.mjs'
 import {validateWorkspaces} from '/manage/client.mjs'
 import {mountWorkspacePage} from '/manage/admin.mjs'
+import {mountPipelinePage} from '../pipelines/runs.mjs'
 import {mountResponsibilityPage} from '../responsibility/browser.mjs'
 const el=id=>document.getElementById(id)
 let generation=0,bootstrap,page,busy=false,principal,ready=false,initializing=false
@@ -58,6 +59,7 @@ async function start(){
   const configured=validateBootstrap(await session.bootstrap(),location.origin);if(turn!==generation)return;bootstrap=configured
   el('app-login-note').textContent=bootstrap.login_configured?'Sign-in uses only the explicitly configured identity provider. No provider protocol or production readiness is implied.':'Sign-in is unavailable: no reviewed bound-code identity provider is configured. Existing valid sessions may be rechecked; no default identity is supplied.'
   el('app-community-link').hidden=!bootstrap.ui_modules.includes('community')
+  const pipelines=el('app-pipelines-link');if(pipelines)pipelines.hidden=!bootstrap.ui_modules.includes('pipelines')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
   if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
   else if(document.body.dataset.page==='responsibility'){
@@ -67,6 +69,10 @@ async function start(){
   else if(document.body.dataset.page==='community'){
    if(!bootstrap.ui_modules.includes('community'))throw new Error('Community is not configured on this service.')
    page=mountCommunityPage({client:createCommunitySessionClient(session),sessionMode:true,onSignOut:signOut})
+  }
+  else if(document.body.dataset.page==='pipelines'){
+   if(!bootstrap.ui_modules.includes('pipelines'))throw new Error('Pipelines are not configured on this service.')
+   page=mountPipelinePage({client:createPipelineSessionClient(session),sessionMode:true,onSignOut:signOut})
   }
   ready=true;initializing=false;busy=false;el('app-recheck').textContent='Recheck session';controls();await inspect()
  }catch(error){if(turn===generation){clear(error.message||'Application configuration unavailable.');if(!ready)el('app-recheck').textContent='Retry setup'}}

@@ -64,7 +64,7 @@ async function load(requestedView=view, notice='') {
     if(!current(token))return
     const allowed=result.capabilities, chosen=allowed[requestedView]?requestedView:allowed.items?'items':allowed.review?'review':null
     el('status').textContent='Loading a consistent authorized snapshot…'
-    const data=chosen?await loadSnapshot(client,selected,chosen,result.revision,controller.signal):{available:false,items:[],observed_at:null}
+    const data=chosen?await loadSnapshot(client,selected,chosen,result.revision,controller.signal,()=>current(token)):{available:false,items:[],observed_at:null}
     if(!current(token))return
     capabilities=allowed;version=result.revision;snapshot=data;view=chosen||'items';approved=new Set(data.items.filter(x=>x.approved).map(x=>x.fingerprint));draft=new Set(approved)
     el('scope-title').textContent=`${selected.workspace_id} / ${selected.connection_id} / ${selected.repository}`
@@ -92,7 +92,7 @@ el('scope-form').addEventListener('submit',event=>{event.preventDefault();cancel
 el('reload').addEventListener('click',()=>load())
 for(const action of ['items','review'])el(`${action}-view`).addEventListener('click',()=>load(action))
 el('refresh').addEventListener('click',()=>confirmAction('refresh'));el('save').addEventListener('click',()=>confirmAction('approve'))
-el('cancel').addEventListener('click',closeConfirmation);el('confirmation').addEventListener('cancel',()=>{pending=undefined})
+el('cancel').addEventListener('click',closeConfirmation);el('confirmation').addEventListener('cancel',closeConfirmation)
 el('filters').addEventListener('submit',event=>{event.preventDefault();filter={query:el('query').value,kind:el('kind').value,state:el('state').value};page=0;render()})
 el('previous').addEventListener('click',()=>{page--;render()});el('next').addEventListener('click',()=>{page++;render()})
 el('confirm-form').addEventListener('submit',async event=>{
