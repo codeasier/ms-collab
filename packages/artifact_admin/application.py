@@ -8,6 +8,7 @@ import re
 from packages.artifacts import Scope
 from packages.artifact_sync import ArtifactSynchronizer, ProviderError
 from packages.artifact_sync.records import authorized
+from packages.artifact_refresh import ConfiguredArtifactRefresh
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
 from packages.workspaces import PolicyError
@@ -18,12 +19,14 @@ _CONFIRM = 'approve_complete_candidate_to_reviewed_readers'
 
 class ArtifactAdministrationAPI(WorkspaceApplication):
     """Trusted factory only; reuse the SAME verifier, store and sync dependencies."""
-    def __init__(self, *, service, allow_refresh=True):
+    def __init__(self, *, service, allow_refresh=True, refresher=None):
         if type(service) is not ArtifactSynchronizer:
             raise ValueError('configured artifact synchronizer required')
         if type(allow_refresh) is not bool:
             raise ValueError('explicit refresh availability required')
-        self._service, self._allow_refresh = service, allow_refresh
+        if refresher is not None and (type(refresher) is not ConfiguredArtifactRefresh or refresher.service is not service or not allow_refresh):
+            raise ValueError('same-authority refresh configuration required')
+        self._service, self._allow_refresh, self._refresher = service, allow_refresh, refresher
 
     def _dispatch(self, environ):
         assertion = self._service._verify_request(environ)
@@ -68,7 +71,8 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
                     raise PolicyError(503, 'provider_unavailable')
                 return self._service._authenticated_transaction(assertion, unavailable, with_connection=True)
             try:
-                result = self._service._refresh_verified(assertion, scope, expected_revision=expected)
+                refresh = self._service._refresh_verified if self._refresher is None else self._refresher.refresh
+                result = refresh(assertion, scope, expected_revision=expected)
             except ProviderError:
                 raise PolicyError(502, 'provider_unavailable') from None
         else:

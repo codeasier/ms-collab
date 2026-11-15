@@ -73,11 +73,10 @@ return 404. Legacy module browser wrappers,
 asset synchronization, responsibility evidence ingestion and pipeline collection
 are **not mounted**. `HostConfig.artifact_administration=True` optionally mounts
 existing artifact status/review/approve routes, requiring the artifacts module.
-It uses the same session transaction boundary and explicitly disables refresh:
-the administration adapter has no external artifact credential loader. Current complete candidate,
+It uses the same session transaction boundary; refresh stays disabled by default. Current complete candidate,
 reader set, permission and revision are rechecked on approval; configuration is
 not a grant. Community refresh has no credential loader and returns 503;
-its capability reports false. There is no index/community acquisition or background worker configuration.
+its capability reports false. Community acquisition and background scheduling remain unconfigured.
 
 `HostConfig.artifact_downloads=True` is a separate opt-in requiring artifacts and
 an exact `ArtifactDownloadConfiguration` with a trusted scoped credential loader.
@@ -106,7 +105,8 @@ response controls. All unsafe methods, including read-only POST queries, need
 CSRF cookie/header/stored-session proof. Each module operation rechecks current
 session, identity and policy under the same attached-DB transaction; logout,
 expiry and membership changes apply across modules. Multi-phase module handlers
-would revalidate at each transaction, but external refresh is not enabled here.
+revalidate the original session request at each transaction, including every
+artifact refresh page and final candidate commit when explicitly enabled.
 
 Preinitialization of dedicated module schemas is explicit and outside requests.
 A missing or malformed schema fails closed without creating or migrating it. The
@@ -133,3 +133,22 @@ available for their original explicitly configured hosts, not on this host.
 [ApplicationUI](../application_ui/README.md) can wrap this configured host with
 workspace, responsibility and explicitly configured artifact pages. It does not enable a provider, change the
 session authority or mount a legacy bearer wrapper.
+
+## Optional scoped artifact refresh
+
+`HostConfig.artifact_refresh=True` additionally requires administration and an
+`ArtifactRefreshConfiguration(credential_loader, transport=None)`. The exact
+cookie boundary constructs its own synchronizer and refresh controller; an
+externally authenticated service cannot be injected. Trusted provisioning must
+first create `IndexPolicy` records and call `initialize_refresh(sessions.policy)`.
+Neither flag creates rights, credentials or schemas.
+
+The loader receives only the stored reference, exact scope and fixed computed
+OBS origin. Current admin + refresher rights, cookie/CSRF, revision and 2 global /
+1 actor / 1 scope admission are checked before it runs. Acquisition uses bounded
+metadata pages and repeated current authority. A private candidate, audit event
+and completed lease commit together; existing published content is unchanged
+until a separate full-set digest/readers/CAS approval. Resource-uncertain workers
+retain capacity even after expiry. See [refresh contract](../artifact_refresh/DESIGN.md)
+for timer, DNS/loader/storage, recovery and rate/cost boundaries. This is not a
+production startup command or proof of real OBS compatibility.

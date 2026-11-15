@@ -9,7 +9,8 @@
 - `artifacts-session.mjs`: exact-scope published catalog and complete-candidate
   approval adapters, using the same cookie client and current CSRF proof.
 - `artifacts.html`, `artifact-admin.html`, `artifacts.css`: optional, light-theme
-  module pages. Refresh remains explicitly unavailable on the unified host.
+  module pages. Refresh is separately configured and disabled by default; it
+  creates only a private candidate and never auto-approves.
 - `artifact-downloads.mjs`, `artifact-download-ui.mjs`: separately configured
   exact-byte confirmation, bounded streaming/hash verification and ephemeral native
   browser handoff using the same cookie client; no URL or bearer inputs.

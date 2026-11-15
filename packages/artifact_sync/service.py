@@ -33,11 +33,13 @@ class ArtifactSynchronizer(WorkspaceApplication):
     def refresh(self, user_credential, scope, *, expected_revision):
         return self._refresh_verified(self._assertion(user_credential), scope, expected_revision=expected_revision)
 
-    def _refresh_verified(self, assertion, scope, *, expected_revision):
+    def _refresh_verified(self, assertion, scope, *, expected_revision, lifecycle=None):
         # Trusted adapter seam only; assertions are never accepted from HTTP fields.
         def inspect(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'refresh')
             policy._match(expected_revision, record.revision)
+            if lifecycle is not None:
+                lifecycle.guard(policy, actor, connection)
             return actor, record
         actor, original = self._authenticated_transaction(assertion, inspect, with_connection=True)
 
@@ -46,6 +48,8 @@ class ArtifactSynchronizer(WorkspaceApplication):
             policy._match(expected_revision, record.revision)
             if actor != current_actor or record.policy_raw != original.policy_raw:
                 raise PolicyError(412, 'stale_revision')
+            if lifecycle is not None:
+                lifecycle.guard(policy, current_actor, connection)
             return record
         def before_read():
             self._authenticated_transaction(assertion, current, with_connection=True)
@@ -54,8 +58,14 @@ class ArtifactSynchronizer(WorkspaceApplication):
             credential = self._credential_loader(original.policy.credential_ref, scope, original.policy.connection.origin)
         except Exception:
             raise ProviderError('credential_unavailable') from None
-        observation = collect(original.policy.connection, credential, before_read=before_read,
-                              clock=self._clock, transport=self._transport)
+        try:
+            observation = collect(original.policy.connection, credential, before_read=before_read,
+                clock=self._clock, transport=self._transport if lifecycle is None else lifecycle.transport,
+                after_read=None if lifecycle is None else before_read)
+        except ProviderError:
+            if lifecycle is not None:
+                lifecycle.remaining()
+            raise
         # Incremental union retains unseen objects; omission is not deletion proof.
         old_text = original.candidate or original.published
         old = decode_snapshot(old_text, original.policy.connection) if old_text is not None else None
@@ -77,9 +87,12 @@ class ArtifactSynchronizer(WorkspaceApplication):
             record = current(policy, current_actor, connection)
             revision = save(connection, actor, scope, record, candidate, record.published,
                             record.published_revision, 'refresh', digest(candidate))
+            if lifecycle is not None:
+                lifecycle.complete(connection, revision)
             return {'revision': revision, 'candidate_digest': digest(candidate), 'publication': 'pending',
                     'scanned': observation.scanned, 'pages': observation.pages, 'retained': len(rows)}
-        return self._authenticated_transaction(assertion, publish, write=True, with_connection=True)
+        return self._authenticated_transaction(assertion, publish, write=True, with_connection=True,
+            before_commit=None if lifecycle is None else lifecycle.remaining)
 
     def review(self, user_credential, scope, *, expected_revision):
         """Approver-only complete metadata preview; never return credentials/config."""
