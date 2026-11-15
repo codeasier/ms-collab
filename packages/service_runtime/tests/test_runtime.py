@@ -209,6 +209,29 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(verify_backup(self.config,source)['backup_valid'])
             self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
         self.assertFalse((source/'restored').exists())
+    def test_double_slash_aliases_reject_before_allocation_and_preserve_source(self):
+        self.init();source=self.root/'backup';backup(self.config,source)
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        with self.assertRaises(RuntimeFailure):load_config('/'+str(self.config))
+        with self.assertRaises(RuntimeFailure):backup(self.config,'/'+str(self.directory/'nested'))
+        with self.assertRaises(RuntimeFailure):verify_backup(self.config,'/'+str(source))
+        self.restored_config()
+        with self.assertRaises(RuntimeFailure):restore(self.config,'/'+str(source))
+        self.value['data_directory']='/'+str(source/'restored');self.save()
+        with self.assertRaises(RuntimeFailure):restore(self.config,source)
+        self.assertFalse((source/'restored').exists());self.assertFalse((self.directory/'nested').exists())
+        self.assertFalse((self.root/'restored').exists())
+        self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
+    def test_existing_filesystem_alias_is_not_decided_by_lexical_path_alone(self):
+        self.init();source=self.root/'backup';backup(self.config,source)
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        self.restored_config()
+        # Linux cannot create a case-folding alias in this fixture; model only
+        # the physical identity comparison, without weakening lexical checks.
+        with patch('packages.service_runtime.backup.os.path.samefile',return_value=True):
+            with self.assertRaisesRegex(RuntimeFailure,'overlapping_paths'):restore(self.config,source)
+        self.assertFalse((self.root/'restored').exists())
+        self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
     def test_restore_refuses_live_existing_destination_and_corrupt_backup(self):
         self.init();backup(self.config,self.root/'backup')
         with self.assertRaisesRegex(RuntimeFailure,'destination_exists'):restore(self.config,self.root/'backup')

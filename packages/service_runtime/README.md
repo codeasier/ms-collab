@@ -136,6 +136,8 @@ For a restore drill, make a private copy of configuration with a **new absent**
 .venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/restore.json check
 ```
 
+Paths use one leading slash; implementation-defined double-leading-slash aliases
+are rejected for configuration, source and destination alike.
 Source and target paths must be disjoint: identical paths and either nesting
 direction are rejected before output is allocated, so a restore cannot damage
 the source checkpoint by creating a child directory inside it. The existing live

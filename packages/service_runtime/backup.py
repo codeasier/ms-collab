@@ -8,6 +8,7 @@ rows are NEVER backed up. Restoration always creates a new empty login store.
 from contextlib import closing
 from hashlib import sha256
 import sqlite3
+import os
 from packages.login_state import SQLiteLoginStore
 from packages.workspaces import SQLiteWorkspaceService
 from .config import RuntimeFailure, absolute, private, read_private, decode, load_config
@@ -23,6 +24,13 @@ def _disjoint(source, destination):
     # Callers already require absolute canonical paths without symlink ancestors.
     if source.is_relative_to(destination) or destination.is_relative_to(source):
         raise RuntimeFailure('overlapping_paths')
+    # Existing ancestor identity also catches case-folding/bind aliases that
+    # lexical paths cannot establish. This is not a hostile-filesystem race guard.
+    for root, child in ((source, destination), (destination, source)):
+        if root.exists():
+            for ancestor in (child, *child.parents):
+                if ancestor.exists() and os.path.samefile(root, ancestor):
+                    raise RuntimeFailure('overlapping_paths')
 
 
 def _verify(config, source):

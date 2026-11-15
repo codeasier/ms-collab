@@ -19,7 +19,7 @@ class RuntimeFailure(Exception):
 
 def absolute(value):
     if (type(value) is not str or not 1 <= len(value) <= 4096 or '\\' in value
-            or any(ord(c) < 32 for c in value) or not value.startswith('/')):
+            or any(ord(c) < 32 for c in value) or not value.startswith('/') or value.startswith('//')):
         raise RuntimeFailure()
     path = Path(value)
     if str(path) != value or '..' in path.parts or path == Path('/'):
