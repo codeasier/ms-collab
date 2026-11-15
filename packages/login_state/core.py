@@ -302,8 +302,11 @@ class SQLiteLoginStore:
                 raise AuthenticationError()
         return self._run(operation, validate=fresh)
 
-    def _session(self, db, now, token, csrf=None):
-        row = db.execute("SELECT csrf,subject,created,expires FROM sessions WHERE token=?", (_digest(_secret(token)),)).fetchone()
+    def _session(self, db, now, token, csrf=None, *, schema="main"):
+        # Fixed trusted schema identifiers only, never request-selected SQL.
+        if schema not in {"main", "login"}:
+            raise ValueError("unsupported session schema")
+        row = db.execute(f"SELECT csrf,subject,created,expires FROM {schema}.sessions WHERE token=?", (_digest(_secret(token)),)).fetchone()
         if row is None:
             raise AuthenticationError()
         csrf_hash, subject, created, expires = row
