@@ -254,6 +254,19 @@ class SessionHTTPTests(unittest.TestCase):
             self.assertEqual(cookie_values(failed),{_SESSION:"",_CSRF:"",_BROWSER:""})
         self.assertEqual(self.begin_http()["status"],200)
 
+    def test_revoked_or_forged_session_recovers_even_if_csrf_is_lost(self):
+        self.login.revoke_subject("admin-sub")
+        for path in ("/auth/start","/auth/logout"):
+            for token in (self.session.token.value,"x"*43):
+                for csrf,cookie_csrf in ((None,None),("y"*43,None),("y"*43,"z"*43)):
+                    values={_SESSION:token}
+                    if cookie_csrf is not None: values[_CSRF]=cookie_csrf
+                    failed=self.request(path=path,method="POST",origin=ORIGIN,body={},cookies=cookie_header(values),
+                        csrf=csrf,extra={"HTTP_X_MS_COLLAB_LOGIN":"1"})
+                    self.assertEqual(failed["status"],401)
+                    self.assertEqual(cookie_values(failed),{_SESSION:"",_CSRF:"",_BROWSER:""})
+        self.assertEqual(self.count("attempts"),0)
+
     def test_valid_session_bad_csrf_does_not_clear_cookies(self):
         for path in ("/auth/start","/auth/logout"):
             for csrf,cookies in ((None,self.cookies),("x"*43,self.cookies),

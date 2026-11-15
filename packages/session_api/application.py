@@ -171,12 +171,12 @@ class SessionWorkspaceApplication(WorkspaceApplication):
                 raise AuthenticationError()
             self._body(environ, set())
             if _SESSION in cookies:
-                self._existing_token(cookies)
-                request = self._verify_request(environ)
+                token = self._existing_token(cookies)
                 try:
+                    request = self._verify_request(environ)
                     self._sessions.transaction(request, lambda policy, actor: None, write=True)
                 except AuthenticationError:
-                    self._reject_or_clear_stale(request.token)
+                    self._reject_or_clear_stale(token)
             attempt = self._coordinator.begin()  # Unconfigured provider: no attempt or cookie.
             params = {"response_type": "code", "client_id": self._sessions.login.binding.audience,
                       "redirect_uri": self._sessions.login.binding.callback_uri,
@@ -204,12 +204,12 @@ class SessionWorkspaceApplication(WorkspaceApplication):
                 _cookie(_CSRF, session.csrf, expires=session.expires_at, now=now, readable=True)]
         if path == "/auth/logout" and method == "POST" and not query:
             self._body(environ, set())
-            self._existing_token(cookies)
-            request = self._verify_request(environ)
+            token = self._existing_token(cookies)
             try:
+                request = self._verify_request(environ)
                 self._sessions.login.logout(request.token, request.csrf)
             except AuthenticationError:
-                self._reject_or_clear_stale(request.token)
+                self._reject_or_clear_stale(token)
             return 200, {"logged_out": True}, _clear_cookies()
         if path == "/auth/session" and method == "GET" and not query:
             request = self._verify_request(environ)
