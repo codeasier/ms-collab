@@ -51,6 +51,6 @@ Return to [frontend](../README.md).
   runs the real synthetic HTTPS flow and uploads four responsive screenshots.
 
 - `fixture-process.cjs`, `fixture-process.test.mjs`: owned synthetic-process
-  cleanup for community and connections acceptance. A bounded SIGTERM wait is
+  cleanup for community, connections and assistant acceptance. A bounded SIGTERM wait is
   followed by forced reaping only on failure; that path still fails the test.
   Cleanup cannot leave an ignored-SIGTERM child keeping the CI process alive.

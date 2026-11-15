@@ -18,6 +18,6 @@ test('ignored SIGTERM is force-reaped but still fails acceptance, never passes b
  try{await assert.rejects(stopSyntheticFixture(child,{graceMs:25,killMs:3000}),/cleanup timed out/);assert.equal(child.signalCode,'SIGKILL');assert.equal(child.listenerCount('exit'),0)}finally{if(child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await once(child,'exit')}}
 })
 
-test('standalone community and connection browser entry points parse before hosted acceptance',()=>{
- for(const file of ['community-browser.cjs','connections.cjs'])execFileSync(process.execPath,['--check',fileURLToPath(new URL(file,import.meta.url))],{stdio:'pipe'})
+test('standalone community, connection and assistant browser entry points parse before hosted acceptance',()=>{
+ for(const file of ['community-browser.cjs','connections.cjs','assistant-browser.cjs'])execFileSync(process.execPath,['--check',fileURLToPath(new URL(file,import.meta.url))],{stdio:'pipe'})
 })
