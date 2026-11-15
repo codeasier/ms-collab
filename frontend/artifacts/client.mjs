@@ -1,11 +1,12 @@
 const id = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const validId = value => typeof value === 'string' && id.test(value) && !/[\r\n]/.test(value)
 const quarter = /^[1-9][0-9]{3}Q[1-4]$/
 const integer = (v, min = 0) => Number.isSafeInteger(v) && v >= min
 const text = (v, n) => typeof v === 'string' && v.length <= n && !/[\u0000-\u001f\u007f]/u.test(v)
 const instant = v => text(v,40) && /(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v))
 const invalid = () => new Error('The service returned an invalid response.')
 export function validateScope(scope) {
-  if (!scope || Object.keys(scope).sort().join() !== 'bucket_id,connection_id,workspace_id' || Object.values(scope).some(v => typeof v !== 'string' || !id.test(v))) throw new Error('Enter valid workspace, connection and bucket IDs.')
+  if (!scope || Object.keys(scope).sort().join() !== 'bucket_id,connection_id,workspace_id' || Object.values(scope).some(v => !validId(v))) throw new Error('Enter valid workspace, connection and bucket IDs.')
   return {...scope}
 }
 const sameScope = (actual, expected) => {validateScope(actual); return Object.keys(expected).every(k => actual[k] === expected[k])}
@@ -14,7 +15,7 @@ export function validKey(value, directory = false) {
 }
 const base = scope => {const s=validateScope(scope);return `/api/workspaces/${s.workspace_id}/artifacts/${s.connection_id}/${s.bucket_id}`}
 export function validateQuarters(data, scope) {
-  if (!data || !sameScope(data.scope,scope) || !integer(data.catalog_revision,1) || !Array.isArray(data.quarters) || data.quarters.some(q=>typeof q!=='string'||!quarter.test(q)) || new Set(data.quarters).size!==data.quarters.length) throw invalid()
+  if (!data || !sameScope(data.scope,scope) || !integer(data.catalog_revision,1) || !Array.isArray(data.quarters) || data.quarters.some(q=>!text(q,6)||!quarter.test(q)) || new Set(data.quarters).size!==data.quarters.length) throw invalid()
   return data
 }
 export function validateResult(data, {scope,selected,page,pageSize,view=''}) {
@@ -47,7 +48,7 @@ export function createClient({fetcher=fetch}={}) {
     clear(){credential=''},
     async quarters(scope,signal){return validateQuarters(await request(base(scope)+'/quarters',{signal}),scope)},
     async query({scope,selected,definition,page=1,pageSize=10,view=''},signal){
-      if(!quarter.test(selected)||!integer(page,1)||page>1000000||![10,20,50].includes(pageSize)||typeof view!=='string'||(view&&!id.test(view)))throw new Error('Invalid query.')
+      if(!text(selected,6)||!quarter.test(selected)||!integer(page,1)||page>1000000||![10,20,50].includes(pageSize)||typeof view!=='string'||(view&&!validId(view)))throw new Error('Invalid query.')
       const path=base(scope);let result
       if(view) result=await request(`${path}/views/${view}?quarter=${selected}&page=${page}&page_size=${pageSize}`,{signal})
       else {
