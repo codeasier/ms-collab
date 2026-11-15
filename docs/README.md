@@ -6,3 +6,5 @@
 - [返回项目首页](../README.md)。
 
 - [可运行本地演示](runnable-demo.md)：运行方式、API、已覆盖检查及未完成边界。
+
+- [Trusted identity boundary](../packages/identity/README.md)：验证器与本地主体绑定接口；不是已接入的登录功能。
