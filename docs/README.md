@@ -43,7 +43,7 @@
 - [Configured unified service host](../packages/application_host/README.md)：同一Cookie/session与策略事务下的七类模块和工作空间/邀请API；真实GitCode仍fail-closed，默认不挂载同步或下载，旧Bearer UI与生产入口不挂载。
 - [Content-bound artifact download API](../packages/artifact_download/README.md)：独立字节授权、固定 OBS GET、完整 hash 校验后限时输出与逐块撤权；含显式配置的 Cookie/session 字节确认和浏览器交接；仅合成 provider/HTTPS 验证，无真实云验收。
 
-- [Unified cookie-only frontend](../packages/application_ui/README.md): workspace, responsibility and configured artifact catalog/whole-candidate approval pages on one current session; artifact refresh remains unmounted; downloads require separate explicit host configuration and grants, and real provider remains unverified.
+- [Unified cookie-only frontend](../packages/application_ui/README.md): workspace, responsibility and configured artifact catalog/whole-candidate approval pages on one current session; artifact refresh requires separate explicit configuration and current permissions; downloads require separate explicit host configuration and grants, and real provider remains unverified.
 - [GUI smoke session UI](../packages/gui_smoke_ui/README.md)：统一 HTTPS Cookie/session 下的已发布任务、状态摘要与详情；无 Token 输入、外部面板、执行或下载，真实登录仍 fail-closed。
 
 - [Community sharing in the unified session entry](../packages/application_ui/README.md#community-sharing-boundary)：同一 Cookie/session 下的授权共享、完整候选集精确审批与版本冲突处理；无 Bearer 转换或上游刷新。
@@ -57,3 +57,5 @@
 - [Pipeline stage/task observations and log boundary](../packages/pipeline_api/LOG_BOUNDARY.md)：固定版本的阶段计数与任务分页，重复ID不等于执行身份；原始日志因隐私契约未建立仍关闭。
 
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.
+
+- [Configured session artifact refresh](../packages/artifact_refresh/README.md)：显式可信 provider、同会话持续授权、共享并发租约、有界采集到私有候选，再完整审批与展示；仅合成 HTTPS 验证，真实云/部署另行验收。

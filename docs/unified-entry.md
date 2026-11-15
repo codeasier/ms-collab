@@ -23,7 +23,7 @@ Public/shared workspaces are not anonymous feeds.
 | `/community/` | Approved content, review and complete-set explicit approval | Provider visibility is not publication; no implicit refresh |
 | `/pipelines/` | Published runs, details and duration observations | Not a runner, upstream trigger, live logs or independent execution proof |
 | `/artifacts/` | Published artifact index and named views | No unapproved-candidate fallback; byte handoff is a separate explicit opt-in |
-| `/artifact-admin/` | Staged metadata review and explicit approval | Separate host flag; no automatic provider refresh |
+| `/artifact-admin/` | Optional private refresh, staged metadata review and explicit approval | Refresh requires a separate trusted configuration and current grant; never automatic publication |
 | `/assistant/` | Current-owner saved display history, archive/restore | Not ACP execution, resume/cancel, prompts, MCP or agent dispatch |
 | `/research-assets/` | Four-type scoped knowledge catalog and literal details | Not binary artifacts, incident diagnosis or command execution |
 | `/gui-smoke/` | Saved task/state/stage observations and fixed-version details | No submit/retry/cancel/refresh/log/download controls; reported success is not a release gate |
