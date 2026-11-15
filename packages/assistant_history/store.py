@@ -53,8 +53,8 @@ def _now(clock):
     return value.astimezone(timezone.utc).isoformat()
 
 
-def authority(policy, owner, workspace, modules, action="read"):
-    """A fence detects scope/binding changes; it never replaces current checks."""
+def authority(policy, owner, workspace, conversation, modules, action="read"):
+    """Bind current authority to fixed scope; no principal-generation claim."""
     if type(modules) is not list or not 1 <= len(modules) <= 16 or modules != sorted(set(modules)) or "assistant" not in modules:
         raise ValueError("invalid_dependencies")
     for module in modules:
@@ -62,7 +62,8 @@ def authority(policy, owner, workspace, modules, action="read"):
         policy.authorize(owner, workspace, module, "read")
         if module == "assistant" and action == "write":policy.authorize(owner, workspace, module, "write")
     principal = policy._principals[owner]
-    return {"issuer": principal.issuer, "subject": principal.subject,
+    return {"scope": {"workspace_id": workspace, "owner_id": owner, "conversation_id": conversation},
+            "issuer": principal.issuer, "subject": principal.subject,
             "workspace_revision": policy._workspaces[workspace].revision,
             "membership_revision": policy._memberships[(workspace,owner)].revision,
             "modules": {key:policy._modules[(workspace,key)].revision for key in modules}}
@@ -77,7 +78,8 @@ def _row(connection, workspace, conversation, owner):
         if row[2] not in {"active","archived"} or timestamp(row[5]) < timestamp(row[4]):
             raise ValueError()
         fence=decode(row[6])
-        if (type(fence) is not dict or set(fence) != {"issuer","subject","workspace_revision","membership_revision","modules"}
+        if (type(fence) is not dict or set(fence) != {"scope","issuer","subject","workspace_revision","membership_revision","modules"}
+                or fence["scope"] != {"workspace_id":workspace,"owner_id":owner,"conversation_id":conversation}
                 or type(fence["modules"]) is not dict or not 1 <= len(fence["modules"]) <= 16):
             raise ValueError()
         for binding in (fence["issuer"],fence["subject"]):
@@ -100,7 +102,7 @@ def authorized_row(policy, connection, owner, workspace, conversation, action="r
     policy.authorize(owner,workspace,"assistant",action)
     row = _row(connection,workspace,conversation,owner)
     expected = row["fence"]
-    if authority(policy,owner,workspace,sorted(expected["modules"]),action) != expected:
+    if authority(policy,owner,workspace,conversation,sorted(expected["modules"]),action) != expected:
         raise PolicyError(404,"not_found")
     return row
 
@@ -131,7 +133,7 @@ def create_conversation(store, *, owner, workspace, conversation, title, require
     if len(modules) != len(required_modules):raise ValueError("duplicate_dependencies")
     def create(policy,connection):
         validate_schema(connection)
-        fence=authority(policy,owner,workspace,modules,"write")
+        fence=authority(policy,owner,workspace,conversation,modules,"write")
         if connection.execute("SELECT COUNT(*) FROM assistant_conversations WHERE workspace_id=? AND owner_id=?",(workspace,owner)).fetchone()[0] >= 100:
             raise PolicyError(409,"conversation_limit")
         if connection.execute("SELECT 1 FROM assistant_conversations WHERE workspace_id=? AND id=?",(workspace,conversation)).fetchone():

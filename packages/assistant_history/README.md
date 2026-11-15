@@ -42,19 +42,34 @@ active workspace, explicit current membership, enabled `assistant` read capabili
 and the original owner. Workspace admins and platform operators do not inherit
 another owner's history; a shared workspace does not make it public.
 
-The record also captures an authorization fence: principal issuer/subject,
+The record also captures an authorization fence: fixed workspace/owner/conversation
+coordinates, current principal issuer/subject,
 workspace and membership revisions, and the revisions of its explicit module
 read dependencies. Every read, append, archive and restore checks current rights
-and that exact fence in the policy transaction. Changed membership, binding,
-workspace or dependency revision cannot resurrect an older privileged history
-merely by restoring access. This is deliberately conservative: even a harmless
-revision change locks the old record. There is no rebind/recovery/migration route.
+and that exact fence in the policy transaction. Misplaced, renamed or reowned
+conversation rows fail closed even when their revision numbers happen to match. Changes that
+advance captured membership, workspace or dependency revisions cannot resurrect
+an older privileged history merely by restoring access. This is deliberately
+conservative: even a harmless revision change locks the old record. There is no
+rebind/recovery/migration route.
+
+**Principal binding and active state are current-value checks, not monotonic
+authorization epochs.** The core principal model has no generation. A trusted
+operator changing a binding and later restoring the exact original issuer/subject,
+or deactivating and reactivating the same principal, can make the history readable
+again if all captured revisions and current permissions still match. This package
+cannot detect such unobserved intermediate changes. A future real identity-rebind
+workflow must add a monotonic generation before promising no resurrection there.
 Resource-specific dependency lineage is **not implemented**; module-level fences
 alone must not be claimed as sufficient for future real tool/resource content.
 
 Writes additionally require current assistant write permission. HTTP credentials
 are revalidated after the callback and before commit, so an expired credential
-rolls back state and audit. Capabilities are current hints, never reusable grants.
+rolls back state and audit. Policy decisions use one SQLite transaction snapshot:
+a concurrent revocation after a read has been authorized affects subsequent
+transactions, not bytes already authorized/read. This is not instantaneous
+cross-transaction cancellation or a tamper-evident database. Capabilities are
+current hints, never reusable grants.
 
 ## HTTP contract
 
@@ -110,7 +125,8 @@ python3 -m unittest discover -s packages/assistant_history/tests -v
 ```
 
 Coverage includes owner/workspace/operator isolation, explicit audience, literal
-malicious-looking text, current permission/dependency loss and restoration,
+malicious-looking text, current permission/dependency loss and restoration, persisted scope misplacement,
+and the explicit current-value-only principal limitation,
 revision-fixed pagination, archive/restore, concurrent lifecycle CAS, schema and
 record corruption, transactional append and credential-expiry rollback, bounds,
 and a loopback WSGI HTTP read/PATCH with a test verifier. No test starts an ACP

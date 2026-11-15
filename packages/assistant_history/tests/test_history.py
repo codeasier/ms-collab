@@ -1,7 +1,6 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
 """All data/verifiers are synthetic. No agent process, network provider or secret."""
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import http.client
 import io
@@ -15,7 +14,7 @@ from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 from packages.assistant_history import AssistantHistoryApplication, DisplayEvent, project_observation, initialize, create_conversation, append_events
-from packages.assistant_history.store import _TABLES, audit
+from packages.assistant_history.store import audit
 from packages.identity import AuthenticationError, Provider, VerifiedIdentity
 from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import Principal, Workspace, Membership, ModuleInstance, SQLiteWorkspaceService, PolicyError, StorageError
@@ -194,6 +193,37 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(request(self.app,token="test-replacement")["body"]["data"]["items"],[])
         self.sql("UPDATE principals SET subject='alice',issuer='https://other.invalid' WHERE id='alice'")
         self.assertEqual(request(self.app,"/one")["status"],401)
+
+    def test_binding_and_active_are_current_checks_not_monotonic_epochs(self):
+        # Core principals have no generation. No promise to detect an intervening
+        # trusted rebind/deactivation after the exact original values are restored.
+        self.sql("UPDATE principals SET subject='replacement' WHERE id='alice'")
+        self.assertEqual(request(self.app,"/one",token="test-replacement")["status"],404)
+        self.sql("UPDATE principals SET subject='alice' WHERE id='alice'")
+        self.assertEqual(request(self.app,"/one")["status"],200)
+        self.sql("UPDATE principals SET active=0 WHERE id='alice'")
+        self.assertEqual(request(self.app,"/one")["status"],401)
+        self.sql("UPDATE principals SET active=1 WHERE id='alice'")
+        self.assertEqual(request(self.app,"/one")["status"],200)
+
+    def test_persisted_scope_rejects_cross_workspace_misplacement(self):
+        self.append()
+        self.sql("UPDATE assistant_events SET workspace_id='beta'")
+        self.sql("UPDATE assistant_conversations SET workspace_id='beta'")
+        self.store.set_membership("admin","alpha","alice",role="developer",state="revoked",expected_revision=1)
+        response=request(self.app,"/one/events",base=BASE.replace("alpha","beta"))
+        self.assertEqual(response["status"],503)
+        self.assertNotIn("Synthetic",str(response))
+        self.assertEqual(request(self.app,base=BASE.replace("alpha","beta"))["status"],503)
+
+    def test_persisted_scope_rejects_renamed_or_reowned_records(self):
+        self.append()
+        self.sql("UPDATE assistant_events SET conversation_id='moved'")
+        self.sql("UPDATE assistant_conversations SET id='moved'")
+        self.assertEqual(request(self.app,"/moved/events")["status"],503)
+        self.sql("UPDATE assistant_events SET conversation_id='one'")
+        self.sql("UPDATE assistant_conversations SET id='one',owner_id='bob'")
+        self.assertEqual(request(self.app,"/one",token="test-bob")["status"],503)
 
     def test_shared_workspace_is_not_public_or_cross_owner(self):
         self.create(workspace="commons")
