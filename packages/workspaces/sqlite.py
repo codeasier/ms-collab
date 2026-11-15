@@ -191,11 +191,13 @@ class SQLiteWorkspaceService:
         connection.execute("UPDATE metadata SET epoch=? WHERE id=1", (service._epoch,))
         connection.executemany("INSERT INTO audit VALUES (?,?,?,?,?,?)", (astuple(e) for e in service._audit[audit_start:]))
 
-    def _transaction(self, operation, *, write, before_commit=None):
+    def _transaction(self, operation, *, write, before_commit=None, with_connection=False):
         """Internal trusted adapter seam, not a request-selected callback.
 
         Identity-aware services may bind an already protocol-verified assertion
         to this snapshot before invoking a protected policy operation.
+        with_connection exposes the SAME transaction only to trusted adapter
+        code for dedicated module tables, never to a request-selected callback.
         """
         try:
             with closing(self._connect()) as connection:
@@ -203,7 +205,7 @@ class SQLiteWorkspaceService:
                 try:
                     service = self._load(connection)
                     audit_start = len(service._audit)
-                    result = operation(service)
+                    result = operation(service, connection) if with_connection else operation(service)
                     if write:
                         self._persist(connection, service, audit_start=audit_start)
                     if before_commit is not None:
