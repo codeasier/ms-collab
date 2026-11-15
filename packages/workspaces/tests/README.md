@@ -60,3 +60,20 @@ is not a supported transition implementation or last-admin/operator proof.
 
 `test_grant_fences.py` covers exact recipient sets, bounded generation fields,
 foreign realm rejection and synthetic identity ABA for scoped grant helpers.
+
+## Bounded-counter regressions
+
+`test_counter_bounds.py` covers exact `MAX`/`MAX-1` record and epoch budgets,
+boolean/type rejection, unchanged same-value membership semantics, both halves
+of admin transfer, archive/last-admin/authorization precedence, competing last
+increments, restart, all-scope rollback after persistence/audit/final-guard
+failure, oversized stored data and explicit v1 migration atomicity. Audit-budget
+boundary tests use a synthetic counted list, not a claimed physically allocated
+multi-quadrillion-row database. No counter reset or identity activation is tested
+as an available operation.
+
+The [invitation regressions](../../workspace_invitations/tests/README.md) cover the
+other current membership writer: accepted invitations and re-enrollment budget
+member/invitation revisions, one policy increment and both audit events together.
+Existing API, session, runtime and browser suites remain integration gates; the
+counter changes do not add UI or a provider/production acceptance claim.

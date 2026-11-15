@@ -171,7 +171,8 @@ class AuthorityFoundationTests(unittest.TestCase):
         store = bootstrap(self.path)
         with closing(sqlite3.connect(self.path, isolation_level=None)) as db: db.execute("UPDATE metadata SET epoch=?", (_MAX_AUTHORITY,))
         before = snapshot(self.path)
-        with self.assertRaises(StorageError): store.set_membership('alpha_admin', 'alpha', 'viewer', role='viewer', state='revoked', expected_revision=1)
+        with self.assertRaises(PolicyError) as caught: store.set_membership('alpha_admin', 'alpha', 'viewer', role='viewer', state='revoked', expected_revision=1)
+        self.assertEqual((caught.exception.status, caught.exception.code), (409, 'counter_exhausted'))
         self.assertEqual(snapshot(self.path), before)
 
     def test_production_modules_do_not_import_fixture_bypass(self):

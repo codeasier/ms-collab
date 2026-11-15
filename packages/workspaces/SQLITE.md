@@ -131,3 +131,23 @@ known v1 schema under a writer lock; ordinary construction never upgrades. It
 retains unrelated module records and old memberships/operators without granting
 identity mutation. See the [migration contract and consumer matrix](../../docs/principal-authority.md)
 for rollback tests, old-grant invalidation boundaries and remaining work.
+
+## Bounded-counter compatibility
+
+This hardening keeps schema v2, table/trigger definitions, runtime installation
+manifests and the explicit v1 migration entry unchanged. Existing stores with
+all revisions in the safe-integer range need no migration, and counters at the
+maximum are retained exactly. Every load rejects out-of-range core revisions or
+audit counters as `invalid_store`; every persistence pass validates counters
+before writing policy rows. HTTP adapters report invalid storage generically.
+Old oversized data is preserved but denied, never rounded, reset or silently
+rewritten. Explicit v1 migration validates the same bounds before commit, so an
+oversized old record rolls back the entire DDL/data migration.
+
+These are application/load/persistence checks, not a new SQL upper-bound CHECK
+or protection against a database administrator. Existing exact-schema identity
+and epoch guards stay unchanged and identity mutation remains unavailable. The
+single-process preflight is atomic for counter exhaustion; SQLite also rolls
+back failures after policy persistence, audit insertion or the final credential
+check. Trusted compound adapters must budget all events/changed counters before
+mutating their state, and retain the shared transaction for later failure paths.

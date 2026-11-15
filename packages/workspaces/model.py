@@ -1,6 +1,9 @@
 """Immutable policy inputs. All records are supplied by a trusted server adapter."""
 from dataclasses import dataclass
 
+# JSON/JavaScript preconditions and every persisted policy counter share this bound.
+MAX_REVISION = 9007199254740991
+
 
 def identifier(value: str) -> None:
     if not isinstance(value, str) or not value or len(value) > 200 or any(c.isspace() for c in value):
@@ -8,8 +11,8 @@ def identifier(value: str) -> None:
 
 
 def revision(value: int) -> None:
-    if type(value) is not int or value < 1:
-        raise ValueError("revision must be a positive integer")
+    if type(value) is not int or not 1 <= value <= MAX_REVISION:
+        raise ValueError("revision must be a positive safe integer")
 
 
 @dataclass(frozen=True)
@@ -27,7 +30,7 @@ class Principal:
         if type(self.active) is not bool:
             raise ValueError("invalid principal state")
         for value in (self.generation, self.authority_epoch):
-            if type(value) is not int or not 1 <= value <= 9007199254740991:
+            if type(value) is not int or not 1 <= value <= MAX_REVISION:
                 raise ValueError("invalid principal authority generation")
 
 
@@ -117,3 +120,7 @@ class AuditEvent:
     action: str
     object_id: str
     revision: int
+
+    def __post_init__(self):
+        revision(self.sequence)
+        revision(self.revision)
