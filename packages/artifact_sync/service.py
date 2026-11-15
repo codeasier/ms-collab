@@ -31,7 +31,10 @@ class ArtifactSynchronizer(WorkspaceApplication):
         return self._verifier.verify(self._provider_key, user_credential)
 
     def refresh(self, user_credential, scope, *, expected_revision):
-        assertion = self._assertion(user_credential)
+        return self._refresh_verified(self._assertion(user_credential), scope, expected_revision=expected_revision)
+
+    def _refresh_verified(self, assertion, scope, *, expected_revision):
+        # Trusted adapter seam only; assertions are never accepted from HTTP fields.
         def inspect(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'refresh')
             policy._match(expected_revision, record.revision)
@@ -80,7 +83,9 @@ class ArtifactSynchronizer(WorkspaceApplication):
 
     def review(self, user_credential, scope, *, expected_revision):
         """Approver-only complete metadata preview; never return credentials/config."""
-        assertion = self._assertion(user_credential)
+        return self._review_verified(self._assertion(user_credential), scope, expected_revision=expected_revision)
+
+    def _review_verified(self, assertion, scope, *, expected_revision):
         def operation(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'review')
             policy._match(expected_revision, record.revision)
@@ -91,15 +96,28 @@ class ArtifactSynchronizer(WorkspaceApplication):
                     'snapshot': snapshot, 'readers': record.policy.readers}
         return self._authenticated_transaction(assertion, operation, with_connection=True)
 
-    def approve(self, user_credential, scope, *, expected_revision, candidate_digest):
-        assertion = self._assertion(user_credential)
+    def approve(self, user_credential, scope, *, expected_revision, candidate_digest, expected_readers=None):
+        return self._approve_verified(self._assertion(user_credential), scope, expected_revision=expected_revision,
+                                      candidate_digest=candidate_digest, expected_readers=expected_readers)
+
+    def _approve_verified(self, assertion, scope, *, expected_revision, candidate_digest, expected_readers=None, require_review=False):
+        if expected_readers is not None:
+            if (type(expected_readers) not in (list, tuple) or not 1 <= len(expected_readers) <= 100
+                    or any(type(v) is not str or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', v) for v in expected_readers)
+                    or list(expected_readers) != sorted(set(expected_readers))):
+                raise PolicyError(400, 'invalid_readers')
+            expected_readers = tuple(expected_readers)
         if type(candidate_digest) is not str or not re.fullmatch(r'[0-9a-f]{64}', candidate_digest):
             raise PolicyError(400, 'invalid_digest')
         def operation(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'approve')
+            if require_review:
+                policy.authorize(actor, scope.workspace_id, 'artifacts', 'read')
             policy._match(expected_revision, record.revision)
             if record.candidate is None:
                 raise PolicyError(404, 'not_found')
+            if expected_readers is not None and expected_readers != record.policy.readers:
+                raise PolicyError(412, 'readers_changed')
             if not hmac.compare_digest(candidate_digest, digest(record.candidate)):
                 raise PolicyError(412, 'candidate_changed')
             revision = save(connection, actor, scope, record, None, record.candidate,

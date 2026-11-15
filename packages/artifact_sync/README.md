@@ -133,3 +133,11 @@ hosted browser fixture exercise the SQLite index through the existing UI without
 real cloud calls; screenshots contain only synthetic approved names. See
 [tests](tests/README.md), [migration provenance](MIGRATION.md) and
 [documentation index](../../docs/README.md).
+
+## Optional management surface
+
+The separate [artifact administration API and browser](../artifact_admin/README.md)
+now expose configured refresh and complete-candidate approval. They require the
+same trusted synchronizer and add mandatory exact-reader comparison to HTTP
+approval. The original package remains a trusted service, not a default listener.
+Protected downloads and live cloud compatibility acceptance are still separate.
