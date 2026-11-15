@@ -37,7 +37,11 @@ rechecked. A synthetic fixture is never imported by the production factory.
   It reviews and approves an existing staged candidate, including every metadata
   row and current reader, with independent digest verification and explicit CAS
   confirmation. Refresh is unavailable: this host has no provider credential
-  loader. An unconfigured refresh request fails closed. Downloads remain unmounted.
+  loader. An unconfigured refresh request fails closed.
+- `HostConfig.artifact_downloads=True` and explicit trusted download configuration
+  optionally add a catalog Check download/Confirm interaction. Availability is
+  independently authorized; the browser shows size/hash and verifies all bytes
+  before native browser handoff. Default configuration still has no downloads.
 - `/app/bootstrap` is fixed public process configuration: available UI modules
   and the configured authorization endpoint. It is **not** user/module discovery
   or a grant. No principal, workspace, credential or provider secret is returned.
@@ -146,6 +150,19 @@ exercises synthetic HTTPS and writes only three synthetic screenshots.
   computed text contrast and five desktop/mobile screenshots. These are not live
   OBS, real identity-provider, deployment or download acceptance evidence.
 
+### Artifact byte handoff
+
+The [download session workflow](../../.github/workflows/artifact-download-session.yml)
+uses synthetic HTTPS, current cookie/CSRF authorization, explicit byte grants and
+in-memory object data. The native browser save is checked for exact length/hash;
+five desktop/mobile/denied screenshots are captured. Binding changes fail before
+provider access, and scope change, pagehide, cancellation and real logout suppress
+late responses, release readers and revoke temporary Blob URLs. Client output is
+bounded to 5 MiB/30 seconds and checked independently before handoff. The UI never
+claims that a browser click proves durable save, or that delivered bytes can be
+recalled. No real cloud, real identity-provider or production deployment is tested.
+
+
 ## Research asset catalog entry
 
 `/research-assets/` is mounted only when `research-assets` is explicitly hosted.
@@ -154,6 +171,7 @@ artifacts. Four types, entity/text filters, stable-revision server-side paging
 and plain-text details share the current cookie session. Source declarations
 never become verified execution or incident diagnosis. No provider acquisition
 or production migration is added. See the [UI contract](../../frontend/research-assets/README.md).
+
 ## Saved assistant history
 
 The optional `/assistant/` page is a current-owner reader over the already mounted

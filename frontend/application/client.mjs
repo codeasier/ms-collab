@@ -1,4 +1,5 @@
 // Cookie-only transport. No session-token getter, bearer construction or storage.
+import {receiveArtifact} from './artifact-downloads.mjs'
 import {readPath} from '../pipelines/client.mjs'
 import {scopeFrom,queryFrom,validateFields} from '../responsibility/client.mjs'
 const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',')
@@ -15,7 +16,7 @@ export function csrfCookie(raw){
  return value
 }
 export function validateBootstrap(data,origin){
- if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','pipelines','community','artifacts','artifact-admin','assistant','research-assets'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
+ if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','pipelines','community','artifacts','artifact-admin','assistant','research-assets','artifact-downloads'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
  if(data.login_configured){const target=new URL(data.authorization_endpoint);if(target.protocol!=='https:'||target.username||target.password||target.search||target.hash||target.href!==data.authorization_endpoint)throw new Error('Invalid login configuration.')}
  else if(data.authorization_endpoint!==null)throw new Error('Invalid login configuration.')
  if(new URL(origin).protocol!=='https:')throw new Error('HTTPS is required.')
@@ -30,7 +31,8 @@ export function authorizationTarget(data,bootstrap,origin){
 }
 export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,onInvalid=()=>{}}={}){
  let active=false,epoch=0
- const clear=()=>{active=false;epoch++}
+ const transfers=new Set()
+ const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
  async function send(path,{method='GET',body,revision,requestKey,signal,login=false,authenticated=false}={}){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
@@ -58,6 +60,12 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||typeof data.principal_id!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(data.principal_id)||/[\u0000-\u0020\u007f]/.test(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},
   logout(){clear();return send('/auth/logout',{method:'POST',body:{}})},
+  async downloadArtifact(binding,{signal,isCurrent=()=>true}={}){
+   if(typeof isCurrent!=='function')throw Error('Invalid download guard.')
+   const turn=epoch,guard=()=>{if(!active||turn!==epoch||!isCurrent())throw Error('Stale session download discarded.')}
+   guard();return receiveArtifact({binding,fetcher,csrf:()=>csrfCookie(cookie()),guard,signal,pending:transfers,
+    onUnauthorized(error){guard();clear();onInvalid(error.message)}})
+  },
   async request(path,options={}){if(!path.startsWith('/api/'))throw new Error('Invalid service path.');return send(path,{...options,authenticated:true,login:false})}
  }
 }

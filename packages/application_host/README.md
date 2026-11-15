@@ -69,16 +69,26 @@ rights.
 The host never forwards to the local demo or generic raw resource API. In
 particular `/modules/*/resources/*` is not mounted: it must not become a shortcut
 around a module's finer publication and ownership fences. Unknown/disabled routes
-return 404. Legacy module browser wrappers and artifact download,
+return 404. Legacy module browser wrappers,
 asset synchronization, responsibility evidence ingestion and pipeline collection
 are **not mounted**. `HostConfig.artifact_administration=True` optionally mounts
 existing artifact status/review/approve routes, requiring the artifacts module.
 It uses the same session transaction boundary and explicitly disables refresh:
-the host has no external artifact credential loader. Current complete candidate,
+the administration adapter has no external artifact credential loader. Current complete candidate,
 reader set, permission and revision are rechecked on approval; configuration is
 not a grant. Community refresh has no credential loader and returns 503;
-its capability reports false. There is no external acquisition or background
-worker configuration in this increment.
+its capability reports false. There is no index/community acquisition or background worker configuration.
+
+`HostConfig.artifact_downloads=True` is a separate opt-in requiring artifacts and
+an exact `ArtifactDownloadConfiguration` with a trusted scoped credential loader.
+The host internally constructs the [byte downloader](../artifact_download/README.md)
+on this same session/policy boundary. It mounts only exact POST availability and
+confirmed download routes; no external URL, bearer conversion, anonymous link or
+metadata-to-download grant exists. Availability has no provider/secret/lease
+side effects. Download requires explicit downloader/content binding and expected
+SHA-256 in the admission transaction, then current session/policy checks throughout
+bounded acquisition and output. Missing configuration fails closed. This does not
+enable index refresh, create grants or assert real-cloud/deployment acceptance.
 
 ## Authentication and transaction seam
 

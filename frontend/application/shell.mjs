@@ -9,6 +9,7 @@ import {validateWorkspaces} from '/manage/client.mjs'
 import {mountWorkspacePage} from '/manage/admin.mjs'
 import {mountPipelinePage} from '../pipelines/runs.mjs'
 import {mountResponsibilityPage} from '../responsibility/browser.mjs'
+import {mountArtifactDownload} from './artifact-download-ui.mjs'
 import {createArtifactSessionClients} from './artifacts-session.mjs'
 import {mountArtifactCatalogPage} from '/artifacts/browser.mjs'
 import {mountArtifactAdministrationPage} from '/artifact-admin/browser.mjs'
@@ -91,7 +92,9 @@ async function start(){
   else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
    const module=document.body.dataset.page;if(!bootstrap.ui_modules.includes(module))throw new Error('This artifact page is not configured on this service.')
    const clients=createArtifactSessionClients(session)
-   page=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
+   const download=module==='artifacts'&&bootstrap.ui_modules.includes('artifact-downloads')?mountArtifactDownload({session}):null
+   if(download)el('download-notice').hidden=false
+   page=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut,onDownload:download?.select,clearDownload:()=>download?.clear()}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
   }
   else if(document.body.dataset.page==='research-assets'){
    if(!bootstrap.ui_modules.includes('research-assets'))throw new Error('Research assets are not configured on this service.')

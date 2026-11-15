@@ -2,13 +2,16 @@
 
 A separately mounted, content-bound **server API** for small approved objects.
 No permanent/presigned URL, anonymous link, client-selected origin, cloud account
-setup or production migration is included. The existing artifact catalog UI is
-still metadata-only; this package does not silently add a download button.
+setup or production migration is included. The legacy catalog remains metadata-only. A separately opted-in unified session
+host can mount the [confirmed-byte browser interaction](SESSION-DESIGN.md);
+metadata access never enables it or grants byte access.
 
 - [Policy and persistent leases](records.py)
 - [Fixed OBS GetObject transport](provider.py)
 - [Acquisition, integrity and output lifecycle](service.py)
-- [Same-origin HTTP adapter](application.py)
+- [Legacy same-origin bearer HTTP adapter](application.py)
+- [Cookie-session adapter and trusted configuration](session.py)
+- [Session integration design](SESSION-DESIGN.md)
 - [Synthetic verification](tests/README.md)
 - [Migration and remaining work](MIGRATION.md)
 
@@ -57,6 +60,37 @@ Before binary headers, failures use the existing value-free JSON error shape.
 After streaming begins, failures abort the iterable with `download_interrupted`,
 never append JSON or report a truncated body as success. Consumers must check
 transport completion, declared size and checksum; a partial file is not valid.
+
+## Explicit cookie/session integration
+
+The unified host requires both `HostConfig.artifact_downloads=True` and an
+`ArtifactDownloadConfiguration` with an explicit scoped credential loader. It
+constructs the downloader on its exact current session/policy boundary; it cannot
+accept a preauthenticated foreign downloader. Omitted configuration mounts no
+route or button. Index refresh remains separately disabled.
+
+Both session routes are exact, same-origin POST with current cookie + CSRF,
+`If-Match` and bounded JSON. `/availability` accepts only `{"key":"..."}` and
+returns the authorized scope/key/size/SHA-256/published revision without a lease,
+secret lookup or provider request. `/download` additionally requires
+`expected_sha256`: admission compares this constraint to the current trusted
+binding in the same transaction **before** any lease, credential or upstream
+operation. A changed digest/publication yields 412, not an automatic retry.
+Possessing a hash is not a grant. Neither route accepts bearer identity or a URL.
+
+The original session request is revalidated at every acquisition/output guard,
+not converted to a cached principal or bearer. Session errors use Cookie/Origin
+cache variation, never a Bearer challenge. Cleanup uses only the exact policy
+store's admitted lease, even after logout. It cannot revive session authority.
+
+The browser first presents exact scope, literal key, size and SHA-256, then needs
+an explicit confirmation. It bounds input to 5 MiB and 30 seconds across fetch,
+reads and digest, verifies headers/length/full hash before creating an ephemeral
+Blob URL, and clears/cancels on scope, session, pagehide or Cancel. Delayed responses
+are fenced even when abort is ignored. No permanent URL, persistent client cache,
+automatic retry or server filename/path forwarding exists. A successful click
+means only **handed to the browser**, not proof a file was saved. Already delivered
+bytes cannot be recalled. Synthetic HTTPS tests are not real cloud acceptance.
 
 ## Integrity, limits and concurrent revocation
 
