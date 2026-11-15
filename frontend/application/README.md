@@ -31,3 +31,9 @@ The `/community/` page mounts the reviewed community board with `createCommunity
 - `research-assets.html`: read-only catalog via the shared cookie client and
   strict [research asset controller](../research-assets/README.md).
 - `/assistant/`: owner-scoped saved display history, exact-revision event pagination and reversible archive/restore. No execution or MCP. See [boundary](../assistant/README.md).
+
+- `gui-smoke.html`, `gui-smoke-session.mjs`: optional shared-session read-only GUI
+  observations. Existing strict scope/snapshot validators and view generation are
+  reused; authentication remains exclusively in the common shell.
+- [Capability/navigation audit](../../docs/unified-entry.md): identical fixed
+  navigation is checked against every supported host module.

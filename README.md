@@ -5,13 +5,16 @@ An open-source organizational collaboration and CI/CD workbench for MindStudio t
 Independently maintained by codeasier. This is not an official MindStudio product
 and does not imply official endorsement.
 
-> Status: early stage. A read-only local demo is available; production migration is not complete.
+> Status: reviewed service/UI slices and a separate local demo are available.
+> Real-provider and production migration acceptance are not complete.
 
 ## Overview
 
 `ms-collab` aims to provide a clean, well-documented foundation for collaborative
-tooling. This repository contains a local synthetic demo and design contracts.
-It is not yet a production application or a replacement for existing services.
+tooling. This repository contains a local synthetic demo plus an explicitly
+configured cookie/session service and modular UI. The service slices have
+synthetic automated acceptance, not live-provider or deployment acceptance.
+They are not yet a production replacement for existing services.
 
 ## Product direction
 
@@ -22,10 +25,12 @@ It is not yet a production application or a replacement for existing services.
   as capabilities that can be enabled separately within each workspace.
 - Clear boundaries between platform governance and workspace self-service.
 
-These are design goals, **not implemented or verified production features**.
-The demo has fixed synthetic memberships, module discovery and a read-only
-synthetic community board (filters and pagination), not real
-login, persistent workspaces, administrator workflows or production isolation.
+The configured service implements workspace policy/persistence, administrator
+workflows and scoped modules with a shared cookie/session entry. See the
+[capability map and limits](docs/unified-entry.md) for what each page actually does.
+Real identity-provider integration and production isolation/deployment still need
+separate acceptance. The loopback demo below remains deliberately synthetic and
+read-only; it does not activate that service composition.
 
 ## Migration approach
 

@@ -40,3 +40,7 @@ Return to [frontend](../README.md).
 - `pipeline-tasks-browser.cjs`: synthetic projected stage/task metadata through
   current cookies, fixed-revision pages, duplicate-ID notices, rejected extra
   fields, close/scope races and revocation. No raw logs or real provider calls.
+- `gui-smoke.test.mjs`, `gui-smoke.cjs`: same-session adapter and real synthetic
+  HTTPS navigation, pagination/CAS, empty/unpublished distinction, literal markup,
+  scope/filter clear, ineffective abort, logout, pagehide and current revocation.
+  Four screenshots are uploaded by [GUI entry CI](../../../.github/workflows/gui-entry.yml).

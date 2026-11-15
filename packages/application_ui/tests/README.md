@@ -27,3 +27,6 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
 - `pipeline_task_fixtures.py` and `test_pipeline_tasks.py`: fictional provider
   projection and cookie-policy task pages. Opt-in browser mode `pipeline-tasks`
   adds only temporary synthetic revision control, never a product mutation.
+- `test_gui_smoke.py`, `gui_browser_server.py`: supported-module/navigation
+  parity, GUI static boundary, current cookie authority and opt-in synthetic HTTPS
+  fixture. The fixture is not imported by production code.
