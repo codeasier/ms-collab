@@ -5,7 +5,7 @@ import {createClient,LatestOperation,scopeFrom,queryFrom,validateFields,sameFiel
 const scope=scopeFrom('alpha','source','sample','project')
 const fields=[{id:'ui',name:'UI',kind:'developer',paths:['ui'],owner_ids:['local:alice'],backup:null}]
 const common={scope,revision:3,config_version:2,identity_namespace:'ms-collab.principal.id',workflow_enabled:false}
-const config={...common,fields}
+const config={...common,fields,references:{state:'current',stale_ids:[],confirmation_token:null}}
 const caps={...common,capabilities:{read:true,edit:true}}
 const row={kind:'issue',number:1,title:'<img src=x onerror=alert(1)>',assignment_status:'unknown',unmapped_paths:[],fields:[],my_field_ids:[],assignee_identity_status:'unknown',review_status:'unverified',approval_available:false,path_evidence:'unavailable',head_sha:'',base_sha:''}
 const candidates={...common,mode:'readonly_foundation',review_status:'unverified',approval_available:false,transport_executable:false,external_effect:'not_observed',items:[row],total:1,offset:0,limit:20,view:'all',incomplete_pull_count:0,directory_status:'not_implemented',coverage:'approved_observed_subset',community_revision:5,snapshot_available:true,snapshot_observed_at:'2026-01-01T00:00:00Z',evidence_current:false,evidence_observed_at:null}
@@ -32,6 +32,7 @@ test('capabilities and config bind exact scope and revisions',()=>{
  assert.equal(validateCapabilities(caps,scope),caps);assert.equal(validateConfig(config,scope,caps),config)
  assert.throws(()=>validateCapabilities({...caps,scope:{...scope,workspace_id:'beta'}},scope))
  assert.throws(()=>validateCapabilities({...caps,capabilities:{read:true,edit:'yes'}},scope))
+ assert.throws(()=>validateConfig({...config,references:{...config.references,confirmation_token:'a'.repeat(64)}},scope,{...caps,capabilities:{read:true,edit:false}}));
  assert.throws(()=>validateConfig({...config,revision:4},scope,caps));assert.throws(()=>validateConfig({...config,workflow_enabled:true},scope))
 })
 test('candidate projection fails closed on scope, revision, view and executable claims',()=>{
@@ -105,4 +106,23 @@ test('configuration equality ignores object key order but keeps semantic orderin
  assert.equal(sameFields(original,[...wire].reverse()),false)
  const renamed=clone(wire);renamed[0].name='Changed';assert.equal(sameFields(original,renamed),false)
  assert.throws(()=>sameFields(original,[{...wire[0],extra:true}]))
+})
+
+
+test('reference status is exact, scoped to current nominations and never inferred',()=>{
+ for(const references of [undefined,null,{state:'legacy',stale_ids:[],confirmation_token:null},{state:'current',stale_ids:['local:alice'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:[],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['other'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['local:alice','local:alice'],confirmation_token:null},{state:'reconfirmation_required',stale_ids:['local:alice'],confirmation_token:'A'.repeat(64)},{...config.references,extra:true}])assert.throws(()=>validateConfig({...config,references},scope))
+ for(const confirmation_token of [null,'a'.repeat(64)]){
+  assert.doesNotThrow(()=>validateConfig({...config,references:{state:'current',stale_ids:[],confirmation_token}},scope))
+  const stale={...config,references:{state:'reconfirmation_required',stale_ids:['local:alice'],confirmation_token}}
+  assert.doesNotThrow(()=>validateConfig(stale,scope));assert.throws(()=>validateCandidates(candidates,scope,stale,queryFrom()))
+ }
+})
+test('reconfirmation is a separate exact POST with proposal and CAS, never retry',async()=>{
+ const requests=[],client=createClient({fetcher:async(url,options)=>{requests.push({url,options});return {ok:false,status:409}}});client.connect('synthetic-only')
+ for(const confirmation_token of [undefined,null,'a'.repeat(63),'A'.repeat(64),'a'.repeat(64)+'\n'])await assert.rejects(client.request(scope,'reconfirm',{fields,revision:3,confirmation_token}))
+ assert.equal(requests.length,0)
+ await assert.rejects(client.request(scope,'reconfirm',{fields,revision:3,confirmation_token:'a'.repeat(64)}),e=>e.status===409)
+ assert.equal(requests.length,1);const {url,options}=requests[0]
+ assert.ok(url.endsWith('/reconfirm'));assert.equal(options.method,'POST');assert.equal(options.headers['If-Match'],'"3"');assert.equal(options.credentials,'omit')
+ assert.deepEqual(JSON.parse(options.body),{fields,confirmation_token:'a'.repeat(64)})
 })

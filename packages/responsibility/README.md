@@ -18,7 +18,10 @@ not automatically become a candidate, reviewer, admin or replacement owner.
 IDs use the local `ms-collab.principal.id` namespace, not display names, email,
 OAuth IDs, REST assignee IDs or organization roles. String equality across
 namespaces is not a mapping. The service additionally verifies nominated owners
-are current active workspace members; local principal IDs must not be reused.
+are current active workspace members. The service additionally preserves
+[realm/generation reference history](../responsibility_api/REFERENCES.md), requiring
+explicit reconfirmation rather than transferring a historical label to a new
+identity. Pure functions alone do not validate those pins.
 Field ownership or kind never grants API, reviewer or GitCode permissions.
 
 Paths match exact text or a directory-boundary prefix: `ui` matches `ui/a`, not

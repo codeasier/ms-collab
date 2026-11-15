@@ -1,5 +1,8 @@
 """Isolated synthetic verifier + real configured API; never a deployable server."""
 from datetime import timedelta
+import os
+import signal
+from .reference_fixture import identity_aba, membership_change
 from wsgiref.simple_server import make_server,WSGIRequestHandler
 from packages.community_board.model import Snapshot,BoardItem
 from packages.community_api.tests.test_application import call
@@ -25,7 +28,18 @@ def main():
         fixture.publish(observations)
         with make_server('127.0.0.1',0,None,handler_class=Quiet) as server:
             origin=f'http://127.0.0.1:{server.server_port}'
-            server.set_app(ResponsibilityUI(api=fixture.app,origin=origin));print(origin,flush=True);server.serve_forever()
+            app=ResponsibilityUI(api=fixture.app,origin=origin)
+            def synthetic(env,start):
+                path=env.get('PATH_INFO')
+                if os.environ.get('MS_COLLAB_SYNTHETIC_RESPONSIBILITY_UI')=='1' and path in {'/synthetic/identity-aba','/synthetic/revoke-target','/synthetic/restore-target'}:
+                    if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
+                        start('403 Forbidden',[('Content-Length','0')]);return [b'']
+                    if path.endswith('identity-aba'):identity_aba(fixture.path,'dev')
+                    else:membership_change(fixture.store,fixture.path,'dev','revoked' if path.endswith('revoke-target') else 'active')
+                    start('200 OK',[('Content-Length','0'),('Cache-Control','no-store')]);return [b'']
+                return app(env,start)
+            signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(SystemExit()))
+            server.set_app(synthetic);print(origin,flush=True);server.serve_forever()
     finally:fixture.doCleanups()
 
 if __name__=='__main__':main()

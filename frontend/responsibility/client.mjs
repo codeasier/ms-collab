@@ -39,10 +39,16 @@ export function validateCapabilities(data,scope){
  if(!object(data,[...common,'capabilities'])||!object(data.capabilities,['read','edit'])||data.capabilities.read!==true||typeof data.capabilities.edit!=='boolean')fail()
  validateCommon(data,scope);return data
 }
+export const validConfirmationToken=value=>exact(/^[0-9a-f]{64}$/,value)
+export function validateReferences(value,fields){
+ const nominated=new Set(fields.flatMap(f=>[...f.owner_ids,...(f.backup?[f.backup.principal_id]:[])]))
+ if(!object(value,['state','stale_ids','confirmation_token'])||!['current','reconfirmation_required'].includes(value.state)||!Array.isArray(value.stale_ids)||!unique(value.stale_ids)||!value.stale_ids.every(id=>exact(principal,id)&&nominated.has(id))||(value.confirmation_token!==null&&!validConfirmationToken(value.confirmation_token))||(value.state==='current'?value.stale_ids.length!==0:value.stale_ids.length===0))fail()
+ return value
+}
 export function validateConfig(data,scope,expected){
- if(!object(data,[...common,'fields']))fail()
- validateCommon(data,scope);validateFields(data.fields)
- if(expected&&(data.revision!==expected.revision||data.config_version!==expected.config_version))fail()
+ if(!object(data,[...common,'fields','references']))fail()
+ validateCommon(data,scope);validateFields(data.fields);validateReferences(data.references,data.fields)
+ if(expected&&(data.revision!==expected.revision||data.config_version!==expected.config_version||expected.capabilities?.edit===false&&data.references.confirmation_token!==null))fail()
  return data
 }
 export function queryFrom(view='all',field='',offset=0){
@@ -50,6 +56,7 @@ export function queryFrom(view='all',field='',offset=0){
  return {view,field_id:field,offset,limit:20}
 }
 export function validateCandidates(data,scope,config,query){
+ if(config.references?.state!=='current')fail()
  if(!object(data,[...common,'mode','review_status','approval_available','transport_executable','external_effect','items','total','offset','limit','view','incomplete_pull_count','directory_status','coverage','community_revision','snapshot_available','snapshot_observed_at','evidence_current','evidence_observed_at']))fail()
  validateCommon(data,scope)
  if(data.revision!==config.revision||data.config_version!==config.config_version||data.mode!=='readonly_foundation'||data.review_status!=='unverified'||data.approval_available!==false||data.transport_executable!==false||data.external_effect!=='not_observed'||data.directory_status!=='not_implemented'||data.coverage!=='approved_observed_subset'||data.offset!==query.offset||data.limit!==query.limit||data.view!==query.view||!integer(data.total)||!integer(data.incomplete_pull_count)||!integer(data.community_revision,1)||typeof data.snapshot_available!=='boolean'||typeof data.evidence_current!=='boolean'||(data.snapshot_available?!timestamp(data.snapshot_observed_at):data.snapshot_observed_at!==null)||(data.evidence_current?!timestamp(data.evidence_observed_at):data.evidence_observed_at!==null)||!Array.isArray(data.items)||data.items.length!==Math.min(query.limit,Math.max(0,data.total-query.offset)))fail()
@@ -81,15 +88,15 @@ export function createClient({fetcher=fetch}={}){
  return {
   connect(value){if(typeof value!=='string'||!value||value.length>8192||/[\s\u0000-\u001f\u007f]/.test(value))throw new Error('Enter a valid opaque credential.');credential=value},
   clear(){credential=''},
-  async request(scope,action,{query,fields,revision,signal}={}){
+  async request(scope,action,{query,fields,revision,confirmation_token,signal}={}){
    if(!credential)throw new Error('Disconnected.')
    const parts=scope.repository.split('/');scopeFrom(scope.workspace_id,scope.connection_id,...parts)
-   if(parts.length!==2||!['capabilities','config','candidates','save'].includes(action))throw new Error('Invalid request.')
-   const headers={Authorization:`Bearer ${credential}`},write=action==='save'
+   if(parts.length!==2||!['capabilities','config','candidates','save','reconfirm'].includes(action))throw new Error('Invalid request.')
+   const headers={Authorization:`Bearer ${credential}`},write=['save','reconfirm'].includes(action)
    let suffix=action==='save'?'config':action,body
-   if(write){if(!integer(revision,1))throw new Error('Current revision required.');validateFields(fields);body=JSON.stringify({fields});if(new TextEncoder().encode(body).length>65536)throw new Error('Configuration exceeds 64 KiB.');headers['If-Match']=`"${revision}"`;headers['Content-Type']='application/json'}
+   if(write){if(!integer(revision,1))throw new Error('Current revision required.');validateFields(fields);if(action==='reconfirm'&&!validConfirmationToken(confirmation_token))throw new Error('Current confirmation proposal required.');body=JSON.stringify(action==='reconfirm'?{fields,confirmation_token}:{fields});if(new TextEncoder().encode(body).length>65536)throw new Error('Configuration exceeds 64 KiB.');headers['If-Match']=`"${revision}"`;headers['Content-Type']='application/json'}
    if(action==='candidates'){const q=queryFrom(query?.view,query?.field_id,query?.offset);if(query.limit!==20)throw new Error('Invalid request.');const params=new URLSearchParams({view:q.view,offset:String(q.offset),limit:String(q.limit)});if(q.view==='field')params.set('field_id',q.field_id);suffix+='?'+params}
-   const response=await fetcher(`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,{method:write?'PUT':'GET',headers,body,signal,credentials:'omit',cache:'no-store',redirect:'error'})
+   const response=await fetcher(`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,{method:action==='reconfirm'?'POST':write?'PUT':'GET',headers,body,signal,credentials:'omit',cache:'no-store',redirect:'error'})
    if(!response.ok){const error=new Error(messageFor(response.status));error.status=response.status;throw error}
    const raw=await response.text();if(raw.length>2097152)fail()
    const payload=JSON.parse(raw);if(!object(payload,['data']))fail();return payload.data

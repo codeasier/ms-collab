@@ -32,3 +32,25 @@ remaining deployment limits are documented in [tests](tests/README.md).
 The business controller now exports an explicit mount function. `entry.mjs` is
 the standalone bearer bootstrap; the [unified session entry](../application/README.md)
 injects cookie-only requests without importing that legacy entry.
+
+## Historical identity and membership references
+
+Configuration responses include strict `references` status. Stale owner/backup
+IDs are labeled **historical, unconfirmed**, not looked up as current people.
+All candidate views and counts remain unavailable while any nominated pin is
+stale. Current authorized editors may still remove/replace stale IDs in the full
+configuration. Ordinary Save never rebinds a previously nominated ID, even after
+removal and re-addition. Ineligible IDs must be replaced before reconfirmation.
+
+The separate **Review identity reconfirmation** button is shown only for stale
+references with an eligible current editor proposal. Its second-stage dialogue
+lists every current owner/backup ID and explains that confirmation binds those
+IDs to CURRENT local identities and memberships, not original people or rights.
+A single explicit confirmation sends `POST /reconfirm` with the exact full
+fields, proposal token and displayed `If-Match` revision. Cancel/Escape, scope
+changes, sign-out, pagehide or a failed/uncertain response clear pending intent;
+no Save, reload, reconnect or conflict automatically confirms or retries.
+
+Both the standalone bearer entry and shared HTTPS session entry mount this same
+controller. The session adapter uses fresh CSRF and cookies only, never a fabricated
+bearer credential. Tokens and identity-provider subjects are never rendered.

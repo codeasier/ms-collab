@@ -1,7 +1,7 @@
 // Cookie-only transport. No session-token getter, bearer construction or storage.
 import {receiveArtifact} from './artifact-downloads.mjs'
 import {readPath} from '../pipelines/client.mjs'
-import {scopeFrom,queryFrom,validateFields} from '../responsibility/client.mjs'
+import {scopeFrom,queryFrom,validateFields,validConfirmationToken} from '../responsibility/client.mjs'
 const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',')
 const token=/^[A-Za-z0-9_-]{43}$/
 const exactToken=value=>typeof value==='string'&&value.match(token)?.[0]===value
@@ -71,12 +71,12 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  }
 }
 export function createResponsibilitySessionClient(session){
- return {clear:()=>session.clear(),async request(scope,action,{query,fields,revision,signal}={}){
+ return {clear:()=>session.clear(),async request(scope,action,{query,fields,revision,confirmation_token,signal}={}){
   const parts=scope.repository.split('/');scopeFrom(scope.workspace_id,scope.connection_id,...parts)
-  if(parts.length!==2||!['capabilities','config','candidates','save'].includes(action))throw new Error('Invalid responsibility request.')
+  if(parts.length!==2||!['capabilities','config','candidates','save','reconfirm'].includes(action))throw new Error('Invalid responsibility request.')
   let suffix=action==='save'?'config':action
   const options={signal}
-  if(action==='save'){validateFields(fields);options.method='PUT';options.body={fields};options.revision=revision}
+  if(['save','reconfirm'].includes(action)){if(!integer(revision))throw new Error('Current revision required.');validateFields(fields);if(action==='reconfirm'&&!validConfirmationToken(confirmation_token))throw new Error('Current confirmation proposal required.');options.method=action==='reconfirm'?'POST':'PUT';options.body=action==='reconfirm'?{fields,confirmation_token}:{fields};options.revision=revision}
   if(action==='candidates'){const q=queryFrom(query?.view,query?.field_id,query?.offset);if(query.limit!==20)throw new Error('Invalid request.');const params=new URLSearchParams({view:q.view,offset:String(q.offset),limit:String(q.limit)});if(q.view==='field')params.set('field_id',q.field_id);suffix+='?'+params}
   return session.request(`/api/workspaces/${scope.workspace_id}/responsibility/${scope.connection_id}/${scope.repository}/${suffix}`,options)
  }}
