@@ -36,8 +36,11 @@ def fixture(*, two_admins=False):
 
 
 class ServiceTests(unittest.TestCase):
+    def fixture(self, **kwargs):
+        return fixture(**kwargs)
+
     def setUp(self):
-        self.store = fixture()
+        self.store = self.fixture()
 
     def error(self, status, code, fn, *args, **kwargs):
         with self.assertRaises(PolicyError) as caught:
@@ -165,7 +168,7 @@ class ServiceTests(unittest.TestCase):
         self.error(409, "replacement_ineligible", self.store.transfer_admin, "alpha_admin", "alpha", "alpha_admin", expected_revision=1, replacement_revision=1)
 
     def test_concurrent_admin_demotion_cannot_remove_last_admin(self):
-        store = fixture(two_admins=True)
+        store = self.fixture(two_admins=True)
         barrier = Barrier(2)
         def demote(actor):
             barrier.wait()
@@ -186,7 +189,7 @@ class ServiceTests(unittest.TestCase):
         self.error(409, "membership_revoked", self.store.set_membership, "alpha_admin", "alpha", "viewer", role="viewer", state="active", expected_revision=2)
 
     def test_prior_decision_does_not_authorize_after_revocation_barrier(self):
-        store = fixture(two_admins=True)
+        store = self.fixture(two_admins=True)
         observed = Event()
         revoked = Event()
         def worker():
@@ -268,7 +271,7 @@ class ServiceTests(unittest.TestCase):
         self.error(409, "membership_revoked", self.store.set_membership, "alpha_admin", "alpha", "viewer", role="viewer", state="active", expected_revision=2)
 
     def test_archive_membership_controls_cannot_expand_authority(self):
-        store = fixture(two_admins=True)
+        store = self.fixture(two_admins=True)
         store.set_workspace_state("operator", "alpha", state="archived", expected_revision=1)
         self.error(409, "archive_privilege_increase", store.set_membership, "alpha_admin", "alpha", "viewer", role="developer", state="active", expected_revision=1)
         self.error(409, "archive_privilege_increase", store.set_membership, "alpha_admin", "alpha", "viewer", role="admin", state="revoked", expected_revision=1)
@@ -278,7 +281,7 @@ class ServiceTests(unittest.TestCase):
         self.error(409, "last_admin", store.set_membership, "alpha_admin", "alpha", "alpha_admin", role="viewer", state="revoked", expected_revision=1)
 
     def test_concurrent_archived_admin_revoke_keeps_last_admin(self):
-        store = fixture(two_admins=True)
+        store = self.fixture(two_admins=True)
         store.set_workspace_state("operator", "alpha", state="archived", expected_revision=1)
         barrier = Barrier(2)
         def revoke(actor):

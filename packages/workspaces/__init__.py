@@ -1,6 +1,7 @@
-"""In-memory, server-side workspace policy reference. No HTTP/auth integration."""
+"""Server-side workspace policy reference. No HTTP/auth integration."""
 from .model import AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace
 from .service import PolicyError, WorkspaceService
+from .sqlite import SQLiteWorkspaceService, StorageError
 
 __all__ = ["AuditEvent", "Decision", "Membership", "ModuleInstance", "Principal", "Resource",
-           "Workspace", "PolicyError", "WorkspaceService"]
+           "Workspace", "PolicyError", "WorkspaceService", "SQLiteWorkspaceService", "StorageError"]

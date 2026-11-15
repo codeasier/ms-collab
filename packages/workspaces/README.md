@@ -1,8 +1,10 @@
 # Workspace policy reference
 
-An independently testable **in-memory server-side policy core**, following the
+An independently testable **server-side policy core**, following the
 [workspace contract](../../docs/workspaces/README.md). Python 3.12+ standard library
-only. No HTTP routes, login, database, providers, files, workers or secrets.
+only. The original `WorkspaceService` is in-memory; an optional
+[SQLite adapter](SQLITE.md) adds local transactions and restart persistence.
+No HTTP routes, login, providers, workers or secrets are added.
 The existing loopback demo does **not** use this service yet.
 
 ## What this increment implements
@@ -72,10 +74,10 @@ demo; this wording does not assert repository branch rules are configured.
 - Module installation/configuration, capability expansion or connector bindings.
 - Explicit sharing, caches/cursors, idempotency, queues/SSE/downloads/exports,
   resource-specific restrictions, filesystem/Agent isolation or provider scope.
-- Durable transactions/audit/outbox, restart recovery or cross-process locking.
-  Only successful local mutations are recorded; read/denial audit and request
-  correlation are not implemented. In-memory audit does not satisfy the
-  durable-audit acceptance gate.
+- External transactions/outbox, read/denial audit and request correlation.
+  The optional SQLite adapter provides local transactional persistence; its
+  successful-mutation metadata is not a complete compliance audit or external
+  side-effect barrier. See its precise [durability limits](SQLITE.md).
 - Automatic rollout to the existing demo or any existing service.
 
 This is a policy implementation slice, **not proof of end-to-end multi-tenant or
