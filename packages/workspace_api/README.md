@@ -93,3 +93,11 @@ safe failure responses. They do not verify any real OAuth/OIDC/JWT provider.
 
 [Identity boundary](../identity/README.md) · [SQLite adapter](../workspaces/SQLITE.md)
 · [Documentation](../../docs/README.md)
+
+## Internal adapter reuse
+
+`_verify_request` and `_authenticated_transaction` are trusted Python adapter
+seams, not routable endpoints. The latter resolves the current identity and
+executes a configured callback in the policy transaction; it never accepts a
+callback from HTTP. [Artifact metadata API](../artifacts_api/README.md) reuses
+this boundary without duplicating authentication or caching policy decisions.
