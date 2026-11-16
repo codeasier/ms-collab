@@ -52,6 +52,12 @@ operation; unsupported versions fail closed, with no automatic upgrade.
   Competing processes on the same local database cannot both authorize against
   stale memberships and then commit. Revision checks, last-admin invariant,
   resource/policy changes and audit append are in one SQLite transaction.
+- New workspace creation also requires the separately reviewed
+  [initial-admin identity precondition](README.md#initial-admin-selection-precondition).
+  Both the direct SQLite method and HTTP composition compare it only after
+  obtaining the writer lock. A target changing between selection and lock
+  acquisition cannot silently receive the new membership. No selection table,
+  secret, expiry/consumption record or policy schema change is introduced.
 - Reads use one `BEGIN` snapshot. A read that began before a revoke may finish
   against the prior snapshot. A later operation observes the committed revoke;
   prior decisions do not grant future writes. This is a transaction-order
@@ -65,6 +71,9 @@ operation; unsupported versions fail closed, with no automatic upgrade.
   and raise `StorageError("store_busy")` after the bounded timeout (default 5s,
   configurable 0–30s). Retry the **whole operation**, reauthenticating as needed
   and retaining revision preconditions; do not replay a prior permission result.
+  Retain the initial-admin selection value too. The HTTP adapter alone provides
+  durable creation-key replay; retrying a direct core creation has no such
+  duplicate-creation protection.
 
 `PolicyError` remains the domain authorization/revision error. `StorageError`
 reports storage unavailability or unsupported/invalid stores without exposing

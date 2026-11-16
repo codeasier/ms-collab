@@ -180,7 +180,9 @@ except PolicyError as error:
         self.assertEqual(reopened.read_resource("beta_admin", "beta", "board", "same").text, "Beta data")
 
     def test_workspace_creation_and_admin_membership_commit_together(self):
-        workspace = self.store.create_workspace("operator", name="Persisted", kind="shared", initial_admin="viewer")
+        selected = self.store.initial_admin_selection("operator", "viewer")["precondition"]
+        workspace = self.store.create_workspace("operator", name="Persisted", kind="shared", initial_admin="viewer",
+                                                expected_initial_admin_selection=selected)
         reopened = SQLiteWorkspaceService(self.path)
         self.assertIn(workspace, reopened.list_workspaces("viewer"))
         self.assertNotIn(workspace, reopened.list_workspaces("operator"))

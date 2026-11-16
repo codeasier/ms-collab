@@ -49,13 +49,32 @@ page discovers the server's control capability and supports:
 
 - Operator-only minimal lifecycle metadata, explicit initial-admin creation,
   suspend/recovery and irreversible archive with a confirmation dialog.
+- Creation requires **Review selected ID**, then a separate Create action. The
+  operator-only exact-ID lookup supplies a precondition tied to the current actor
+  and target identities; Create sends it in `If-Initial-Admin-Match`. Editing the
+  target, cancelling or disconnecting clears the current choice, and late or
+  wrong-target lookup responses cannot restore it. There is no directory list,
+  email/display-name lookup or automatic GET-and-create shortcut.
 - Workspace-admin module list, approved catalog installation (initially disabled),
   revision-checked state changes and read-only archived module metadata.
-- Creation retry keys retained in page memory across an uncertain response; the
-  identical request can be retried without creating another workspace. Keys are
-  cleared on disconnect/pagehide. After leaving the page, verify platform control
-  metadata before creating again. An accepted mutation cannot be cancelled by
-  closing the dialog or aborting its request.
+- Unresolved creation requests retain the original body, key and selection value
+  in page memory. Ordinary failure, closing or reviewing again cannot substitute
+  a new pair for that same body. Only an explicit server 412, which establishes
+  a key miss and no creation, permits a later explicit review to update the
+  selection while retaining the key. A 409 never rotates the key; there is no
+  automatic retry. Pairs clear on disconnect/pagehide, not into browser storage.
+  After leaving the page, verify platform control metadata before creating again.
+  Closing or aborting cannot cancel an already committed mutation.
+
+The selection value is a deterministic identity comparison, not a secret,
+authentication credential, unforgeable proof of human intent, one-time proposal
+or reservation. It has no TTL and need not change on a server restart. Current
+authorization is checked again on every lookup, creation and replay. The
+[HTTP compatibility contract](../workspace_admin_api/README.md#durable-retries-and-transaction-boundary)
+preserves valid old three-field-body exact replay without the new header, but
+old clients cannot make new creations without it. Invitations/other identity
+selection, real login, legacy grant recovery and identity transitions stay closed
+or separately scoped as documented; this UI does not complete those gates.
 
 The base API alone still supports member administration; new controls stay hidden
 when the extension is not configured. No UI flag grants backend authority.
@@ -82,6 +101,10 @@ of synthetic data are uploaded. Real provider login, TLS/reverse-proxy behavior,
 server limits, enrollment/revocation operations and production usability remain
 unverified. All [API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
 continue to apply.
+
+The new [selection acceptance plan](../../frontend/workspace-admin/tests/README.md#initial-admin-selection-acceptance-plan)
+must pass existing CI on the reviewed head. Documentation alone is not an executed
+test result; no local UT/build run is claimed for this increment.
 
 ## Optional identity-addressed invitations
 

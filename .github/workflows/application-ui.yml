@@ -60,6 +60,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-application-ui/overview.png
             ${{ runner.temp }}/ms-collab-application-ui/manage.png
             ${{ runner.temp }}/ms-collab-application-ui/manage-mobile.png
+            ${{ runner.temp }}/ms-collab-application-ui/identity-selection.png
+            ${{ runner.temp }}/ms-collab-application-ui/identity-selection-mobile.png
             ${{ runner.temp }}/ms-collab-application-ui/responsibility.png
             ${{ runner.temp }}/ms-collab-application-ui/mobile.png
             ${{ runner.temp }}/ms-collab-application-ui/conflict.png

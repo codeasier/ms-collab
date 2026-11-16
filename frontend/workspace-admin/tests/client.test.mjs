@@ -61,3 +61,25 @@ test('control characters cannot alter canonical IDs or same-origin routes',async
  const client=createClient({fetcher:async()=>{throw new Error('must not fetch')}});client.connect('synthetic-only')
  for(const value of ['/api/invitations\n','/api/workspaces/alpha/invitations\r'])await assert.rejects(()=>client.request(value),/Invalid service path/)
 })
+
+test('identity selection is exact, canonical and separate from create-only preconditions',async()=>{
+ const {initialAdminSelectionURL,validateInitialAdminSelection,validInitialAdminPrecondition}=await import('../client.mjs')
+ const proof='ias1-'+'a'.repeat(64),selected={initial_admin:'person:1',precondition:proof}
+ assert.equal(initialAdminSelectionURL('person:1'),'/api/control/initial-admin-selections/person%3A1')
+ assert.deepEqual(validateInitialAdminSelection(selected,'person:1'),selected)
+ for(const invalid of [null,[],{...selected,initial_admin:'other'},{...selected,extra:true},{initial_admin:'person:1'},{...selected,precondition:proof+'\n'}])assert.throws(()=>validateInitialAdminSelection(invalid,'person:1'))
+ for(const invalid of ['',proof+'\n',proof.toUpperCase(),proof+'a','"'+proof+'"',null,7])assert.equal(validInitialAdminPrecondition(invalid),false)
+ const calls=[],client=createClient({fetcher:async(path,options)=>{calls.push({path,options});return{ok:true,json:async()=>({data:selected})}}});client.connect('synthetic-only')
+ await client.request(initialAdminSelectionURL('person:1'))
+ const body={name:'Team',kind:'product',initial_admin:'person:1'}
+ await client.request('/api/control/workspaces',{method:'POST',body,requestKey:'fixture',initialAdminPrecondition:proof})
+ await client.request('/api/control/workspaces',{method:'POST',body,requestKey:'fixture'}) // A server-confirmed old key can replay without a new selection.
+ assert.equal(calls[0].options.method,'GET');assert.equal(calls[0].options.body,undefined);assert.equal(calls[0].options.headers['If-Initial-Admin-Match'],undefined)
+ assert.equal(calls[1].options.headers['If-Initial-Admin-Match'],proof);assert.deepEqual(JSON.parse(calls[1].options.body),body);assert.equal(calls[2].options.headers['If-Initial-Admin-Match'],undefined)
+ for(const path of ['/api/control/initial-admin-selections','/api/control/initial-admin-selections/person:1','/api/control/initial-admin-selections/%70erson','/api/control/initial-admin-selections/a%2Fb','/api/control/initial-admin-selections/person?x=1'])await assert.rejects(client.request(path))
+ for(const options of [{method:'POST'},{body:{}},{initialAdminPrecondition:proof}])await assert.rejects(client.request(initialAdminSelectionURL('person:1'),options))
+ for(const path of ['/api/workspaces','/api/control/workspaces/alpha'])await assert.rejects(client.request(path,{method:'POST',initialAdminPrecondition:proof}))
+ await assert.rejects(client.request('/api/control/workspaces',{initialAdminPrecondition:proof}))
+ for(const invalid of [proof+'\n',proof.toUpperCase(),'"'+proof+'"',''])await assert.rejects(client.request('/api/control/workspaces',{method:'POST',initialAdminPrecondition:invalid}))
+ assert.equal(calls.length,3)
+})

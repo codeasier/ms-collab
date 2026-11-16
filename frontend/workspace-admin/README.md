@@ -10,6 +10,14 @@ API. No credentials, identity provider or server are bundled. See the
 
 Optional lifecycle/module controls require the explicitly configured [administration extension](../../packages/workspace_admin_api/README.md); the UI never supplies operator authority or module capabilities.
 
+New workspace creation has separate Review selected ID and Create actions. Its
+identity precondition travels in `If-Initial-Admin-Match`, not the unchanged
+three-field body. An unresolved request retains its original key and precondition
+even if the dialog is reopened or the ID reviewed again. Only a confirmed 412
+allows a later explicit review to replace the value with the same key; 409 never
+rotates it. This is not a credential, timed proposal or automatic retry. See the
+[selection and compatibility contract](../../packages/workspace_admin_api/README.md#initial-admin-identity-selection).
+
 Invitation controls use the [identity-addressed adapter](../../packages/workspace_invitations/README.md):
 explicit existing principal, bounded role, 24-hour validity, signed-in inbox and
 confirm/cancel Join/revoke. No secret link or external message is generated.

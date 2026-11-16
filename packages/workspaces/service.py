@@ -7,10 +7,13 @@ be presented instead of current authorization. External stores/workers must buil
 their own transaction/revocation integration before making isolation claims.
 """
 from dataclasses import replace
+from hashlib import sha256
+import json
+import re
 from threading import RLock
 from uuid import uuid4
 
-from .authority import authority_current, capture_authority, validate_authority
+from .authority import authority_current, capture_authority, principal_pin, validate_authority
 from .model import MAX_REVISION, AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace, revision
 
 
@@ -387,11 +390,43 @@ class WorkspaceService:
             self._changed(actor_id, workspace_id, "workspace.state", workspace_id, new.revision, policy=True)
             return new
 
-    def create_workspace(self, actor_id, *, name, kind, initial_admin):
+    def _initial_admin_selection_token(self, actor_id, initial_admin):
+        # An equality precondition, NOT a credential or authority grant. No
+        # clock/TTL, secret, global policy epoch or mutable membership revision.
+        value = {"version": 1, "purpose": "workspace.create.initial_admin",
+                 "realm": self._realm, "actor": principal_pin(self, actor_id),
+                 "target": principal_pin(self, initial_admin)}
+        encoded = json.dumps(value, ensure_ascii=True, sort_keys=True,
+                             separators=(",", ":")).encode("ascii")
+        return "ias1-" + sha256(encoded).hexdigest()
+
+    def initial_admin_selection(self, actor_id, initial_admin):
+        """Read one explicit current target for a later human-reviewed creation.
+
+        No directory enumeration, identity transition or membership is granted.
+        Callers retain this observation; create rechecks it under its own lock.
+        """
         with self._lock:
             self._operator(actor_id)
-            if initial_admin not in self._principals or not self._principals[initial_admin].active:
-                raise PolicyError(400, "invalid_initial_admin")
+            target = self._principals.get(initial_admin) if type(initial_admin) is str else None
+            if target is None or not target.active:
+                raise PolicyError(404, "initial_admin_unavailable")
+            return {"initial_admin": initial_admin,
+                    "precondition": self._initial_admin_selection_token(actor_id, initial_admin)}
+
+    def create_workspace(self, actor_id, *, name, kind, initial_admin,
+                         expected_initial_admin_selection=None):
+        with self._lock:
+            self._operator(actor_id)
+            if expected_initial_admin_selection is None:
+                raise PolicyError(428, "initial_admin_selection_required")
+            if (type(expected_initial_admin_selection) is not str
+                    or re.fullmatch(r"ias1-[0-9a-f]{64}", expected_initial_admin_selection) is None):
+                raise PolicyError(400, "invalid_initial_admin_selection")
+            target = self._principals.get(initial_admin) if type(initial_admin) is str else None
+            if (target is None or not target.active
+                    or expected_initial_admin_selection != self._initial_admin_selection_token(actor_id, initial_admin)):
+                raise PolicyError(412, "initial_admin_selection_changed")
             try:
                 workspace = Workspace(str(uuid4()), name, kind)
             except ValueError:

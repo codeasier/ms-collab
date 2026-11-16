@@ -43,7 +43,8 @@ The existing bearer, body-size/type and duplicate-key checks continue to apply.
 | --- | --- | --- |
 | GET | `/api/control/capabilities` | Current principal; only `manage_workspaces` boolean |
 | GET | `/api/control/workspaces` | Platform operator; ID/name/kind/state/revision only |
-| POST | `/api/control/workspaces` | Platform operator; `name`, `kind`, `initial_admin` |
+| GET | `/api/control/initial-admin-selections/{principal_id}` | Platform operator; one explicit active target, no query or directory list |
+| POST | `/api/control/workspaces` | Platform operator; unchanged `name`, `kind`, `initial_admin` body; new creation also requires `If-Initial-Admin-Match` |
 | PATCH | `/api/control/workspaces/{id}` | Platform operator; `state`, `If-Match` |
 | GET | `/api/workspaces/{id}/modules` | Current workspace admin; module metadata |
 | GET | `/api/workspaces/{id}/module-catalog` | Active workspace admin; approved templates |
@@ -57,6 +58,45 @@ operator is **not** enrolled unless explicitly nominated for the new workspace,
 and receives no member/module/business-data access to existing workspaces.
 The minimal platform lifecycle list includes suspended spaces for recovery; the
 ordinary `/api/workspaces` list remains membership-scoped and excludes suspension.
+
+### Initial-admin identity selection
+
+Before a **new** creation, explicitly review the selected local ID through the
+single-target GET. Its exact `data` fields are `initial_admin` and `precondition`.
+The latter is `ias1-` followed by 64 lowercase hexadecimal characters. Supply it
+unchanged, without quotes, in the single `If-Initial-Admin-Match` request header,
+alongside the existing `Idempotency-Key`. The three-field JSON body is unchanged;
+neither raw issuer/subject claims nor a client-selected actor are authority.
+
+The deterministic SHA-256 value binds its version and purpose, policy realm and
+both the current operator's and target's local ID, issuer, subject and generation.
+It is an **expected identity value**, not a secret, authentication credential,
+unforgeable server-issued capability or proof that a human selected the right
+person. It has no timestamp, TTL, reservation or single-use consumption. It can
+remain equal across restarts while those identities remain unchanged. Reading a
+selection creates no workspace, membership, retry record or success audit;
+normal session security-clock maintenance still applies in the cookie host.
+
+Creation rechecks current operator authority and, only for an unused retry key,
+compares the supplied value under the same writer lock as the new grant. Missing,
+malformed and no-longer-matching preconditions return respectively
+`428 initial_admin_selection_required`, `400 invalid_initial_admin_selection`
+and `412 initial_admin_selection_changed`, without creating business or retry
+records. Lookup of an unknown/inactive target returns the same
+`404 initial_admin_unavailable`; a formerly selected target that becomes
+unavailable before creation instead fails its precondition. Current
+authentication, target eligibility, policy limits and final session/assertion
+expiry remain independent requirements. The
+[core and SQLite methods](../workspaces/README.md#initial-admin-selection-precondition)
+enforce this condition too; a trusted direct caller cannot omit it and silently
+capture whatever identity currently occupies the ID.
+
+This is exact-ID lookup, not a global directory/search endpoint; it does not
+prevent an authorized operator from probing individual IDs. It does not verify
+external identity, detect choosing the wrong person before the GET, or protect
+against restoring an entire old database with the same realm and identity pins.
+No invitation/other-recipient selection workflow, legacy grant recovery or
+executable identity transition is added.
 
 Workspace transitions preserve the existing policy: active to suspended or
 archived; suspended to active or archived; no transition out of archived and no
@@ -87,11 +127,10 @@ changed. No pruning, automatic key rotation, reset or regrant endpoint exists.
 New records retain strict realm, ID, issuer, subject and generation provenance
 for the executing actor. Creation additionally captures the nominated initial
 admin at execution time, deduplicated if it is the actor. Pins are stored as
-bounded canonical JSON, not a credential or a request body. This identifies who
-was actually nominated then. It does **not** prevent a selected local ID changing
-between a human choosing it and the request acquiring its lock. A server-issued
-identity-selection proposal/precondition remains required before identity
-transitions can be enabled; this retry slice is not that protocol.
+bounded canonical JSON, not a credential or a request body. The separate
+initial-admin selection precondition now detects a changed binding between its
+explicit GET and a new creation acquiring the writer lock. Neither these retry
+records nor that comparison enable identity transitions.
 
 Current authentication and operator/admin authority are checked before looking
 up a key, in the same SQLite transaction. An identical body with all original
@@ -102,6 +141,17 @@ unbound record returns generic `409 idempotency_conflict`, without the old resul
 or identity. Malformed bound provenance/digests/results fail safely with 503.
 A missing result never turns into a cache miss and a second creation.
 
+The order is **current authority → existing-key replay/conflict → new-key
+selection check → creation and retry record**, in one writer transaction. The
+selection header is not part of the body digest or a stored retry credential.
+Existing valid v2 records made with the original three-field body remain exactly
+replayable without a selection header because replay creates no new grant. A new
+request from an old client that omits the header fails with 428; clients must add
+the explicit selection step before making new creations. A stale bound record,
+legacy tombstone, changed body or malformed stored result must never fall through
+to creation, even if a fresh selection is supplied. No retry-table migration or
+new selection secret/table is required.
+
 Creation/installation, provenance, retry metadata and audit commit or roll back
 together. Assertion expiry after mutation but before commit rolls all changes
 back. The existing final session/expiry guards and role/lifecycle rules remain;
@@ -109,12 +159,28 @@ these records do not upgrade memberships/operators or historical audit actor IDs
 Old bearer credentials are not made incarnation-aware by this mechanism.
 Identity mutation remains hard closed; it requires those separate gates.
 
-Retain a key across uncertain responses. The UI retains creation keys only while
-the connected page remains open, has no automatic retries and preserves a 409
-rather than inventing a new key. Inspect currently authorized control/module
-metadata before deliberately starting a new request after a conflict or page
-reload. An aborted request does not undo an already committed mutation. A new
-UUID means a consciously new request, not recovery of the old one.
+Retain a key across uncertain responses. The UI uses explicit **Review selected
+ID → Create** actions, not an automatic GET immediately followed by POST. For an
+unresolved body it retains the original key **and selection value** in page
+memory. Ordinary failure, closing the dialog or reviewing again does not replace
+that pair. Only an explicit server 412, which follows a key miss and no mutation,
+permits a later explicit review to replace the selection value while keeping the
+same key. A 409 never rotates the key. There is no automatic write retry.
+
+Selection state is invalidated by target edits, cancellation and lifecycle
+cleanup; late or wrong-target selection responses cannot become a fresh choice.
+Unresolved retry pairs last only for the connected page and clear on
+disconnect/pagehide, not in cross-session browser storage. Inspect currently
+authorized control/module metadata before deliberately starting a new request
+after a conflict or page reload. An aborted request does not undo an already
+committed mutation. A new UUID means a consciously new request, not recovery of
+the old one.
+
+The configured runtime rejects duplicate raw headers before WSGI normalization.
+The selection parser also rejects merged/list-like or noncanonical values, but
+other WSGI/proxy deployments must still reject duplicate raw headers rather than
+silently choosing one. The header does not replace bearer/session verification,
+Origin checks or CSRF.
 
 ### Explicit offline v1 conversion
 
@@ -161,5 +227,8 @@ duplicate concurrent creation, revocation, expiry/persistence rollback and exact
 payload rejection. The UI workflow adds real synthetic HTTP/browser interactions.
 These tests do not verify real identity login, TLS/proxy behavior, enrollment,
 catalog governance, external cancellation, production data or deployment limits.
+The new [selection acceptance plan](tests/README.md#initial-admin-selection-acceptance-plan)
+requires exact-head existing CI; its documentation is not a passed-test claim,
+and no local UT/build execution is asserted for this increment.
 All [base API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
 still apply.

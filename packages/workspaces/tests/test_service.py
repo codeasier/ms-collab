@@ -88,13 +88,18 @@ class ServiceTests(unittest.TestCase):
         self.error(404, "not_found", self.store.set_membership, "operator", "alpha", "operator", role="admin", state="active", expected_revision=1)
 
     def test_space_creation_is_atomic_with_explicit_initial_admin(self):
-        workspace = self.store.create_workspace("operator", name="New synthetic", kind="product", initial_admin="outsider")
+        selected = self.store.initial_admin_selection("operator", "outsider")["precondition"]
+        workspace = self.store.create_workspace("operator", name="New synthetic", kind="product", initial_admin="outsider",
+                                                expected_initial_admin_selection=selected)
         self.assertNotIn(workspace, self.store.list_workspaces("operator"))
         self.assertEqual(self.store.list_memberships("outsider", workspace.id)[0].role, "admin")
         self.assertEqual(len(workspace.id), 36)
         self.error(403, "forbidden", self.store.create_workspace, "alpha_admin", name="No", kind="product", initial_admin="alpha_admin")
-        self.error(400, "invalid_initial_admin", self.store.create_workspace, "operator", name="No", kind="shared", initial_admin="disabled")
-        self.error(400, "invalid_workspace", self.store.create_workspace, "operator", name="", kind="shared", initial_admin="outsider")
+        self.error(404, "initial_admin_unavailable", self.store.initial_admin_selection, "operator", "disabled")
+        self.error(412, "initial_admin_selection_changed", self.store.create_workspace, "operator", name="No", kind="shared",
+                   initial_admin="disabled", expected_initial_admin_selection=selected)
+        self.error(400, "invalid_workspace", self.store.create_workspace, "operator", name="", kind="shared",
+                   initial_admin="outsider", expected_initial_admin_selection=selected)
 
     def test_composite_resource_identity_and_filtered_counts(self):
         self.assertEqual(self.store.read_resource("multi", "alpha", "board", "same").text, "Alpha data")

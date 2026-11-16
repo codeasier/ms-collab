@@ -1,17 +1,30 @@
-import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations} from './client.mjs'
+import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations, initialAdminSelectionURL, validateInitialAdminSelection} from './client.mjs'
 export function mountWorkspacePage({client,sessionMode=false,onSignOut=()=>{}}) {
 if (!client || typeof client.request !== 'function' || typeof client.clear !== 'function') throw new Error('Explicit request client required.')
 const el = id => document.getElementById(id)
 const pendingCreations = new Map(), pendingInvitations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
 let managementAvailable = false, saveGeneration = 0
+let createSelection, selectionGeneration = 0, selectionController, reviewing = false
+function currentCreateSelection() {
+  return createSelection && createSelection.generation === generation && createSelection.turn === selectionGeneration && createSelection.initial_admin === el('initial-admin').value.trim() && el('create-dialog').open
+}
+function createControls() {
+  el('initial-admin-review').disabled = saving || reviewing || !validId(el('initial-admin').value.trim())
+  el('create-save').disabled = saving || reviewing || !currentCreateSelection()
+}
+function clearCreateSelection() {
+  selectionGeneration++; selectionController?.abort(); selectionController = undefined
+  createSelection = undefined; reviewing = false
+  el('initial-admin-selection').textContent = ''; createControls()
+}
 function cancelRequests() { generation++; controller?.abort(); controller = new AbortController(); return generation }
 function closeEditor() {
   editing = undefined; el('editor').close()
   for (const id of ['editing','edit-status']) el(id).textContent = ''
   for (const id of ['role','member-state']) el(id).selectedIndex = -1
 }
-function closeCreate() { el('create-dialog').close(); el('create-form').reset(); el('create-status').textContent = '' }
+function closeCreate() { clearCreateSelection(); el('create-dialog').close(); el('create-form').reset(); el('create-status').textContent = ''; createControls() }
 function closeAction() {
   action = undefined; el('action-dialog').close()
   for (const id of ['action-title','action-description','action-status']) el(id).textContent = ''
@@ -30,6 +43,7 @@ function busy(value, ticket) {
   saveGeneration++
   saving = value
   for (const control of document.querySelectorAll('dialog button,dialog input,dialog select')) control.disabled = value
+  createControls()
   return saveGeneration
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
@@ -248,20 +262,52 @@ el('edit-form').addEventListener('submit', async event => {
   finally { busy(false,saveTurn) }
 })
 el('create-open').addEventListener('click', () => { closeCreate(); el('create-dialog').showModal() })
+for (const event of ['input','change']) el('initial-admin').addEventListener(event, () => { clearCreateSelection(); el('create-status').textContent = 'Review this identity selection before creating a workspace.' })
+el('initial-admin-review').addEventListener('click', async () => {
+  if (saving || reviewing || !el('create-dialog').open) return
+  clearCreateSelection()
+  const principal = el('initial-admin').value.trim()
+  if (!validId(principal)) { el('create-status').textContent = 'Enter an existing verified principal ID.'; return }
+  const current = generation, turn = selectionGeneration
+  selectionController = new AbortController(); reviewing = true; createControls()
+  el('create-status').textContent = 'Reviewing identity selection… No workspace is being created.'
+  const isCurrent = () => current === generation && turn === selectionGeneration && el('create-dialog').open && el('initial-admin').value.trim() === principal
+  try {
+    const selected = validateInitialAdminSelection(await client.request(initialAdminSelectionURL(principal), {signal:selectionController.signal}), principal)
+    if (!isCurrent()) return
+    createSelection = {...selected, generation:current, turn}
+    el('initial-admin-selection').textContent = `Reviewed initial administrator: ${selected.initial_admin}. Creating checks this exact identity selection again; this review grants no access.`
+    el('create-status').textContent = 'Identity selection reviewed. Choose Create workspace to submit. An unresolved identical request retains its original selection and retry key.'
+  } catch (error) {
+    if (!isCurrent() || error.name === 'AbortError') return
+    if (error.status === 401) { disconnect(error.message); return }
+    el('create-status').textContent = error.status ? error.message : 'Unable to verify this identity selection. Review it again before creating.'
+  } finally { if (isCurrent()) { reviewing = false; createControls() } }
+})
 el('create-form').addEventListener('submit', async event => {
   event.preventDefault(); if (saving) return
   const body = {name:el('space-name').value.trim(),kind:el('space-kind').value,initial_admin:el('initial-admin').value.trim()}
   if (!body.name || !validId(body.initial_admin) || !['product','shared'].includes(body.kind)) { el('create-status').textContent = 'Enter a name and an existing verified principal ID.'; return }
+  if (!currentCreateSelection()) { el('create-status').textContent = 'Explicitly review this identity selection before creating a workspace.'; createControls(); return }
   const signature = JSON.stringify(body)
-  if (!pendingCreations.has(signature)) pendingCreations.set(signature,crypto.randomUUID())
-  const current = generation, requestKey = pendingCreations.get(signature)
+  if (!pendingCreations.has(signature)) pendingCreations.set(signature,{requestKey:crypto.randomUUID(),precondition:createSelection.precondition})
+  const pending = pendingCreations.get(signature)
+  // Only a definitive precondition rejection allows a later explicit review to
+  // replace the original selection. Uncertain results keep the original pair.
+  if (pending.selectionRejected) { pending.precondition = createSelection.precondition; delete pending.selectionRejected }
+  const current = generation, {requestKey,precondition:initialAdminPrecondition} = pending
   const saveTurn = busy(true); el('create-status').textContent = 'Creating… Do not close the page until the result is known.'
   try {
-    const created = await client.request('/api/control/workspaces', {method:'POST',body,requestKey,signal:controller.signal})
+    const created = await client.request('/api/control/workspaces', {method:'POST',body,requestKey,initialAdminPrecondition,signal:controller.signal})
     if (current !== generation) return
     validateWorkspaces([created]); pendingCreations.delete(signature); closeCreate()
     await reload(`Workspace created: ${created.name} (${created.id}). Only its nominated administrator receives membership.`)
-  } catch (error) { await mutationError(error,current,'create-status') }
+  } catch (error) {
+    if (current === generation && error.name !== 'AbortError' && error.status === 412) {
+      pending.selectionRejected = true; clearCreateSelection()
+      el('create-status').textContent = 'Creation was rejected. Explicitly review the initial administrator identity again before retrying; the retry key is unchanged.'
+    } else await mutationError(error,current,'create-status')
+  }
   finally { busy(false,saveTurn) }
 })
 el('install-form').addEventListener('submit', event => {
@@ -309,5 +355,6 @@ if (!sessionMode && location.protocol !== 'https:' && !(location.protocol === 'h
   el('connect').hidden = true; el('status').textContent = 'HTTPS is required outside numeric loopback.'
 }
 
+createControls()
 return {activate(){el('session').hidden=false;return reload()},clear:disconnect}
 }

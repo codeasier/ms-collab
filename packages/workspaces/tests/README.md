@@ -134,3 +134,33 @@ provisioning/rebinding, transition-wide membership/operator revocation, the
 last-eligible-operator transition rule, generation-owned historical audit,
 anti-rollback protection for complete old backups, real GitCode login or
 production migration/deployment acceptance. Those remain separate gates.
+
+## Initial-admin selection acceptance plan
+
+This is the required synthetic plan for the selection increment, not a local
+execution or passed-CI claim. Test the public in-memory and SQLite methods,
+including direct callers, with no real identity transition enabled:
+
+- Exact single-target response, stable value on unchanged identity/reopen,
+  actor-as-target, and no workspace/member/policy-epoch/audit mutation on lookup.
+  Unknown/inactive targets and nonoperators receive no usable selection.
+- Creation without a value, with `None`, malformed values, a different target,
+  another actor or a foreign realm fails without mutation. Canonical comparison
+  must cover issuer, subject and generation, including synthetic A→B→A and
+  inactive→active; no new grant is captured on a mismatch.
+- A separately held SQLite writer lock forces a change after selection but before
+  creation obtains the lock. Use explicit process/thread barriers and retain the
+  original precondition; never hide this race with a fixture that selects again.
+- Actor-incarnation tests explicitly establish a current synthetic operator grant
+  before testing the selection mismatch, so an earlier stale-operator denial
+  cannot make the selection check vacuously pass. No runtime code imports the
+  test-only transition/regrant fixture.
+- Successful creation gives only the nominated current target a new membership;
+  counter, persistence and audit failure preserve all preexisting state. Existing
+  last-admin, operator, legacy-grant and hard-closed identity tests remain gates.
+
+The [administration plan](../../workspace_admin_api/tests/README.md#initial-admin-selection-acceptance-plan)
+adds old v2 replay, expiry/CSRF, cookie/bearer and UI acceptance. This hash is not a
+secret, TTL or single-use proposal. Full-backup rollback, real-provider identity
+verification, invitation/other selection workflows and identity administration
+are not tested as available features by this increment.

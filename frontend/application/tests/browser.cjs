@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
+const {exerciseIdentitySelection}=require('../../workspace-admin/tests/identity-selection.cjs')
 const {stopSyntheticFixtures}=require('./fixture-process.cjs')
 async function within(p,label){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 // Check actual computed foreground/background after the browser has applied both
@@ -63,7 +64,33 @@ async function main(){
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
   await page.getByRole('button',{name:'Edit reader',exact:true}).click();await readable(page,['#editing','#role','#member-state','#save','#cancel']);await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
-  const before=writes.length;await page.locator('#create-open').click();await readable(page,['#create-dialog h2','#space-name','#space-kind','#initial-admin','#create-save','#create-cancel']);await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin');await page.locator('#create-cancel').click();assert.equal(writes.length,before)
+  const managementReady=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#operator-panel').hidden&&document.querySelector('#members').children.length===3&&!document.querySelector('#status').textContent.startsWith('Loading'))
+  const reconnectManagement=async()=>{
+   if((await page.locator('#app-status').textContent()).includes('server session is revoked')){
+    await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden);await page.locator('nav a[href="/manage/"]').click()
+   }else if(await page.locator('#session').isHidden())await page.locator('#app-recheck').click()
+   await managementReady()
+  }
+  await managementReady()
+  await exerciseIdentitySelection({page,router,ready:managementReady,reconnect:reconnectManagement,invalidations:[
+   ()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide'))),
+   ()=>page.evaluate(()=>document.querySelector('#workspace').dispatchEvent(new Event('change'))),
+   ()=>page.evaluate(()=>document.querySelector('#app-recheck').dispatchEvent(new Event('click'))),
+   async()=>{await page.evaluate(()=>document.querySelector('#app-sign-out').dispatchEvent(new Event('click')));await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))}
+  ]})
+  const before=writes.length;await page.locator('#create-open').click();assert.equal(await page.locator('#create-save').isDisabled(),true)
+  await readable(page,['#create-dialog h2','#space-name','#space-kind','#initial-admin','#create-cancel']);await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin')
+  await readable(page,['#initial-admin-review']);await page.locator('#initial-admin-review').click();await page.waitForFunction(()=>!document.querySelector('#create-save').disabled)
+  await readable(page,['#create-save','#initial-admin-review','#initial-admin-selection','#create-status']);await page.screenshot({path:path.join(folder,'identity-selection.png'),fullPage:true})
+  // Layout-only maximum-ID fixture. No create is submitted for this synthetic
+  // identity; actual server selection and create are exercised above.
+  const longPrincipal='principal-'+'x'.repeat(190),longSelectionPath='/api/control/initial-admin-selections/'+longPrincipal
+  router.set(longSelectionPath,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:{initial_admin:longPrincipal,precondition:'ias1-'+'a'.repeat(64)}})}))
+  await page.setViewportSize({width:390,height:844});await page.locator('#initial-admin').fill(longPrincipal);assert.equal(await page.locator('#create-save').isDisabled(),true);await page.locator('#initial-admin-review').click();await page.waitForFunction(()=>!document.querySelector('#create-save').disabled)
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('#create-dialog').scrollWidth<=document.querySelector('#create-dialog').clientWidth))
+  assert.ok((await page.locator('#initial-admin-selection').textContent()).includes(longPrincipal));await readable(page,['#create-save','#initial-admin-review','#initial-admin-selection','#create-status']);await page.screenshot({path:path.join(folder,'identity-selection-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1050})
+  await within(router.drain(),'long identity selection route drain');router.remove(longSelectionPath)
+  await page.locator('#create-cancel').click();assert.equal(writes.length,before)
   await page.locator('#invite-open').click();await readable(page,['#invite-dialog h2','#invite-principal','#invite-role','#invite-save','#invite-cancel']);await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
   // Membership success notice precedes the separately awaited module/invitation reads.
   await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('outsider · developer · pending'))
@@ -128,7 +155,7 @@ async function main(){
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Unified UI scenario or cleanup failed')
  }
- console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and seven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
+ console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and nine responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
 }
 function reportFailure(error){
  console.error(error?.stack||String(error))

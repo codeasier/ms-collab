@@ -9,7 +9,7 @@ from uuid import uuid4
 from packages.workspace_api.tests import test_application as fixtures
 from packages.workspace_admin_api import (ModuleTemplate, WorkspaceAdministrationApplication,
                                          initialize_administration)
-from packages.workspaces import SQLiteWorkspaceService, StorageError
+from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
 
 CONTROL = "/api/control/workspaces"
 MODULES = "/api/workspaces/alpha/modules"
@@ -19,6 +19,7 @@ class AdministrationTests(unittest.TestCase):
     def setUp(self):
         fixtures.ApplicationTests.setUp(self)
         self.base_api = self.app
+        self.creation_selections = {}
         initialize_administration(self.store)
         self.app = WorkspaceAdministrationApplication(api=self.base_api, module_catalog=(
             ModuleTemplate("board", ("read", "write")), ModuleTemplate("pipeline", ("read",))))
@@ -30,8 +31,25 @@ class AdministrationTests(unittest.TestCase):
         return fixtures.call(self.app, path, extra=extra, **kwargs)
 
     def create(self, *, key=None, **kwargs):
-        return self.request(method="POST", key=key or str(uuid4()),
-                            body=kwargs.pop("body", {"name": "New space", "kind": "product", "initial_admin": "other"}), **kwargs)
+        key = key or str(uuid4())
+        body = kwargs.pop("body", {"name": "New space", "kind": "product", "initial_admin": "other"})
+        extra = dict(kwargs.pop("extra", {}))
+        if "HTTP_IF_INITIAL_ADMIN_MATCH" not in extra:
+            # Existing administration/retry tests explicitly prepare once per
+            # synthetic attempt. Retain it on replay/ABA; NEVER silently refresh
+            # an uncertain request. Selection adversarial tests use raw requests.
+            target = body.get("initial_admin") if type(body) is dict else None
+            identity = (key, target if type(target) is str else None)
+            if identity not in self.creation_selections:
+                try:
+                    selected = self.store.initial_admin_selection("admin", target)["precondition"]
+                except (PolicyError, StorageError):
+                    # Preserve negative authorization/schema/target test paths;
+                    # this well-shaped unmatched value never grants anything.
+                    selected = "ias1-" + "0" * 64
+                self.creation_selections[identity] = selected
+            extra["HTTP_IF_INITIAL_ADMIN_MATCH"] = self.creation_selections[identity]
+        return self.request(method="POST", key=key, body=body, extra=extra, **kwargs)
 
     def install(self, *, key=None, **kwargs):
         return self.request(MODULES, method="POST", key=key or str(uuid4()),
@@ -115,7 +133,7 @@ class AdministrationTests(unittest.TestCase):
 
     def test_create_rejects_unverified_inactive_and_client_supplied_authority(self):
         for principal in ("missing", "disabled"):
-            self.assertEqual(self.create(body={"name": "X", "kind": "product", "initial_admin": principal})["status"], 400)
+            self.assertEqual(self.create(body={"name": "X", "kind": "product", "initial_admin": principal})["status"], 412)
         for body in ({"name": "X", "kind": "public", "initial_admin": "admin"},
                      {"name": "", "kind": "product", "initial_admin": "admin"},
                      {"name": "X", "kind": "product", "initial_admin": "admin", "operator": True},

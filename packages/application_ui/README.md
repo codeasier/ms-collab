@@ -21,7 +21,9 @@ rechecked. A synthetic fixture is never imported by the production factory.
 
 - `/` shows only the current authenticated user's accessible workspaces.
 - `/manage/` reuses the reviewed membership, invitation, module and platform
-  lifecycle controller with a cookie-only request client.
+  lifecycle controller with a cookie-only request client. New workspace creation
+  uses separate initial-admin Review and Create actions, preserving the
+  [identity precondition and unresolved-retry contract](../workspace_admin_api/README.md#initial-admin-identity-selection).
 - `/responsibility/` reuses reviewed exact-scope configuration/CAS and candidate
   controls. It exists only when the host enables responsibility/community.
 - `/community/` reuses the explicit-content sharing board with exact-scope
@@ -82,8 +84,11 @@ Every 401 clears module/account state. Pagehide invalidates both controller and
 session epochs, aborting/dropping old replies even when AbortSignal is ineffective.
 A restored page requires an explicit session recheck. Cancellation never promises
 that an already committed mutation was undone. No automatic login or write retry
-is added. Existing server-issued retry keys for uncertain workspace/invitation
-creation remain page-memory-only and clear with the lifecycle.
+is added. Client-generated retry keys for uncertain workspace/invitation creation
+remain page-memory-only and clear with the lifecycle. An unresolved workspace
+creation also retains its original selection value; reviewing again alone cannot
+replace it. Only an explicit 412 permits a later user review to update that value
+while keeping the key, and a 409 never rotates the pair.
 
 This slice does not add module/repository discovery, real GitCode login evidence,
 real-provider compatibility, execution, production TLS setup or deployment acceptance.

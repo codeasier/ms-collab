@@ -212,6 +212,7 @@ class MembershipAuthorityContract:
         self.assertTrue(self.inspect(lambda p: p._membership_current('alpha_admin', 'alpha')))
 
     def test_stale_operator_loses_control_but_never_gains_private_membership(self):
+        selected = self.store.initial_admin_selection('operator', 'outsider')['precondition']
         pins = self.pins()
         self.assertEqual(len(self.store.list_control_workspaces('operator')), 3)
         self.deny(404, 'not_found', lambda: self.store.read_resource('operator', 'alpha', 'board', 'same'))
@@ -222,7 +223,8 @@ class MembershipAuthorityContract:
             self.deny(403, 'forbidden', lambda: self.store.set_workspace_state(
                 'operator', 'alpha', state='suspended', expected_revision=1))
             self.deny(403, 'forbidden', lambda: self.store.create_workspace(
-                'operator', name='Not granted', kind='product', initial_admin='outsider'))
+                'operator', name='Not granted', kind='product', initial_admin='outsider',
+                expected_initial_admin_selection=selected))
         self.assertEqual(self.pins(), pins)
 
     def test_last_current_admin_is_protected_despite_other_active_admin_row(self):
@@ -277,8 +279,10 @@ class MembershipAuthorityContract:
 
     def test_explicit_new_workspace_and_membership_grants_capture_current_owner(self):
         self.change_identity('outsider', subject='replacement-outsider')
+        selected = self.store.initial_admin_selection('operator', 'outsider')['precondition']
         workspace = self.store.create_workspace('operator', name='Synthetic fresh grant',
-                                                kind='product', initial_admin='outsider')
+                                                kind='product', initial_admin='outsider',
+                                                expected_initial_admin_selection=selected)
         self.assertTrue(self.inspect(lambda p: p._membership_current('outsider', workspace.id)))
         self.mutate(lambda p: p._grant_membership(Membership('alpha', 'outsider', 'viewer')))
         self.assertEqual(self.inspect(lambda p: p._membership_authority[('alpha', 'outsider')]),
@@ -423,6 +427,7 @@ class SQLiteMembershipAuthorityTests(MembershipAuthorityContract, unittest.TestC
         for number, sql in enumerate(extensions):
             path = self.path.with_name(f'extended-{number}.sqlite')
             store = bootstrap(path, two_admins=True)
+            selected = store.initial_admin_selection('operator', 'outsider')['precondition']
             with closing(sqlite3.connect(path, isolation_level=None)) as db:
                 db.execute(sql)
             before = snapshot(path)
@@ -431,7 +436,8 @@ class SQLiteMembershipAuthorityTests(MembershipAuthorityContract, unittest.TestC
                           lambda: store.update_resource('alpha_admin', 'alpha', 'board', 'same',
                                                         text='must not persist', expected_revision=1),
                           lambda: store.create_workspace('operator', name='No unsafe trigger',
-                                                         kind='product', initial_admin='outsider'))
+                                                         kind='product', initial_admin='outsider',
+                                                         expected_initial_admin_selection=selected))
             for operation in operations:
                 with self.subTest(sql=sql), self.assertRaises(StorageError) as caught:
                     operation()

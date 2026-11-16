@@ -84,6 +84,41 @@ Schema v3 is intentional: a v2 adapter must reject its `user_version`, rather
 than silently ignore additive sidecars and revert to local-ID authorization.
 This version check is not backup anti-rollback protection.
 
+## Initial-admin selection before new workspace creation
+
+The operator's [creation workflow](../packages/workspace_admin_api/README.md#initial-admin-identity-selection)
+now separates a single-target identity review from confirmation of a new grant.
+`GET /api/control/initial-admin-selections/{principal_id}` returns only the exact
+selected local ID and an `ias1-` SHA-256 precondition. It binds version, purpose,
+realm and both actor/target local ID, issuer, subject and generation. A new
+creation must supply `If-Initial-Admin-Match`; the core and SQLite public methods
+also require the expected value and compare under the mutation lock.
+
+This is an equality precondition, not a secret, unforgeable proposal,
+authentication capability or external identity verification. There is no TTL,
+single-use consumption, identity reservation or new storage schema. An unchanged
+value can survive normal restart. It does not establish that the person chosen
+before the GET was correct, and restoring a full historical database with the
+same pins is still outside the anti-rollback guarantee.
+
+The original three-field create body, v2 retry namespace/digest and persistent
+actor/target provenance are retained. Current authority is checked first; a
+valid existing-key exact replay returns without a new selection requirement or
+new grant. Only an unused key must pass the selection check. Old clients can
+therefore recover a still-current old result but cannot create a new space
+without the new header. Stale pins/tombstones/conflicting bodies never become
+fresh requests. The UI requires explicit Review and Create actions and preserves
+unresolved key/precondition pairs; only a confirmed no-write 412 permits a later
+explicit review to update the precondition with the same key.
+
+This closes only the new workspace initial-admin selection-to-write race.
+Invitations and other recipient-selection workflows, durable grant recovery,
+transition-wide revocation, last-eligible-operator safeguards and historical audit
+ownership remain separate gates. Both identity mutation entry points and real
+GitCode login remain hard closed. The
+[selection acceptance plan](../packages/workspace_admin_api/tests/README.md#initial-admin-selection-acceptance-plan)
+requires exact-head CI and is not itself an execution result.
+
 ## Login/session transaction boundary
 
 Composing `SessionPolicyStore` binds its login-store object to one initialized
@@ -180,7 +215,7 @@ here before identity administration can open.
 | Artifact index/read/review/approve/refresh | Persistent role grants and approver/membership provenance; explicit destructive CAS regrant; admission-origin flow pin and before/after-page checks on both bearer and cookie paths. [Contract](../packages/artifact_sync/GRANTS.md). | Legacy payloads stay unavailable until explicit regrant; no actual identity mutation or live-provider acceptance is enabled. |
 | Pipeline snapshots and acquisition | Reads use current workspace/module policy. [Bearer acquisition](../packages/pipeline_sync/README.md) pins realm/local actor/issuer/subject/generation and scoped workspace/membership/module revisions across each GET and final publication; no automatic recapture within a flow. | New requests also require current durable workspace membership grants; transition-wide revocation before identity administration remains unimplemented. Dispatch is not atomic with local checks; remote pagination/live compatibility and whole-policy rollback remain outside this slice. |
 | Research assets | Acquisition pins realm, ID, issuer/subject, generation and current membership/workspace/read-module/sync-module revisions before and after each source, then again under the publication writer lock. Reads keep current workspace/module policy and fixed source binding. | The trusted prepare call is one boundary, not proof of authority checks for every provider-internal request. Real adapters, identity-safe membership transitions and backup anti-rollback remain separate gates. |
-| Administrative creation/installation retries | [Identity-owned v2 records](../packages/workspace_admin_api/README.md#durable-retries-and-transaction-boundary) retain the old key namespace; actor/initial-admin pins gate replay, legacy records become permanent conflict tombstones only through explicit offline conversion. | New-request identity selection/preconditions, runtime upgrade recovery and incarnation-aware authentication remain separate gates. Historical audit actor IDs are not upgraded. |
+| Administrative creation/installation retries and initial-admin selection | [Identity-owned v2 records](../packages/workspace_admin_api/README.md#durable-retries-and-transaction-boundary) retain the old key namespace/digest; actor/initial-admin pins gate replay. New workspace creation additionally compares an explicitly reviewed actor/target identity value under the writer lock; old exact replay creates no grant and remains compatible without the header. | Invitation/other-recipient selection, runtime upgrade recovery and incarnation-aware authentication remain separate gates. The precondition is neither a credential nor a timed/consumable proposal. Historical audit actor IDs are not upgraded. |
 | Memberships and operators | V3 persistent sidecars bind realm/local ID/issuer/subject/generation; legacy upgrades leave explicit NULL tombstones; ordinary edits, transfer and invitations never repin stale grants. Eligibility checks exclude stale admins/operators. | Explicit recovery/regrant, executable transition-wide revocation and last-eligible-operator transition safeguards remain unfinished. Valid legacy zero-operator databases must not gain an invented operator. Historical audit actors remain unpinned. |
 | Responsibility grants, owner/backup references and path evidence | [Bound grants and reference history](../packages/responsibility_api/REFERENCES.md); ordinary edits retain retired pins; explicit current-editor proposal/CAS reconfirmation; publisher provenance gates retained evidence. Legacy requires an explicit destructive current-admin grant reset; mixed formats deny. | Ownership remains observation, never permission/assignment. Trusted actor inputs require separate host authentication; real recovery, identity transitions and whole-policy rollback remain outside this slice. |
 | Community connection self-management and directory | Fixed installed template pins bind realm + local ID + issuer/subject + generation; missing/old pins fail closed. Current manager/admin and selected-member eligibility are rechecked. | Template constraints supplement the separate community data-plane grants above; they never upgrade legacy/stale data pins. No automatic repinning or template migration. |
