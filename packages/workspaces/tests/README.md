@@ -29,9 +29,9 @@ as authorization.
 ## SQLite adapter coverage
 
 `test_sqlite.py` reuses the service behavior suite with disposable SQLite stores
-and adds 21 storage-specific tests. The combined discovery currently runs 94
-cases: 38 original model/policy tests, 35 inherited policy cases and 21 storage
-cases (the inherited issuer uniqueness case still tests the model constructor).
+and adds storage-specific cases. Test totals are not a substitute for exact-head
+CI evidence; new authority/migration cases extend the original suite. The
+inherited issuer uniqueness case still tests the model constructor.
 Separate-process checks synchronize over pipes; thread races use barriers rather
 than timing sleeps. New coverage includes:
 
@@ -77,3 +77,60 @@ other current membership writer: accepted invitations and re-enrollment budget
 member/invitation revisions, one policy increment and both audit events together.
 Existing API, session, runtime and browser suites remain integration gates; the
 counter changes do not add UI or a provider/production acceptance claim.
+
+
+## V3 membership/operator acceptance plan
+
+This is the required synthetic regression plan, **not a claim that the candidate
+has passed**. No local UT/build execution is claimed for this increment. Existing
+public CI must run against the exact reviewed head, including workspace,
+invitation, administration, connection, module-provenance, session and configured
+runtime suites. A passing earlier revision does not validate later changes.
+
+- Fresh trusted bootstrap, workspace creation and first-time invitation acceptance
+  persist exact realm/local-ID/issuer/subject/generation ownership and survive
+  reopen. Public membership/API responses keep their previous shape without
+  exposing private pins.
+- Normal constructors reject v1/v2 and never mutate them. Explicit offline
+  upgrades preserve old rows, revisions, audit/module data and v2 authority realm,
+  adding exactly one all-NULL tombstone per legacy member/operator. No load,
+  unrelated mutation, invitation replay or runtime composition backfills them.
+- Inject failure at every upgrade DDL, sidecar/tombstone write, validation and
+  final version boundary. Assert transaction rollback preserves the complete
+  source schema, records, indexes/triggers and version. Unknown/partial schemas,
+  missing/extra sidecar keys, partial NULLs and malformed pin counters deny.
+  Unknown sidecar triggers/custom indexes reject normal open/operations; synthetic
+  cross-table triggers that change pins during core/audit persistence must roll
+  back every affected row, revision and audit event.
+- Complete stale/foreign-realm pins load as retained data but deny membership,
+  operator capabilities and protected reads/writes. A→B→A, same-subject newer
+  generation and inactive→active simulations never revive old grants. An
+  orphaned space remains loadable without authorizing any stale/NULL member;
+  unrelated valid scopes remain usable. Valid zero-operator stores stay zero.
+- Last-admin tests exclude stale active admins in every workspace lifecycle.
+  Ordinary edits retain pins, stale-target active edits and admin transfer deny,
+  and revocation never repairs a stale pin. Invitation acceptance for a revoked
+  member retains a current old pin, but rejects stale/NULL prior ownership;
+  revision/epoch/audit failure leaves all membership and invitation state intact.
+- Direct consumer eligibility checks must also honor the durable membership or
+  operator pin: control capability reporting, invitation inviter validation,
+  connection recipient selection, responsibility references/evidence and
+  community/artifact approval provenance. A fresh module-level grant must not
+  compensate for a stale workspace membership.
+- Old v2 adapter/version expectations and old configured-runtime manifests must
+  reject a v3 layout. Both `set_principal` entry points and all SQL identity guards
+  remain hard closed; runtime/provider flags remain disabled. Production code
+  must never import the test-only identity-transition helper.
+
+Core ownership tests keep the original test-only identity simulation, without
+regranting memberships or operators. Separate downstream-consumer fixtures may
+explicitly regrant only their synthetic core pins so their own module/history/
+retry generation fences are exercised rather than hidden by an earlier core
+denial. That fixture is not a runtime recovery API; its callers must establish
+that current core authorization succeeds before asserting a downstream denial.
+
+These checks do not implement explicit legacy recovery, identity-safe
+provisioning/rebinding, transition-wide membership/operator revocation, the
+last-eligible-operator transition rule, generation-owned historical audit,
+anti-rollback protection for complete old backups, real GitCode login or
+production migration/deployment acceptance. Those remain separate gates.

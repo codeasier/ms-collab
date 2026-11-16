@@ -181,7 +181,7 @@ def approval_current(policy, state):
     actor=proof['actor'];member=policy._memberships.get((state.policy.scope.workspace_id,actor))
     return (actor in state.policy.approver_ids and authority_current(policy,actor,state.authority)
             and authority_current(policy,actor,proof['authority'])
-            and member is not None and member.state=='active' and member.role=='admin'
+            and policy._membership_current(actor,state.policy.scope.workspace_id) and member.role=='admin'
             and member.revision==proof['membership_revision']
             and proof['config_digest']==hashlib.sha256(state.config_raw.encode('ascii')).hexdigest())
 

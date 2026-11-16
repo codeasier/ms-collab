@@ -179,7 +179,7 @@ def publication_current(policy, record):
     member = policy._memberships.get((record.policy.connection.scope.workspace_id,actor))
     return (actor in record.policy.approvers and authority_current(policy,actor,record.authority)
             and authority_current(policy,actor,proof['authority'])
-            and member is not None and member.state == 'active' and member.role == 'admin'
+            and policy._membership_current(actor,record.policy.connection.scope.workspace_id) and member.role == 'admin'
             and member.revision == proof['membership_revision']
             and proof['policy_digest'] == digest(record.policy_raw))
 

@@ -18,7 +18,8 @@ The existing loopback demo does **not** use this service yet.
   counts/pagination. The small text resource is a reference model, not a migrated
   board, artifact, pipeline or assistant store.
 - Optimistic revisions on updates, active-admin invariant and atomic admin
-  transfer. Concurrent demotion cannot remove the last eligible admin.
+  transfer. Concurrent demotion cannot remove the last eligible admin. Eligibility
+  requires the durable membership pin, not only an active local-ID row.
 - Immediate deny on revocation, module disabling, or workspace suspension;
   archived spaces permit authorized retained local reads and only reducing/revoking
   existing membership authority, so archived readers can still lose access.
@@ -89,10 +90,29 @@ production isolation**. Integrations must use the contract's negative tests and
 report their own evidence. No original repository code, production data or
 private operations history is included.
 
-## Closed principal authority foundation
+## Closed principal authority and persistent grant ownership
 
 Principal generation/authority epoch and SQLite realm are available to reviewed
-consumers. Identity mutations remain unconditionally unavailable in both service
+consumers. Policy schema v3 adds separate membership/operator authority records
+without changing the public `Membership` fields. A grant must match realm, local
+principal ID, issuer, subject and generation; stale admins/operators do not count
+as eligible authority. Explicit trusted fresh bootstrap captures pins, whereas
+strict persisted loading never captures or repairs them.
+
+Explicit offline v1/v2 policy upgrades preserve old records and add all-NULL
+grant tombstones. They do not adopt legacy rows as current grants. Missing or
+partial/corrupt sidecars reject storage; complete stale pins deny the affected
+grants. Retained workspaces without eligible admins remain structurally loadable,
+not authorized, and valid zero-operator stores do not gain an operator.
+
+Ordinary member edits preserve pins; stale grants may be revoked but not promoted
+or repaired. Admin transfer requires a current replacement. Invitations may
+capture a genuinely new member, or re-enroll a revoked member with its existing
+current pin, never repin a stale or NULL prior grant. Explicit recovery/regrant is
+not provided by this slice. Historical audit actor IDs remain historical local
+references, not proof of a current identity.
+
+Identity mutations remain unconditionally unavailable in both service
 implementations, with database guards on the persisted directory. No flag enables
 rebinding, disable/reenable or provisioning. The [foundation contract](../../docs/principal-authority.md)
 describes explicit schema upgrades, retained legacy grants and gates before a

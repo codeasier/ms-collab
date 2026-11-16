@@ -7,7 +7,7 @@ import json
 import socket
 import sqlite3
 import tempfile
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 import unittest
 from unittest.mock import Mock, patch
 

@@ -40,6 +40,14 @@ class ConnectionTests(CommunityTests):
         return self.request('/manage/source-policy', method='PATCH', body=grants,
             revision=self.state().revision if revision is None else revision, **kwargs)
 
+    def test_current_template_pin_does_not_make_unbound_member_eligible(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id='alpha' AND principal_id='reader'")
+        options=self.request('/manage')['body']['data']['items'][0]['options']
+        self.assertFalse(next(o for o in options if o['principal_id']=='reader')['eligible']['reader_ids'])
+        values={k:list(getattr(config(),k)) for k in GRANTS}
+        self.assertEqual(self.change(grants=values)['status'],400)
+
     def test_discovery_filters_exact_workspace_and_explicit_readers(self):
         d=self.request(token='test-reader')['body']['data']
         self.assertEqual(len(d['items']), 1); self.assertEqual(d['items'][0]['scope'], SCOPE.as_dict())
@@ -250,7 +258,7 @@ class ConnectionTests(CommunityTests):
         with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT * FROM community_connections').fetchall(),before)
 
     def test_fresh_template_cannot_make_regular_edit_recapture_old_data_pin(self):
-        from packages.workspaces.tests.identity_fixture import simulate_identity
+        from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
         from packages.workspace_connections.records import identity
         self.assertEqual(self.change()['status'],200)
         with sqlite3.connect(self.path) as db:

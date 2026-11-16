@@ -88,7 +88,7 @@ def _references(config):
 def _eligible(policy,scope,ids):
     for ident in ids:
         principal=policy._principals.get(ident);member=policy._memberships.get((scope.workspace_id,ident))
-        if principal is None or not principal.active or member is None or member.state!='active':
+        if not policy._membership_current(ident,scope.workspace_id):
             raise PolicyError(400,'reference_not_current_member')
         _integer(member.revision)
 
@@ -194,7 +194,7 @@ def reference_current(policy,scope,history,ident):
     binding=history['authority']['principals'].get(ident)
     return (principal is not None and principal.active and history['authority']['realm']==policy._realm
             and binding=={'issuer':principal.issuer,'subject':principal.subject,'generation':principal.generation}
-            and member is not None and member.state=='active'
+            and policy._membership_current(ident,scope.workspace_id)
             and member.revision==history['memberships'].get(ident))
 
 
@@ -251,7 +251,7 @@ def evidence_current(policy,state,community):
     return (proof['grant_revision']==state['grant_revision'] and authority_current(policy,actor,proof['authority'])
         and authority_current(policy,actor,state['authority']) and authority_current(policy,actor,community.authority)
         and actor in state['policy'].reader_ids and actor in state['policy'].publisher_ids and actor in community.policy.reader_ids
-        and member is not None and member.state=='active' and member.role=='admin' and member.revision==proof['membership_revision'])
+        and policy._membership_current(actor,scope.workspace_id) and member.role=='admin' and member.revision==proof['membership_revision'])
 
 
 def writable(state,*,config=False,grant=False):

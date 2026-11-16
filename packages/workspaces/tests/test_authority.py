@@ -24,7 +24,13 @@ def legacy_policy(path, *, source=None):
         db.executemany("INSERT INTO principals VALUES(?,?,?,?)", (astuple(p)[:4] for p in source._principals.values()))
         db.executemany("INSERT INTO operators VALUES(?)", ((x,) for x in source._operators))
         db.execute("INSERT INTO metadata VALUES(1,?)", (source._epoch,))
-        SQLiteWorkspaceService._persist(db, source, audit_start=0)
+        # Build the historical schema explicitly. A current writer must never
+        # create missing authority sidecars when handed a legacy database.
+        db.executemany("INSERT INTO workspaces VALUES (?,?,?,?,?)", (astuple(w) for w in source._workspaces.values()))
+        db.executemany("INSERT INTO memberships VALUES (?,?,?,?,?)", (astuple(m) for m in source._memberships.values()))
+        db.executemany("INSERT INTO modules VALUES (?,?,?,?,?,?)", ((m.workspace_id,m.key,"read" in m.capabilities,"write" in m.capabilities,m.state,m.revision) for m in source._modules.values()))
+        db.executemany("INSERT INTO resources VALUES (?,?,?,?,?)", (astuple(r) for r in source._resources.values()))
+        db.executemany("INSERT INTO audit VALUES (?,?,?,?,?,?)", (astuple(e) for e in source._audit))
         db.commit()
     return source
 
@@ -98,7 +104,7 @@ class AuthorityFoundationTests(unittest.TestCase):
         with self.assertRaises(StorageError): SQLiteWorkspaceService(self.path)
         self.assertEqual(snapshot(self.path), before)
         report = SQLiteWorkspaceService.migrate_v1(self.path)
-        self.assertEqual(report, dict(from_version=1, to_version=2, principals=len(source._principals), identity_mutation_enabled=False, legacy_grants_upgraded=False))
+        self.assertEqual(report, dict(from_version=1, to_version=3, principals=len(source._principals), identity_mutation_enabled=False, legacy_grants_upgraded=False))
         migrated = SQLiteWorkspaceService(self.path)
         def verify(p):
             self.assertEqual(p._memberships, source._memberships)
@@ -147,7 +153,7 @@ class AuthorityFoundationTests(unittest.TestCase):
     def test_every_migration_ddl_failure_rolls_back_columns_triggers_data_and_version(self):
         fail_points = ["ALTER TABLE principals ADD COLUMN generation", "ALTER TABLE principals ADD COLUMN authority_epoch",
                        "ALTER TABLE metadata ADD COLUMN realm", "CREATE TABLE authority_migrations",
-                       *[sql.split(" BEGIN")[0] for sql in _SCHEMA if sql.startswith("CREATE TRIGGER")], "PRAGMA user_version=2"]
+                       *[sql.split(" BEGIN")[0] for sql in _SCHEMA if sql.startswith("CREATE TRIGGER")], "PRAGMA user_version=3"]
         original_connect = SQLiteWorkspaceService._connect
         class Injected(sqlite3.Connection):
             needle = None

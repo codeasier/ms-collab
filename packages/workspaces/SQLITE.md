@@ -84,7 +84,7 @@ confused with `not_found`. The adapter never falls back to an in-memory store.
   Application ID/version checks are not tamper-proof signatures.
 - Only local filesystems with working SQLite locks are in scope. No network
   filesystems, multi-host database service, failover, backup/restore procedure,
-  schema upgrade or production rollout is included. SQLite and the filesystem
+  production upgrade/recovery procedure or rollout is included. SQLite and the filesystem
   must honor durability guarantees; tests do not simulate power loss/hardware
   failure. Runtime databases and sidecars must remain untracked and unpublished.
 - This deliberately small adapter materializes all state and audit rows per call
@@ -123,25 +123,58 @@ in that same transaction. No callback or actor identifier comes from request
 data. This does not install a provider, create a listener, modify the local demo,
 or make these low-level raw-ID methods suitable as public HTTP endpoints.
 
-## Authority schema v2
+## Authority schema v3 and offline compatibility
 
-Exact core definitions and closed directory/metadata guards are checked on every
-operation. Explicit `SQLiteWorkspaceService.migrate_v1(path)` upgrades only the
-known v1 schema under a writer lock; ordinary construction never upgrades. It
-retains unrelated module records and old memberships/operators without granting
-identity mutation. See the [migration contract and consumer matrix](../../docs/principal-authority.md)
-for rollback tests, old-grant invalidation boundaries and remaining work.
+Exact core and sidecar definitions plus the closed directory/metadata guards are
+checked on every operation. Each membership/operator row has exactly one
+sidecar: a complete realm/issuer/subject/generation pin, or an explicit all-NULL
+legacy tombstone. Missing/extra rows and partial/malformed pins are invalid
+storage. Complete stale or foreign-realm pins retain their records but cannot
+authorize. Unknown sidecar triggers/custom indexes are rejected. The public
+membership representation remains unchanged. Persistence compares old pins
+before writing, then checks the exact expected sidecars and core key sets after
+all core/audit writes, rolling back unexpected mutation rather than accepting a
+post-write rebind. These are integrity checks, not a sandbox against a database
+administrator who can rewrite the schema or restore an entire backup.
+
+Fresh trusted `initialize()` captures current pins. Normal loading uses a
+separate persisted-data path that never captures, repins or fills missing rows.
+It permits structurally valid legacy/orphaned spaces without eligible admins;
+that does not make their old memberships effective. Current membership pins gate
+member access, admin counts and transfer, while current operator pins gate
+lifecycle/control operations and capability reporting.
+
+Explicit `SQLiteWorkspaceService.migrate_v1(path)` and `migrate_v2(path)` are
+trusted local library upgrades of the exact known source schemas to v3. Normal
+construction never upgrades. The entire conversion, sidecar/tombstone creation
+and final version change share one writer transaction. Existing v2 realm,
+principal authority, core revisions, immutable foundation marker and unrelated
+module records remain unchanged. No legacy membership/operator becomes bound.
+The v1 path establishes the principal foundation and the same unbound sidecars
+in one transaction. No executable deployment command is supplied here.
+
+Ordinary edits, admin transfer and invitations cannot repair a stale/NULL pin.
+Invitation re-enrollment may retain a revoked member's still-current pin, but a
+changed identity requires a separately reviewed explicit recovery/regrant flow.
+Neither that recovery nor identity administration is implemented. See the
+[migration contract and consumer matrix](../../docs/principal-authority.md).
+
+The v3 version is a downgrade guard: old v2 adapters must reject it rather than
+ignore new sidecar tables and authorize local IDs. Configured runtime schema
+manifests also change, and the library migration is not a runtime-manifest
+upgrade. Restoring an entire historical database/backup can still restore old
+authority; no external anti-rollback ledger or production recovery is claimed.
 
 ## Bounded-counter compatibility
 
-This hardening keeps schema v2, table/trigger definitions, runtime installation
-manifests and the explicit v1 migration entry unchanged. Existing stores with
-all revisions in the safe-integer range need no migration, and counters at the
-maximum are retained exactly. Every load rejects out-of-range core revisions or
+Bounded-counter checks remain in force across the explicit v3 schema upgrade.
+The existing core counter definitions are retained, including counters at the
+maximum; no migration resets them. V1/v2 stores require the explicit policy
+upgrade above even when all counters already fit the safe-integer range. Every load rejects out-of-range core revisions or
 audit counters as `invalid_store`; every persistence pass validates counters
 before writing policy rows. HTTP adapters report invalid storage generically.
 Old oversized data is preserved but denied, never rounded, reset or silently
-rewritten. Explicit v1 migration validates the same bounds before commit, so an
+rewritten. Both explicit policy migrations validate the same bounds before commit, so an
 oversized old record rolls back the entire DDL/data migration.
 
 These are application/load/persistence checks, not a new SQL upper-bound CHECK

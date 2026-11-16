@@ -11,7 +11,7 @@ from packages.artifact_download import records
 from packages.artifact_sync import regrant_index,initialize_indexes
 from packages.artifact_sync import records as index
 from packages.workspaces import PolicyError,StorageError
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 from fixtures import POLICY,SCOPE,user,page
 
 

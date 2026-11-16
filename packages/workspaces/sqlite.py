@@ -17,7 +17,7 @@ from urllib.parse import quote
 from .model import MAX_REVISION, AuditEvent, Membership, ModuleInstance, Principal, Resource, Workspace, identifier, revision
 from .service import PolicyError, WorkspaceService
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _APPLICATION_ID = 0x4D534357  # MSCW: do not interpret unrelated databases as policy stores.
 _SCHEMA_V1 = (
     "CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK (id=1), epoch INTEGER NOT NULL CHECK (epoch>=1)) STRICT",
@@ -42,7 +42,7 @@ _PRINCIPAL_GUARDS = (
     "CREATE TRIGGER principal_replace_closed BEFORE INSERT ON principals WHEN EXISTS(SELECT 1 FROM authority_migrations) OR EXISTS(SELECT 1 FROM principals WHERE id=NEW.id OR (issuer=NEW.issuer AND subject=NEW.subject)) BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
 )
 _MIGRATIONS = "CREATE TABLE authority_migrations (id INTEGER PRIMARY KEY CHECK(id=1), from_version INTEGER NOT NULL CHECK(from_version IN (0,1)), to_version INTEGER NOT NULL CHECK(to_version=2), principal_count INTEGER NOT NULL CHECK(principal_count>=0), realm TEXT NOT NULL) STRICT"
-_SCHEMA = (
+_SCHEMA_V2 = (
     _SCHEMA_V1[0].replace(") STRICT", ", " + _REALM_COLUMN + ") STRICT"),
     _SCHEMA_V1[1].replace(", UNIQUE", ", " + _GENERATION_COLUMN + ", " + _EPOCH_COLUMN + ", UNIQUE"),
     *_SCHEMA_V1[2:], _MIGRATIONS, *_PRINCIPAL_GUARDS,
@@ -53,6 +53,40 @@ _SCHEMA = (
     "CREATE TRIGGER authority_marker_delete_closed BEFORE DELETE ON authority_migrations BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
     "CREATE TRIGGER authority_marker_replace_closed BEFORE INSERT ON authority_migrations WHEN EXISTS(SELECT 1 FROM authority_migrations) BEGIN SELECT RAISE(ABORT,'identity_transition_unavailable'); END",
 )
+
+
+# NULL is an explicit legacy ownership tombstone, never a capture-on-load cue.
+# Every retained membership/operator has exactly one sidecar, bound or unbound.
+_GRANT_COLUMNS = ("realm TEXT, issuer TEXT, subject TEXT, generation INTEGER "
+                  "CHECK(generation IS NULL OR (generation>=1 AND generation<=9007199254740991))")
+_GRANT_COMPLETENESS = ("CHECK((realm IS NULL AND issuer IS NULL AND subject IS NULL AND generation IS NULL) "
+                       "OR (realm IS NOT NULL AND issuer IS NOT NULL AND subject IS NOT NULL AND generation IS NOT NULL))")
+_GRANT_SCHEMA = (
+    "CREATE TABLE membership_authority (workspace_id TEXT NOT NULL, principal_id TEXT NOT NULL, "
+    + _GRANT_COLUMNS + ", PRIMARY KEY(workspace_id,principal_id), "
+    "FOREIGN KEY(workspace_id,principal_id) REFERENCES memberships(workspace_id,principal_id), "
+    + _GRANT_COMPLETENESS + ") STRICT",
+    "CREATE TABLE operator_authority (principal_id TEXT PRIMARY KEY REFERENCES operators(principal_id), "
+    + _GRANT_COLUMNS + ", " + _GRANT_COMPLETENESS + ") STRICT",
+)
+_SCHEMA = (*_SCHEMA_V2, *_GRANT_SCHEMA)
+
+
+def _decode_grant(actor, row):
+    if row == (None, None, None, None):
+        return None
+    realm, issuer, subject, generation = row
+    # Strict validation belongs to the service's persisted decoder. Partial NULL
+    # tuples and malformed bindings reach it unchanged and fail, never default.
+    return {"version": 1, "realm": realm, "principals": {
+        actor: {"issuer": issuer, "subject": subject, "generation": generation}}}
+
+
+def _encode_grant(actor, grant):
+    if grant is None:
+        return (None, None, None, None)
+    binding = grant["principals"][actor]
+    return (grant["realm"], binding["issuer"], binding["subject"], binding["generation"])
 
 
 def _schema_objects(connection, definitions):
@@ -136,6 +170,9 @@ class SQLiteWorkspaceService:
                     connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                     connection.executemany("INSERT INTO principals VALUES (?,?,?,?,?,?)", (astuple(p) for p in service._principals.values()))
                     connection.executemany("INSERT INTO operators VALUES (?)", ((p,) for p in service._operators))
+                    connection.executemany("INSERT INTO operator_authority VALUES (?,?,?,?,?)",
+                        ((actor, *_encode_grant(actor, grant))
+                         for actor, grant in service._operator_authority.items()))
                     connection.execute("INSERT INTO metadata VALUES (1,?,?)", (service._epoch, service._realm))
                     connection.execute("INSERT INTO authority_migrations VALUES (1,0,2,?,?)", (len(service._principals), service._realm))
                     instance._persist(connection, service, audit_start=0)
@@ -173,6 +210,13 @@ class SQLiteWorkspaceService:
                 or connection.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION):
             raise StorageError("unsupported_schema")
         _schema_objects(connection, _SCHEMA)
+        # No sidecar trigger or custom index is part of v3. In particular an
+        # unknown trigger must not rewrite a pin after persistence compares it.
+        # Unrelated module extension tables retain their separate contracts.
+        if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE tbl_name IN ('membership_authority','operator_authority') "
+                "AND (type='trigger' OR (type='index' AND sql IS NOT NULL))").fetchone():
+            raise StorageError("unsupported_schema")
 
     @staticmethod
     def _bit(value):
@@ -194,7 +238,11 @@ class SQLiteWorkspaceService:
         try:
             if self._rows(connection, "PRAGMA foreign_key_check"):
                 raise ValueError("invalid foreign reference")
-            service = WorkspaceService(
+            epoch = connection.execute("SELECT epoch,realm FROM metadata WHERE id=1").fetchone()
+            if (epoch is None or type(epoch[0]) is not int or not 1 <= epoch[0] <= _MAX_AUTHORITY
+                    or type(epoch[1]) is not str or re.fullmatch(r"[0-9a-f]{32}", epoch[1]) is None):
+                raise ValueError("invalid policy epoch")
+            service = WorkspaceService._from_persisted(
                 principals=tuple(Principal(a, b, c, self._bit(d), e, f) for a, b, c, d, e, f in self._rows(connection, "SELECT id,issuer,subject,active,generation,authority_epoch FROM principals")),
                 workspaces=tuple(Workspace(*row) for row in self._rows(connection, "SELECT id,name,kind,state,revision FROM workspaces")),
                 memberships=tuple(Membership(*row) for row in self._rows(connection, "SELECT workspace_id,principal_id,role,state,revision FROM memberships")),
@@ -202,13 +250,16 @@ class SQLiteWorkspaceService:
                               for a, b, c, d, e, f in self._rows(connection, "SELECT workspace_id,key,can_read,can_write,state,revision FROM modules")),
                 resources=tuple(Resource(*row) for row in self._rows(connection, "SELECT workspace_id,module_key,id,text,revision FROM resources")),
                 operators=frozenset(row[0] for row in self._rows(connection, "SELECT principal_id FROM operators")),
+                realm=epoch[1], epoch=epoch[0],
+                membership_authority={(workspace, actor): _decode_grant(actor, tuple(pin))
+                    for workspace, actor, *pin in self._rows(connection,
+                        "SELECT workspace_id,principal_id,realm,issuer,subject,generation FROM membership_authority")},
+                operator_authority={actor: _decode_grant(actor, tuple(pin))
+                    for actor, *pin in self._rows(connection,
+                        "SELECT principal_id,realm,issuer,subject,generation FROM operator_authority")},
             )
-            epoch = connection.execute("SELECT epoch,realm FROM metadata WHERE id=1").fetchone()
-            if (epoch is None or type(epoch[0]) is not int or not 1 <= epoch[0] <= _MAX_AUTHORITY
-                    or type(epoch[1]) is not str or re.fullmatch(r"[0-9a-f]{32}", epoch[1]) is None
-                    or any(p.authority_epoch > epoch[0] for p in service._principals.values())):
+            if any(p.authority_epoch > epoch[0] for p in service._principals.values()):
                 raise ValueError("invalid policy epoch")
-            service._epoch, service._realm = epoch
             migration = connection.execute("SELECT from_version,to_version,principal_count,realm FROM authority_migrations WHERE id=1").fetchone()
             if (migration is None or migration[0] not in (0,1) or migration[1] != 2
                     or type(migration[2]) is not int or migration[2] < 0 or migration[3] != service._realm):
@@ -233,6 +284,7 @@ class SQLiteWorkspaceService:
         # No delete or replace: retain foreign keys, history, unrelated scopes.
         try:
             revision(service._epoch)
+            service._validate_authority_grants()
             for records in (service._workspaces, service._memberships, service._modules, service._resources):
                 for record in records.values():
                     revision(record.revision)
@@ -245,12 +297,58 @@ class SQLiteWorkspaceService:
                     raise ValueError()
         except (ValueError, TypeError):
             raise StorageError("invalid_store") from None
+        membership_authority = {
+            key: _encode_grant(key[1], grant)
+            for key, grant in service._membership_authority.items()}
+        operator_authority = {
+            actor: _encode_grant(actor, grant)
+            for actor, grant in service._operator_authority.items()}
+        existing_memberships = SQLiteWorkspaceService._rows(connection,
+            "SELECT workspace_id,principal_id,realm,issuer,subject,generation FROM membership_authority")
+        existing_operators = SQLiteWorkspaceService._rows(connection,
+            "SELECT principal_id,realm,issuer,subject,generation FROM operator_authority")
+        # Missing sidecars are corruption, not an invitation to repair ownership
+        # from the in-memory principal directory. New memberships have no prior
+        # core row; fresh bootstrap explicitly installs operator grants first.
+        if ({(workspace, actor) for workspace, actor, *_ in existing_memberships}
+                != set(SQLiteWorkspaceService._rows(connection,
+                    "SELECT workspace_id,principal_id FROM memberships"))
+                or {actor for actor, *_ in existing_operators}
+                != {row[0] for row in SQLiteWorkspaceService._rows(connection,
+                    "SELECT principal_id FROM operators")}):
+            raise StorageError("invalid_store")
+        if (any(membership_authority.get((workspace, actor)) != tuple(pin)
+                for workspace, actor, *pin in existing_memberships)
+                or any(operator_authority.get(actor) != tuple(pin)
+                       for actor, *pin in existing_operators)):
+            raise StorageError("invalid_store")
         connection.executemany("INSERT INTO workspaces VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,state=excluded.state,revision=excluded.revision", (astuple(w) for w in service._workspaces.values()))
         connection.executemany("INSERT INTO memberships VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,principal_id) DO UPDATE SET role=excluded.role,state=excluded.state,revision=excluded.revision", (astuple(m) for m in service._memberships.values()))
+        connection.executemany(
+            "INSERT INTO membership_authority VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,principal_id) DO NOTHING",
+            ((*key, *pin) for key, pin in membership_authority.items()))
+        connection.executemany(
+            "INSERT INTO operator_authority VALUES (?,?,?,?,?) ON CONFLICT(principal_id) DO NOTHING",
+            ((actor, *pin) for actor, pin in operator_authority.items()))
         connection.executemany("INSERT INTO modules VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,key) DO UPDATE SET can_read=excluded.can_read,can_write=excluded.can_write,state=excluded.state,revision=excluded.revision", ((m.workspace_id, m.key, "read" in m.capabilities, "write" in m.capabilities, m.state, m.revision) for m in service._modules.values()))
         connection.executemany("INSERT INTO resources VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,module_key,id) DO UPDATE SET text=excluded.text,revision=excluded.revision", (astuple(r) for r in service._resources.values()))
         connection.execute("UPDATE metadata SET epoch=? WHERE id=1", (service._epoch,))
         connection.executemany("INSERT INTO audit VALUES (?,?,?,?,?,?)", (astuple(e) for e in service._audit[audit_start:]))
+        # A trigger on another table must not alter grant ownership after the
+        # pre-write comparison either. Verify the complete persisted sidecars
+        # after ALL DML (including audit), while the same writer lock is held.
+        saved_memberships = {(workspace, actor): tuple(pin)
+            for workspace, actor, *pin in SQLiteWorkspaceService._rows(connection,
+                "SELECT workspace_id,principal_id,realm,issuer,subject,generation FROM membership_authority")}
+        saved_operators = {actor: tuple(pin)
+            for actor, *pin in SQLiteWorkspaceService._rows(connection,
+                "SELECT principal_id,realm,issuer,subject,generation FROM operator_authority")}
+        if (saved_memberships != membership_authority or saved_operators != operator_authority
+                or set(saved_memberships) != set(SQLiteWorkspaceService._rows(connection,
+                    "SELECT workspace_id,principal_id FROM memberships"))
+                or set(saved_operators) != {row[0] for row in SQLiteWorkspaceService._rows(connection,
+                    "SELECT principal_id FROM operators")}):
+            raise StorageError("invalid_store")
 
     def _transaction(self, operation, *, write, before_commit=None, with_connection=False):
         """Internal trusted adapter seam, not a request-selected callback.
@@ -278,6 +376,57 @@ class SQLiteWorkspaceService:
                     raise
         except sqlite3.Error as error:
             raise self._storage_error(error) from None
+
+    @staticmethod
+    def _migrate_grant_tombstones(connection):
+        """Schema conversion only; no old local-ID grant acquires an owner."""
+        for sql in _GRANT_SCHEMA:
+            connection.execute(sql)
+        connection.execute("INSERT INTO membership_authority(workspace_id,principal_id) SELECT workspace_id,principal_id FROM memberships")
+        connection.execute("INSERT INTO operator_authority(principal_id) SELECT principal_id FROM operators")
+
+    @classmethod
+    def migrate_v2(cls, path, *, timeout=5.0):
+        """Explicit offline v2-to-v3 conversion, retaining unbound legacy grants.
+
+        This is not grant restoration. All old membership/operator rows receive
+        NULL ownership tombstones and cannot authorize after conversion. Keep a
+        protected recovery copy and drain old request-serving processes first.
+        """
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 <= timeout <= 30:
+            raise ValueError("invalid timeout")
+        instance = object.__new__(cls)
+        instance._path, instance._timeout = Path(path).absolute(), timeout
+        instance._uri = f"file:{quote(str(instance._path), safe='/')}?mode=rw"
+        try:
+            with closing(instance._connect()) as db:
+                db.execute("BEGIN IMMEDIATE")
+                try:
+                    if (db.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID
+                            or db.execute("PRAGMA user_version").fetchone()[0] != 2):
+                        raise StorageError("unsupported_schema")
+                    _schema_objects(db, _SCHEMA_V2)
+                    core = tuple(re.match(r"CREATE TABLE ([a-z_]+)", sql).group(1)
+                                 for sql in _SCHEMA_V2 if sql.startswith("CREATE TABLE "))
+                    guards = {re.match(r"CREATE TRIGGER ([a-z_]+)", sql).group(1)
+                              for sql in _SCHEMA_V2 if sql.startswith("CREATE TRIGGER ")}
+                    placeholders = ",".join("?" for _ in core)
+                    extensions = db.execute(
+                        f"SELECT type,name FROM sqlite_master WHERE tbl_name IN ({placeholders}) "
+                        "AND (type='trigger' OR (type='index' AND sql IS NOT NULL))", core).fetchall()
+                    if any(kind != "trigger" or name not in guards for kind, name in extensions):
+                        raise StorageError("unsupported_schema")
+                    instance._migrate_grant_tombstones(db)
+                    db.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    service = instance._load(db)
+                    db.commit()
+                    return {"from_version": 2, "to_version": 3, "principals": len(service._principals),
+                            "identity_mutation_enabled": False, "legacy_grants_upgraded": False}
+                except BaseException:
+                    db.rollback()
+                    raise
+        except sqlite3.Error as error:
+            raise instance._storage_error(error) from None
 
     @classmethod
     def migrate_v1(cls, path, *, timeout=5.0):
@@ -313,10 +462,11 @@ class SQLiteWorkspaceService:
                     for sql in _SCHEMA:
                         if sql.startswith("CREATE TRIGGER "):
                             db.execute(sql)
+                    instance._migrate_grant_tombstones(db)
                     db.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                     instance._load(db)  # Data and all foreign keys validate before COMMIT.
                     db.commit()
-                    return {"from_version": 1, "to_version": 2, "principals": count,
+                    return {"from_version": 1, "to_version": 3, "principals": count,
                             "identity_mutation_enabled": False, "legacy_grants_upgraded": False}
                 except BaseException:
                     db.rollback()

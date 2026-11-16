@@ -1,6 +1,6 @@
 """Temporary-database browser controls only; never a production entrypoint."""
 import sqlite3
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 
 
 def identity_aba(path, target):

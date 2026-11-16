@@ -51,6 +51,10 @@ Return to [frontend](../README.md).
   runs the real synthetic HTTPS flow and uploads four responsive screenshots.
 
 - `fixture-process.cjs`, `fixture-process.test.mjs`: owned synthetic-process
-  cleanup for community, connections and assistant acceptance. A bounded SIGTERM wait is
+  cleanup for unified, community, connections and assistant acceptance. A bounded SIGTERM wait is
   followed by forced reaping only on failure; that path still fails the test.
-  Cleanup cannot leave an ignored-SIGTERM child keeping the CI process alive.
+  Batch cleanup attempts every owned fixture even if a sibling fails. The unified
+  browser preserves the original scenario error alongside cleanup errors and
+  labels each barrier; bounded fixture stderr tails remain available on failure.
+  Its success marker is printed only after cleanup succeeds. Cleanup cannot leave
+  an ignored-SIGTERM child keeping the CI process alive.

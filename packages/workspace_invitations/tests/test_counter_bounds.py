@@ -3,6 +3,7 @@ from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import sqlite3
+from packages.workspaces.tests.identity_fixture import bind_core_grants_for_test
 from threading import Barrier
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,7 @@ class InvitationCounterTests(unittest.TestCase):
     def revoked_member(self, value):
         with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
             db.execute("INSERT INTO memberships VALUES('alpha','outsider','viewer','revoked',?)",(value,))
+            bind_core_grants_for_test(db, ('outsider',))
 
     def test_reenrollment_uses_last_increment_once_and_restart_preserves_it(self):
         self.revoked_member(MAX-1);item=self.item()

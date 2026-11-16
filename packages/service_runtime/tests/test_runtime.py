@@ -52,11 +52,11 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(schema_digest(db),LOGIN_DIGEST)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM sessions').fetchone()[0],0)
         self.assertFalse(check(self.config)['production_ready'])
-    def test_authority_v2_layout_and_closed_insert_survive_restore(self):
+    def test_authority_v3_policy_v2_login_and_closed_insert_survive_restore(self):
         self.init()
         with sqlite3.connect(self.directory/'policy.sqlite') as db:
             realm = db.execute('SELECT realm FROM metadata').fetchone()[0]
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO principals VALUES('blocked','https://identity.example.invalid','blocked',1,1,1)")
         with sqlite3.connect(self.directory/'login.sqlite') as db:
@@ -67,6 +67,30 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO principals VALUES('blocked','https://identity.example.invalid','blocked',1,1,1)")
         self.assertFalse(check(self.config)['login_enabled'])
+
+    def test_v2_policy_layout_and_backup_are_rejected_without_auto_grant_upgrade(self):
+        self.init();source=self.root/'legacy-v2-backup';backup(self.config,source)
+        def downgrade(path):
+            with sqlite3.connect(path) as db:
+                db.execute('DROP TABLE membership_authority')
+                db.execute('DROP TABLE operator_authority')
+                db.execute('PRAGMA user_version=2')
+                return schema_digest(db)
+        old_digest=downgrade(source/'policy.sqlite')
+        payload=(source/'policy.sqlite').read_bytes()
+        meta=json.loads((source/'backup.json').read_text())
+        meta.update(policy_schema=old_digest,policy_bytes=len(payload),policy_sha256=sha256(payload).hexdigest())
+        (source/'backup.json').write_bytes(canonical(meta))
+        before={p.name:p.read_bytes() for p in source.iterdir()}
+        with self.assertRaises(RuntimeFailure):verify_backup(self.config,source)
+        downgrade(self.directory/'policy.sqlite')
+        installed=json.loads((self.directory/'installation.json').read_text());installed['policy_schema']=old_digest
+        (self.directory/'installation.json').write_bytes(canonical(installed));prior=self.hashes()
+        with self.assertRaises(RuntimeFailure):check(self.config)
+        self.assertEqual(prior,self.hashes());self.restored_config()
+        with self.assertRaises(RuntimeFailure):restore(self.config,source)
+        self.assertFalse((self.root/'restored').exists())
+        self.assertEqual(before,{p.name:p.read_bytes() for p in source.iterdir()})
 
     def test_old_gui_schema_installation_and_backup_are_rejected_without_rewrite(self):
         self.init();source=self.root/'old-backup';backup(self.config,source)
@@ -251,6 +275,7 @@ class RuntimeTests(unittest.TestCase):
             db.execute(_PRINCIPAL_GUARDS[2])
             db.execute("INSERT INTO workspaces VALUES('alpha','Synthetic team','product','suspended',2)")
             db.execute("INSERT INTO memberships VALUES('alpha','admin','admin','active',1)")
+            db.execute("INSERT INTO membership_authority VALUES('alpha','admin',NULL,NULL,NULL,NULL)")
         backup(self.config,self.root/'backup');self.assertTrue(verify_backup(self.config,self.root/'backup')['backup_valid'])
         self.restored_config();self.assertFalse(restore(self.config,self.root/'backup')['sessions_restored'])
         self.assertTrue(check(self.config)['installation_valid'])

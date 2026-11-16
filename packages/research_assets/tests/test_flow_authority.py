@@ -1,5 +1,6 @@
 """Synthetic in-flight authority changes, not an enabled identity mutation API."""
 import sqlite3
+from packages.workspaces.tests.identity_fixture import bind_core_grants_for_test
 from threading import Event, Thread
 import unittest
 from unittest.mock import patch
@@ -8,7 +9,7 @@ from packages.identity import AuthenticationError
 from packages.research_assets import AssetScope, provision_catalog
 from packages.research_assets.tests import test_assets as fixtures
 from packages.workspaces import PolicyError, SQLiteWorkspaceService
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 
 
 class FlowAuthorityTests(unittest.TestCase):
@@ -108,6 +109,7 @@ class FlowAuthorityTests(unittest.TestCase):
 
     def test_workspace_suspend_resume_cannot_reuse_result(self):
         self.sql("INSERT INTO operators VALUES('admin')")  # Synthetic trusted platform setup only.
+        with sqlite3.connect(self.path) as db:bind_core_grants_for_test(db, ('admin',))
         def change():
             self.store.set_workspace_state('admin', 'alpha', state='suspended', expected_revision=1)
             self.store.set_workspace_state('admin', 'alpha', state='active', expected_revision=2)
