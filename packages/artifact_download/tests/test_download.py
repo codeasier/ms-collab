@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import tempfile
 from threading import Barrier, Thread
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 import unittest
 from unittest.mock import patch
 from wsgiref.simple_server import make_server, WSGIRequestHandler

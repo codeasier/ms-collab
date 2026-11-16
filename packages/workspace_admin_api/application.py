@@ -83,7 +83,7 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
         def operation(policy, actor, connection):
             if command == "capabilities":
                 policy._principal(actor)
-                return {"manage_workspaces": actor in policy._operators}
+                return {"manage_workspaces": policy._operator_current(actor)}
             if command == "control_list":
                 return [asdict(w) for w in policy.list_control_workspaces(actor)]
             if command == "lifecycle":

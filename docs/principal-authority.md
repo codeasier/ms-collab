@@ -1,7 +1,7 @@
-# Principal authority foundation (closed identity administration)
+# Principal authority and durable workspace grants (closed identity administration)
 
-This increment establishes persistent authority coordinates and conservative
-consumer invalidation. It **does not enable identity provisioning, rebinding,
+This increment establishes persistent authority coordinates, durable membership/operator
+grant ownership and conservative consumer invalidation. It **does not enable identity provisioning, rebinding,
 disable/reenable, directory synchronization or real GitCode login**. It is not a
 claim of complete tenant isolation or a production migration.
 
@@ -37,6 +37,53 @@ production transition algorithm and runtime modules may not import it.
   increase generation and global epoch atomically; A→B→A or inactive→active must
   not restore the older generation. No-op requests must not increment either.
 
+## Workspace membership and operator ownership
+
+Policy schema **v3** retains the public `Membership` shape and existing core rows,
+but adds a dedicated authority sidecar for every membership and operator record.
+Each bound sidecar records the policy realm and the principal's exact issuer,
+subject and generation; its primary/foreign key supplies the local principal ID
+and, for memberships, the workspace ID. A local ID, active flag, role or matching
+membership revision alone never grants authority.
+
+- Only explicit trusted fresh bootstrap or creation of a genuinely new membership
+  captures current authority. Normal constructors, persisted loading, unrelated
+  writes and reads never capture or repair an old grant.
+- Explicit offline policy upgrades retain every legacy membership/operator row
+  and create an **all-NULL authority tombstone** for it. This is recognized but
+  unbound data, not an effective grant. Missing/extra sidecar keys, partial NULLs
+  or malformed pins are invalid storage, not an invitation to backfill. Unknown
+  triggers/custom indexes on the sidecar tables are unsupported schema.
+- A complete but old-generation, changed-identity or foreign-realm pin is stale.
+  It remains stored and denies access. Returning to the old issuer/subject after
+  A→B→A, or deactivation/reactivation, cannot make the old generation current.
+- Member access, workspace discovery, eligible-admin counts, operator checks and
+  capability reporting use the current durable grant. A stale active admin does
+  not protect another admin's demotion; a stale operator is not an eligible
+  operator. Public model responses do not expose these private authority pins.
+- Ordinary member edits retain the existing pin. A stale active membership may
+  be revoked, but cannot be promoted or repaired by an edit; admin transfer
+  requires a currently bound replacement. Invitation acceptance creates a pin
+  only for a member with no prior row. Re-enrollment of a revoked member requires
+  its existing pin to remain current and retains that same pin. Invitations do
+  not adopt legacy NULL or stale grants into a newer identity.
+
+Fresh bootstrap still requires an eligible admin for every supplied workspace.
+Strict persisted loading instead validates structure without inventing authority:
+a retained legacy/orphaned workspace may have no eligible admins and remain
+loadable, but its unbound/stale members cannot authorize access. This distinction
+avoids making one orphaned workspace corrupt every unrelated scope. Existing
+valid zero-operator installations remain valid; no operator is invented.
+
+Recovery/regrant of these unbound or stale core grants is a separate unfinished
+administrative workflow. This slice adds no online recovery, identity transition
+or privilege-rebinding entry point. Historical audit `actor_id` values are also
+not retroactively pinned or relabeled as the current identity's actions.
+
+Schema v3 is intentional: a v2 adapter must reject its `user_version`, rather
+than silently ignore additive sidecars and revert to local-ID authorization.
+This version check is not backup anti-rollback protection.
+
 ## Login/session transaction boundary
 
 Composing `SessionPolicyStore` binds its login-store object to one initialized
@@ -65,39 +112,55 @@ or an in-flight-login barrier. Clock high-water marks, expiry, single-use state,
 CSRF, cookie recovery and default-disabled real provider behavior remain intact.
 [GitCode acceptance](gitcode-login-acceptance.md) is a separate uncompleted gate.
 
-## Explicit v1 → v2 upgrades (offline, operator-controlled)
+## Explicit policy v1/v2 → v3 upgrades (offline, operator-controlled)
 
-Normal constructors reject v1. They never auto-upgrade or create a missing file.
-The explicit helpers are `SQLiteWorkspaceService.migrate_v1(path)` and
-`SQLiteLoginStore.migrate_v1(path, binding=..., clock=...)`. They are trusted local
-library operations, **not HTTP routes, runtime auto-migrations or a deployment
-command**. They must not run against production merely because this code exists.
+Normal policy constructors require v3. They never auto-upgrade or create a
+missing file. The trusted local helpers `SQLiteWorkspaceService.migrate_v1(path)`
+and `SQLiteWorkspaceService.migrate_v2(path)` convert only their exact known
+source schemas to v3. Login storage remains separately versioned: its explicit
+`SQLiteLoginStore.migrate_v1(path, binding=..., clock=...)` upgrades login v1 to
+v2. These are library operations, **not HTTP routes, runtime auto-migrations or
+a deployment command**. Their existence does not authorize a production upgrade.
 
 1. Stop request-serving processes. Establish an authorized, protected backup and
    a rollback plan; login stores include sensitive short-lived verifier material.
    Do not put database files, sessions, verifiers or raw dumps in source control.
-2. Under `BEGIN IMMEDIATE`, validate application ID, exact v1 core definitions,
-   indexes/triggers and retained data. Known unrelated module tables are retained
-   by the policy migration; modified core tables or unknown core triggers/indexes
-   are rejected. Login has no extension tables requiring migration.
-3. Execute each DDL individually in the transaction. Add policy realm/generation,
-   a minimal immutable `authority_migrations` marker, and the closed guards; add
-   nullable authority columns to login attempts/sessions. Validate v2 before
-   committing its version. Fault-injection tests cover every migration DDL,
-   retaining old columns/data/triggers/version on failure.
-4. Reopen using v2, compose policy/login, and require a new verified login. Old
-   rows are **not backfilled into current authority**. History fences without
-   generation are hidden; legacy GUI snapshots require explicit grant migration/regrant before a new publication;
-   legacy pending invitation digests are invalidated. Preserve retained records
-   for separately authorized recovery rather than exporting or silently rewriting.
+2. Under `BEGIN IMMEDIATE`, validate application ID, exact known core definitions,
+   indexes/triggers and retained data. Policy module tables are retained; modified
+   core tables or unexpected core triggers/indexes are rejected. Login has no
+   extension tables requiring migration.
+3. Execute migration DDL and row changes individually in the same transaction.
+   A v1 policy receives its new realm, generation/authority epoch and closed
+   principal guards; an existing v2 policy retains those values and its immutable
+   `authority_migrations` foundation marker. That marker describes the principal
+   foundation v2, not the later v3 workspace-grant schema. Both policy paths add
+   sidecars with explicit NULL tombstones, without binding any legacy grant.
+   Validate the complete target state before committing its schema version.
+   Fault-injection acceptance must prove every failure leaves source schema,
+   records, triggers and version unchanged.
+4. Reopen only with the current policy/login versions. Policy upgrades preserve
+   role/state/revision history and unrelated module records, but do not restore
+   effective membership or operator access. Core grant recovery requires a
+   separately reviewed explicit workflow; an old `active` row is insufficient.
+   Login v1 upgrades leave old session/attempt authority NULL and require a new
+   verified login. History fences without generation are hidden; legacy GUI
+   snapshots require explicit grant migration/regrant before a new publication;
+   legacy pending invitation digests are invalidated. Do not silently rewrite
+   retained records or export them as a recovery shortcut.
 
-The policy marker records source/target version, principal count and generated
-realm, with no credential, external identifier or operator claim. It is not a
-full audit of identity transitions. V1 inactive principals that still have active
-memberships/operator rows are preserved, but cannot be reactivated through any
-supported path. A future transition must explicitly revoke those old grants.
-Restoring a historical policy backup can restore old authority state; this
-foundation does not provide an external anti-rollback ledger or tamper evidence.
+Configured runtime installation manifests also pin the exact schema. A policy
+library upgrade does not update an existing runtime manifest or supply a runtime
+upgrade/recovery procedure. Old runtime layouts remain unavailable until that
+separate operational gate is met.
+
+The principal foundation marker records source/target version, principal count
+and generated realm, with no credential, external identifier or operator claim.
+It is not an audit of identity transitions or membership regrants. Legacy
+inactive principals and their old membership/operator rows remain retained but
+unbound, and no supported path reactivates or adopts them. A future identity
+transition must explicitly revoke prior active grants. Restoring a historical
+policy backup can restore old authority state; this slice does not provide an
+external anti-rollback ledger, tamper evidence or production recovery acceptance.
 
 ## Consumer inventory and activation gates
 
@@ -115,10 +178,10 @@ here before identity administration can open.
 | Artifact byte grants and streams | Persistent realm/generation grants, independent monotonic byte revision and reviewed-parent index pin; full flow pin checked through acquisition/output. [Contract](../packages/artifact_sync/GRANTS.md). | Real cloud acceptance and host resource recovery remain separate; regrant never recycles uncertain active leases. |
 | Community reads/review/refresh/approve | [Bound persistent grants](../packages/community_api/GRANTS.md), retired-ID pins, monotonic grant revisions, approver generation/membership provenance and per-page actor/config guards. Known legacy grants require explicit CAS regrant that discards old content. | Management/template constraints remain additional gates, not substitutes for data-plane grants. Standalone provider calls do not claim workspace authorization; already dispatched I/O cannot be undone. |
 | Artifact index/read/review/approve/refresh | Persistent role grants and approver/membership provenance; explicit destructive CAS regrant; admission-origin flow pin and before/after-page checks on both bearer and cookie paths. [Contract](../packages/artifact_sync/GRANTS.md). | Legacy payloads stay unavailable until explicit regrant; no actual identity mutation or live-provider acceptance is enabled. |
-| Pipeline snapshots and acquisition | Reads use current workspace/module policy. [Bearer acquisition](../packages/pipeline_sync/README.md) pins realm/local actor/issuer/subject/generation and scoped workspace/membership/module revisions across each GET and final publication; no automatic recapture within a flow. | New requests still rely on workspace membership grants, which require transition-wide revocation before identity administration. Dispatch is not atomic with local checks; remote pagination/live compatibility and whole-policy rollback remain outside this slice. |
+| Pipeline snapshots and acquisition | Reads use current workspace/module policy. [Bearer acquisition](../packages/pipeline_sync/README.md) pins realm/local actor/issuer/subject/generation and scoped workspace/membership/module revisions across each GET and final publication; no automatic recapture within a flow. | New requests also require current durable workspace membership grants; transition-wide revocation before identity administration remains unimplemented. Dispatch is not atomic with local checks; remote pagination/live compatibility and whole-policy rollback remain outside this slice. |
 | Research assets | Acquisition pins realm, ID, issuer/subject, generation and current membership/workspace/read-module/sync-module revisions before and after each source, then again under the publication writer lock. Reads keep current workspace/module policy and fixed source binding. | The trusted prepare call is one boundary, not proof of authority checks for every provider-internal request. Real adapters, identity-safe membership transitions and backup anti-rollback remain separate gates. |
 | Administrative creation/installation retries | [Identity-owned v2 records](../packages/workspace_admin_api/README.md#durable-retries-and-transaction-boundary) retain the old key namespace; actor/initial-admin pins gate replay, legacy records become permanent conflict tombstones only through explicit offline conversion. | New-request identity selection/preconditions, runtime upgrade recovery and incarnation-aware authentication remain separate gates. Historical audit actor IDs are not upgraded. |
-| Memberships and operators | Existing role/lifecycle controls unchanged. | Every non-no-op identity transition must revoke all active memberships and operator membership, including reactivation of legacy inactive identities; their durable grant ownership still requires migration. |
+| Memberships and operators | V3 persistent sidecars bind realm/local ID/issuer/subject/generation; legacy upgrades leave explicit NULL tombstones; ordinary edits, transfer and invitations never repin stale grants. Eligibility checks exclude stale admins/operators. | Explicit recovery/regrant, executable transition-wide revocation and last-eligible-operator transition safeguards remain unfinished. Valid legacy zero-operator databases must not gain an invented operator. Historical audit actors remain unpinned. |
 | Responsibility grants, owner/backup references and path evidence | [Bound grants and reference history](../packages/responsibility_api/REFERENCES.md); ordinary edits retain retired pins; explicit current-editor proposal/CAS reconfirmation; publisher provenance gates retained evidence. Legacy requires an explicit destructive current-admin grant reset; mixed formats deny. | Ownership remains observation, never permission/assignment. Trusted actor inputs require separate host authentication; real recovery, identity transitions and whole-policy rollback remain outside this slice. |
 | Community connection self-management and directory | Fixed installed template pins bind realm + local ID + issuer/subject + generation; missing/old pins fail closed. Current manager/admin and selected-member eligibility are rechecked. | Template constraints supplement the separate community data-plane grants above; they never upgrade legacy/stale data pins. No automatic repinning or template migration. |
 | Configured runtime composition | Requires explicit current policy/login schemas and never auto-migrates. Connection self-management is not automatically configured. | Future runtime registration must preserve explicit template/grant/credential boundaries; directory pins do not upgrade data-plane ACLs. |
@@ -139,6 +202,11 @@ all applicable rows, revokes/rebinds persistent grants, and implements:
   replace these gates.
 
 ## Verification limits and primary references
+
+The v3 acceptance plan is recorded in the [workspace tests contract](../packages/workspaces/tests/README.md).
+Documentation is not a test result: this change requires exact-head existing CI,
+including the affected API/session/runtime consumers, before acceptance. No local
+UT/build run or production verification is claimed for this slice.
 
 All tests use disposable synthetic identities/data and test-only transitions.
 Migration rollback, ABA, legacy authority and bound session tests are not live

@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
+from packages.workspaces.tests.identity_fixture import bind_core_grants_for_test
 import selectors
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from packages.workspace_admin_api import initialize_administration, migrate_admi
 from packages.workspace_admin_api import requests
 from packages.workspace_admin_api.tests import test_application as fixtures
 from packages.workspaces import SQLiteWorkspaceService, StorageError
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 
 
 class RetryAuthorityTests(unittest.TestCase):
@@ -79,6 +80,7 @@ class RetryAuthorityTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:
             for workspace, in db.execute('SELECT id FROM workspaces').fetchall():
                 db.execute("INSERT OR REPLACE INTO memberships VALUES (?, 'viewer','admin','active',1)",(workspace,))
+                bind_core_grants_for_test(db, ('viewer',))
             simulate_identity(db,'UPDATE principals SET active=0 WHERE id=?',('other',))
         self.conflict(self.create,self.keys[0])
 
@@ -117,6 +119,7 @@ class RetryAuthorityTests(unittest.TestCase):
 
     def test_current_role_check_precedes_identity_retry_record(self):
         self.seed();self.aba()
+        self.sql('DELETE FROM operator_authority')
         self.sql('DELETE FROM operators')
         self.assertEqual(self.create(key=self.keys[0])['status'],403)
         self.sql("UPDATE memberships SET role='admin' WHERE workspace_id='alpha' AND principal_id='viewer'")
@@ -193,6 +196,8 @@ class RetryAuthorityTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:
             for workspace, in db.execute('SELECT id FROM workspaces').fetchall():
                 db.execute("INSERT OR REPLACE INTO memberships VALUES (?, 'viewer','admin','active',1)",(workspace,))
+                bind_core_grants_for_test(db, ('viewer',))
+            db.execute('DELETE FROM operator_authority')
             db.execute('DELETE FROM operators')
             db.execute("UPDATE memberships SET state='revoked' WHERE principal_id='admin'")
             db.execute("UPDATE workspaces SET state='archived' WHERE id=?",(self.created['id'],))
@@ -269,7 +274,7 @@ class RetryAuthorityTests(unittest.TestCase):
     def _locked_retry(self, actor):
         self.seed();before=self.retained()
         code="""import sqlite3,sys
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 with sqlite3.connect(sys.argv[1]) as db:
  db.execute('BEGIN IMMEDIATE')
  simulate_identity(db,'UPDATE principals SET subject=? WHERE id=?',('temporary',sys.argv[2]))

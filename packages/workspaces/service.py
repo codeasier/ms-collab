@@ -10,6 +10,7 @@ from dataclasses import replace
 from threading import RLock
 from uuid import uuid4
 
+from .authority import authority_current, capture_authority, validate_authority
 from .model import MAX_REVISION, AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace, revision
 
 
@@ -40,6 +41,22 @@ class WorkspaceService:
     def __init__(self, *, principals: tuple[Principal, ...], workspaces: tuple[Workspace, ...],
                  memberships: tuple[Membership, ...], modules: tuple[ModuleInstance, ...],
                  resources: tuple[Resource, ...] = (), operators: frozenset[str] = frozenset()):
+        self._initialize_records(principals=principals, workspaces=workspaces,
+                                 memberships=memberships, modules=modules,
+                                 resources=resources, operators=operators,
+                                 realm=uuid4().hex, epoch=1)
+        # This constructor is a trusted NEW grant bootstrap, never a decoder.
+        self._membership_authority = {
+            key: capture_authority(self, (member.principal_id,))
+            for key, member in self._memberships.items()}
+        self._operator_authority = {
+            actor: capture_authority(self, (actor,)) for actor in self._operators}
+        for workspace in workspaces:
+            if not self._eligible_admins(workspace.id):
+                raise ValueError("workspace requires an active eligible admin")
+
+    def _initialize_records(self, *, principals, workspaces, memberships, modules,
+                            resources, operators, realm, epoch):
         self._lock = RLock()
         self._principals = _unique(principals, lambda p: p.id)
         _unique(principals, lambda p: (p.issuer, p.subject))
@@ -48,8 +65,7 @@ class WorkspaceService:
         self._modules = _unique(modules, lambda m: (m.workspace_id, m.key))
         self._resources = _unique(resources, lambda r: (r.workspace_id, r.module_key, r.id))
         self._operators = frozenset(operators)
-        self._epoch = 1
-        self._realm = uuid4().hex
+        self._epoch, self._realm = epoch, realm
         self._audit = []
         if not self._operators <= self._principals.keys():
             raise ValueError("unknown operator")
@@ -62,9 +78,80 @@ class WorkspaceService:
         for resource in resources:
             if (resource.workspace_id, resource.module_key) not in self._modules:
                 raise ValueError("resource has foreign reference")
-        for workspace in workspaces:
-            if not self._eligible_admins(workspace.id):
-                raise ValueError("workspace requires an active eligible admin")
+
+    @classmethod
+    def _from_persisted(cls, *, principals, workspaces, memberships, modules,
+                        resources, operators, realm, epoch,
+                        membership_authority, operator_authority):
+        """Decode retained records without granting authority to their local IDs.
+
+        Legacy/unbound and stale grants are valid retained state, not eligible
+        authority. In particular a store with no eligible admin must still load
+        without inventing one. Only fresh bootstrap enforces the initial admin.
+        """
+        service = object.__new__(cls)
+        service._initialize_records(principals=principals, workspaces=workspaces,
+                                    memberships=memberships, modules=modules,
+                                    resources=resources, operators=operators,
+                                    realm=realm, epoch=epoch)
+        service._membership_authority = membership_authority
+        service._operator_authority = operator_authority
+        service._validate_authority_grants()
+        return service
+
+    def _validate_authority_grants(self):
+        if (type(self._membership_authority) is not dict
+                or set(self._membership_authority) != set(self._memberships)
+                or type(self._operator_authority) is not dict
+                or set(self._operator_authority) != self._operators):
+            raise ValueError("invalid_policy_authority")
+        for (_, actor), grant in self._membership_authority.items():
+            if grant is not None:
+                validate_authority(grant, (actor,))
+        for actor, grant in self._operator_authority.items():
+            if grant is not None:
+                validate_authority(grant, (actor,))
+
+    def _membership_authority_current(self, actor_id, workspace_id):
+        """Current ownership only; revoked rows retain their historical binding."""
+        return ((workspace_id, actor_id) in self._memberships
+                and authority_current(self, actor_id,
+                    self._membership_authority.get((workspace_id, actor_id))))
+
+    def _membership_current(self, actor_id, workspace_id):
+        member = self._memberships.get((workspace_id, actor_id))
+        return (member is not None and member.state == "active"
+                and self._membership_authority_current(actor_id, workspace_id))
+
+    def _operator_current(self, actor_id):
+        return (actor_id in self._operators
+                and authority_current(self, actor_id, self._operator_authority.get(actor_id)))
+
+    def _grant_membership(self, member):
+        """Trusted accepted-invitation/new-workspace seam, NOT a rebind API.
+
+        Caller performs complete authorization and counter/audit preflight in
+        the same transaction. A historical revoked row can only be re-enrolled
+        for its still-current owner; stale and legacy ownership need separately
+        reviewed recovery, never an ordinary invitation or silent recapture.
+        """
+        self._principal(member.principal_id)
+        key = (member.workspace_id, member.principal_id)
+        if member.workspace_id not in self._workspaces or member.state != "active":
+            raise ValueError("invalid membership grant")
+        prior = self._memberships.get(key)
+        if prior is None:
+            if member.revision != 1 or key in self._membership_authority:
+                raise ValueError("invalid membership grant")
+            grant = capture_authority(self, (member.principal_id,))
+        else:
+            if prior.state != "revoked" or member.revision != prior.revision + 1:
+                raise ValueError("invalid membership grant")
+            if not self._membership_authority_current(member.principal_id, member.workspace_id):
+                raise PolicyError(409, "membership_authority_unavailable")
+            grant = self._membership_authority[key]
+        self._memberships[key] = member
+        self._membership_authority[key] = grant
 
     def set_principal(self, *args, **kwargs):
         """Unavailable until every stored ACL and long-I/O pin is generation-bound.
@@ -82,7 +169,7 @@ class WorkspaceService:
     def _member(self, actor_id, workspace_id):
         self._principal(actor_id)
         member = self._memberships.get((workspace_id, actor_id))
-        if workspace_id not in self._workspaces or member is None or member.state != "active":
+        if workspace_id not in self._workspaces or not self._membership_current(actor_id, workspace_id):
             raise PolicyError(404, "not_found")
         return member
 
@@ -97,7 +184,7 @@ class WorkspaceService:
 
     def _operator(self, actor_id):
         self._principal(actor_id)
-        if actor_id not in self._operators:
+        if not self._operator_current(actor_id):
             raise PolicyError(403, "forbidden")
 
     @staticmethod
@@ -111,7 +198,7 @@ class WorkspaceService:
 
     def _eligible_admins(self, workspace_id):
         return [m for m in self._memberships.values() if m.workspace_id == workspace_id
-                and m.state == "active" and m.role == "admin" and self._principals[m.principal_id].active]
+                and m.role == "admin" and self._membership_current(m.principal_id, workspace_id)]
 
     def _check_change(self, *revisions, policy=False, audits=1):
         """Budget the WHOLE operation before changing memory or adapter tables.
@@ -169,8 +256,7 @@ class WorkspaceService:
         with self._lock:
             self._principal(actor_id)
             return tuple(sorted((w for w in self._workspaces.values()
-                if (m := self._memberships.get((w.id, actor_id))) is not None
-                and m.state == "active" and w.state != "suspended"), key=lambda w: w.id))
+                if self._membership_current(actor_id, w.id) and w.state != "suspended"), key=lambda w: w.id))
 
     def list_memberships(self, actor_id, workspace_id):
         with self._lock:
@@ -197,9 +283,11 @@ class WorkspaceService:
                 raise PolicyError(409, "archive_privilege_increase")
             if new.state == "active" and not self._principals[principal_id].active:
                 raise PolicyError(409, "principal_inactive")
+            if new.state == "active" and not self._membership_authority_current(principal_id, workspace_id):
+                raise PolicyError(409, "membership_authority_unavailable")
             remaining = [m for m in self._eligible_admins(workspace_id) if m.principal_id != principal_id]
             if not remaining and not (new.state == "active" and new.role == "admin"
-                                      and self._principals[principal_id].active):
+                                      and self._membership_authority_current(principal_id, workspace_id)):
                 raise PolicyError(409, "last_admin")
             self._check_change(old.revision, policy=True)
             new = replace(new, revision=old.revision + 1)
@@ -216,7 +304,7 @@ class WorkspaceService:
                 raise PolicyError(404, "not_found")
             self._match(expected_revision, previous.revision)
             self._match(replacement_revision, replacement.revision)
-            if actor_id == replacement_id or replacement.state != "active" or not self._principals[replacement_id].active:
+            if actor_id == replacement_id or not self._membership_current(replacement_id, workspace_id):
                 raise PolicyError(409, "replacement_ineligible")
             self._check_change(previous.revision, replacement.revision, policy=True, audits=2)
             promoted = replace(replacement, role="admin", revision=replacement.revision + 1)
@@ -310,7 +398,7 @@ class WorkspaceService:
                 raise PolicyError(400, "invalid_workspace") from None
             self._check_change(policy=True)
             self._workspaces[workspace.id] = workspace
-            self._memberships[(workspace.id, initial_admin)] = Membership(workspace.id, initial_admin, "admin")
+            self._grant_membership(Membership(workspace.id, initial_admin, "admin"))
             self._changed(actor_id, workspace.id, "workspace.create", workspace.id, 1, policy=True)
             return workspace
 

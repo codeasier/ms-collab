@@ -49,6 +49,37 @@ class InvitationTests(unittest.TestCase):
             return tuple(db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
                          for table in ('workspace_invitations_v1','memberships','audit'))
 
+    def test_acceptance_creates_one_current_membership_pin(self):
+        item = self.item()
+        self.assertEqual(self.respond(item)['status'],200)
+        def verify(policy):
+            self.assertTrue(policy._membership_current('outsider','alpha'))
+            grant = policy._membership_authority[('alpha','outsider')]
+            self.assertEqual(grant['realm'],policy._realm)
+            self.assertEqual(grant['principals']['outsider']['generation'],1)
+        self.store._transaction(verify,write=False)
+
+    def test_pending_invitation_rejects_unbound_inviter_membership(self):
+        item = self.item()
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id='alpha' AND principal_id='admin'")
+        before = self.counts()
+        self.assertEqual(self.respond(item)['status'],409)
+        self.assertEqual(self.counts(),before)
+
+    def test_invitation_cannot_rebind_revoked_legacy_or_stale_membership(self):
+        item = self.item()
+        self.assertEqual(self.respond(item)['status'],200)
+        self.store.set_membership('admin','alpha','outsider',role='developer',state='revoked',expected_revision=1)
+        for assignment in ('generation=2','realm=NULL,issuer=NULL,subject=NULL,generation=NULL'):
+            with self.subTest(assignment=assignment):
+                with sqlite3.connect(self.path) as db:
+                    db.execute("UPDATE membership_authority SET "+assignment+" WHERE workspace_id='alpha' AND principal_id='outsider'")
+                before = self.counts()
+                result = self.invite()
+                self.assertEqual((result['status'],result['body']), (409,{'error':'membership_authority_unavailable'}))
+                self.assertEqual(self.counts(),before)
+
     def test_invitee_aba_and_reactivation_do_not_restore_invitation(self):
         for first, second in [("subject='replacement'", "subject='outsider-sub'"), ("active=0", "active=1")]:
             item = self.item()

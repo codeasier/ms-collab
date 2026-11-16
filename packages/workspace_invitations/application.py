@@ -83,7 +83,7 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
                     policy._check_change(item['revision'], *prior, policy=True, audits=2)
                     member = Membership(item['workspace_id'],actor,item['role'],
                                         revision=item['member_revision']+1)
-                    policy._memberships[(item['workspace_id'],actor)] = member
+                    policy._grant_membership(member)
                     policy._changed(actor,item['workspace_id'],'membership.join',actor,member.revision,policy=True)
                     deadline = item['expires']
                 return view(policy,transition(connection,policy,actor,item,body['state']),now)

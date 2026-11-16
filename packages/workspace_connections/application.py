@@ -23,7 +23,8 @@ class WorkspaceConnectionsApplication(WorkspaceApplication):
         principal = policy._principals.get(principal_id)
         member = policy._memberships.get((template.scope.workspace_id, principal_id))
         return (principal is not None and principal.active and identity(policy, principal) == identities.get(principal_id)
-            and member is not None and member.state == 'active' and (not admin or member.role == 'admin'))
+            and policy._membership_current(principal_id, template.scope.workspace_id)
+            and (not admin or member.role == 'admin'))
 
     def _managed(self, policy, actor, connection, template, *, write=False):
         policy._admin(actor, template.scope.workspace_id)

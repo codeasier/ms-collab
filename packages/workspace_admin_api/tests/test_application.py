@@ -146,16 +146,26 @@ class AdministrationTests(unittest.TestCase):
         self.assertEqual(results[0]["body"], results[1]["body"])
         self.assertEqual(len(self.store.list_control_workspaces("admin")), 4)
 
+    def test_stale_operator_pin_is_not_advertised_as_capability(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE operator_authority SET generation=2 WHERE principal_id='admin'")
+        result = self.request('/api/control/capabilities')
+        self.assertEqual(result['status'],200)
+        self.assertEqual(result['body']['data'],{'manage_workspaces':False})
+        self.assertEqual(self.create()['status'],403)
+
     def test_replay_rechecks_operator_authority(self):
         key = str(uuid4())
         self.create(key=key)
         with sqlite3.connect(self.path) as db:
+            db.execute("DELETE FROM operator_authority")
             db.execute("DELETE FROM operators")
         self.assertEqual(self.create(key=key)["status"], 403)
 
     def test_operator_revocation_during_verification_is_observed(self):
         def revoke():
             with sqlite3.connect(self.path) as db:
+                db.execute("DELETE FROM operator_authority")
                 db.execute("DELETE FROM operators")
         self.verifier.hook = revoke
         self.assertEqual(self.create()["status"], 403)

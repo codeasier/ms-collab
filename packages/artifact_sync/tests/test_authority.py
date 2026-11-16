@@ -12,7 +12,7 @@ import test_service as fixture_cases
 from fixtures import POLICY,SCOPE,NOW,user,call
 from packages.artifact_sync import records,regrant_index,initialize_indexes,ProviderError
 from packages.workspaces import PolicyError,StorageError,SQLiteWorkspaceService
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 
 
 def race_regrant(path,barrier,queue):
@@ -47,6 +47,12 @@ class IndexAuthorityTests(unittest.TestCase):
             subject=db.execute('SELECT subject FROM principals WHERE id=?',(actor,)).fetchone()[0]
             simulate_identity(db,"UPDATE principals SET subject='changed' WHERE id=?",(actor,))
             simulate_identity(db,'UPDATE principals SET subject=? WHERE id=?',(subject,actor))
+
+    def test_current_publication_pin_does_not_override_unbound_membership(self):
+        self.approve();record=self.record()
+        actor=record.provenance['actor']
+        self.sql("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id=? AND principal_id=?",(SCOPE.workspace_id,actor))
+        self.assertFalse(self.store._transaction(lambda p:records.publication_current(p,record),write=False))
 
     def test_current_membership_does_not_restore_reader_or_approver_aba(self):
         self.approve();self.aba('reader')

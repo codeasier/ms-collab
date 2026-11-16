@@ -8,6 +8,7 @@ from datetime import timedelta
 import itertools
 import json
 import sqlite3
+from packages.workspaces.tests.identity_fixture import bind_core_grants_for_test
 import unittest
 from threading import Event,current_thread
 from unittest.mock import patch
@@ -19,7 +20,7 @@ from packages.identity import Credential
 from packages.responsibility_api import replace_policy
 from packages.responsibility_api.records import _TABLE,_MAX,read
 from packages.workspaces import PolicyError,StorageError
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 from packages.responsibility_api.tests import test_application as base
 
 
@@ -77,6 +78,15 @@ class AuthorityTests(unittest.TestCase):
 
     def without_admin_owner(self):
         config=deepcopy(base.FIELDS);config[0]['owner_ids']=['dev'];return config
+
+    def test_current_reference_pin_cannot_override_unbound_membership(self):
+        from packages.responsibility_api.records import reference_current
+        self.save();state=self.rstate()
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id='alpha' AND principal_id='dev'")
+        self.assertFalse(self.store._transaction(lambda p:reference_current(p,base.SCOPE,state['history'],'dev'),write=False))
+        result=self.save()
+        self.assertEqual((result['status'],result['body']), (400,{'error':'reference_not_current_member'}))
 
     def test_current_reference_response_is_strict_and_editor_token_not_reader_authority(self):
         self.assertEqual(self.save()['status'],200)
@@ -137,6 +147,7 @@ class AuthorityTests(unittest.TestCase):
         self.save()
         with sqlite3.connect(self.path) as db:
             db.execute("INSERT INTO memberships VALUES ('alpha','outsider','viewer','active',1)")
+            bind_core_grants_for_test(db, ('outsider',))
         config=deepcopy(base.FIELDS);config[2]['owner_ids'].append('outsider')
         self.assertEqual(self.save(config)['status'],200)
         self.assertEqual(self.rstate()['history']['authority']['principals']['outsider']['generation'],1)
@@ -216,7 +227,9 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(self.reconfirm()['status'],200)
 
     def test_proposal_pins_both_module_cycles_workspace_and_community_regrant(self):
-        with sqlite3.connect(self.path) as db:db.execute("INSERT INTO operators VALUES ('admin')")
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO operators VALUES ('admin')")
+            bind_core_grants_for_test(db, ('admin',))
         self.save()
         for key in ('responsibility','community','workspace','community-grant'):
             with self.subTest(key=key):
@@ -322,7 +335,9 @@ class AuthorityTests(unittest.TestCase):
             history['memberships'][ident]=1
             history['authority']['principals'][ident]={'issuer':community_fixture.ISSUER,'subject':ident,'generation':1}
         self.write_json('fields',raw)
-        with sqlite3.connect(self.path) as db:db.execute("INSERT INTO memberships VALUES ('alpha','outsider','viewer','active',1)")
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO memberships VALUES ('alpha','outsider','viewer','active',1)")
+            bind_core_grants_for_test(db, ('outsider',))
         before=self.rows();config=deepcopy(base.FIELDS);config[2]['owner_ids'].append('outsider')
         self.assertEqual(self.save(config)['status'],409);self.assertEqual(self.rows(),before)
         raw['history']['memberships']['one-too-many']=1

@@ -14,7 +14,7 @@ from packages.community_api.tests import test_application as fixtures
 from packages.community_sync import GitCodeProvider, Connection
 from packages.community_sync.tests.test_sync import row
 from packages.workspaces import SQLiteWorkspaceService, PolicyError, StorageError
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 
 
 def regrant_worker(path,barrier,queue):
@@ -48,10 +48,20 @@ class CommunityAuthorityTests(unittest.TestCase):
     def regrant(self,expected=None):
         return regrant_policy(self.store,fixtures.config(),expected_revision=expected or self.state().revision,actor_id='admin')
 
+    def test_current_module_approval_does_not_override_unbound_workspace_membership(self):
+        from packages.community_api.records import approval_current
+        self.refresh();self.approve()
+        self.sql("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id='alpha' AND principal_id='admin'")
+        state=self.state()
+        self.assertFalse(self.store._transaction(lambda p:approval_current(p,state),write=False))
+        self.assertEqual(fixtures.call(self.app)['body']['data']['items'],[])
+
     def test_reader_aba_after_fresh_membership_does_not_restore_old_grants(self):
         self.refresh();self.approve();self.transition()
         self.store.set_membership('admin','alpha','reader',role='viewer',state='revoked',expected_revision=1)
-        self.store._transaction(lambda p,c:c.execute("UPDATE memberships SET state='active',revision=revision+1 WHERE workspace_id='alpha' AND principal_id='reader'"),write=True,with_connection=True)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE memberships SET state='active',revision=revision+1 WHERE workspace_id='alpha' AND principal_id='reader'")
+        self.assertTrue(self.store._transaction(lambda p:p._membership_current('reader','alpha'),write=False))
         self.assertEqual(fixtures.call(self.app)['status'],404)
         with self.assertRaises(PolicyError):self.store.set_principal('admin','reader',active=True)
 

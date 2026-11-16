@@ -16,7 +16,7 @@ from packages.artifact_sync import records as index_records
 from packages.artifacts import Scope
 from packages.session_api.application import _SESSION,_CSRF
 from packages.session_api.tests.test_application import cookie_header
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity, bind_core_grants_for_test
 from fixtures import setup
 
 BASE='/api/workspaces/alpha/artifact-admin/source/bucket/'
@@ -165,6 +165,7 @@ class RefreshTests(unittest.TestCase):
             for actor in ('admin','second','outsider'):
                 for scope in ('alpha','beta','commons'):
                     db.execute("INSERT OR REPLACE INTO memberships VALUES (?,?, 'admin','active',1)",(scope,actor))
+                    bind_core_grants_for_test(db, (actor,))
         for workspace in ('alpha','beta','commons'):
             scope=Scope(workspace,'source','bucket')
             config=self.policy._transaction(lambda p,c:index_records.load(c,scope).policy,write=False,with_connection=True)

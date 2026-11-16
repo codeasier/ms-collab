@@ -224,8 +224,10 @@ class CounterTests(unittest.TestCase):
             if value==MAX:
                 SQLiteWorkspaceService.migrate_v1(path)
                 store=SQLiteWorkspaceService(path)
-                self.assertTrue(all(x.revision==MAX for x in store.list_memberships('alpha_admin','alpha')))
-                self.check_error(store,self.actions(store,MAX)['member'])
+                self.assertTrue(store._transaction(lambda p: all(x.revision==MAX for x in p._memberships.values()),write=False))
+                with self.assertRaises(PolicyError) as denied:
+                    store.list_memberships('alpha_admin','alpha')
+                self.assertEqual(denied.exception.status,404)
             else:
                 with self.assertRaises(StorageError):SQLiteWorkspaceService.migrate_v1(path)
                 self.assertEqual(snapshot(path),before)

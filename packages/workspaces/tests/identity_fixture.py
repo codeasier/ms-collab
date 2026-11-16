@@ -33,3 +33,41 @@ def simulate_identity(connection, statement, values=()):
         connection.execute("ROLLBACK TO synthetic_identity_change")
         connection.execute("RELEASE synthetic_identity_change")
         raise
+
+
+def bind_core_grants_for_test(connection, principal_ids):
+    """Explicit synthetic core regrant for tests isolating OTHER consumers.
+
+    This deliberately replaces only membership/operator sidecar pins, including
+    synthetic newly inserted core rows. It leaves all module/history/retry pins
+    and revision counters untouched, so their own ABA checks remain exercised.
+    It is not a supported runtime grant-recovery or identity-transition protocol.
+    Core-ownership tests must use simulate_identity without this helper.
+    """
+    realm = connection.execute('SELECT realm FROM metadata WHERE id=1').fetchone()[0]
+    for principal_id in principal_ids:
+        issuer, subject, generation = connection.execute(
+            'SELECT issuer,subject,generation FROM principals WHERE id=?', (principal_id,)).fetchone()
+        for workspace_id, in connection.execute(
+                'SELECT workspace_id FROM memberships WHERE principal_id=?', (principal_id,)).fetchall():
+            connection.execute(
+                'INSERT INTO membership_authority VALUES (?,?,?,?,?,?) '
+                'ON CONFLICT(workspace_id,principal_id) DO UPDATE SET '
+                'realm=excluded.realm,issuer=excluded.issuer,subject=excluded.subject,generation=excluded.generation',
+                (workspace_id, principal_id, realm, issuer, subject, generation))
+        if connection.execute('SELECT 1 FROM operators WHERE principal_id=?', (principal_id,)).fetchone():
+            connection.execute(
+                'INSERT INTO operator_authority VALUES (?,?,?,?,?) '
+                'ON CONFLICT(principal_id) DO UPDATE SET '
+                'realm=excluded.realm,issuer=excluded.issuer,subject=excluded.subject,generation=excluded.generation',
+                (principal_id, realm, issuer, subject, generation))
+
+
+def simulate_identity_with_core_regrant(connection, statement, values=()):
+    """Test-only identity change PLUS explicit core regrant, never module regrant."""
+    before = dict(connection.execute('SELECT id,generation FROM principals').fetchall())
+    result = simulate_identity(connection, statement, values)
+    changed = [ident for ident, generation in connection.execute('SELECT id,generation FROM principals')
+               if generation != before[ident]]
+    bind_core_grants_for_test(connection, changed)
+    return result

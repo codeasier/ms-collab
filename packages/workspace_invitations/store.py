@@ -80,9 +80,11 @@ def effective_state(policy, item, now):
     if (space is None or space.state != 'active' or space.revision != item['workspace_revision']
             or issuer is None or not issuer.active or binding(issuer, policy._realm) != item['inviter_binding'] or target is None or not target.active
             or binding(target, policy._realm) != item['binding'] or admin is None or admin.role != 'admin'
-            or admin.state != 'active' or admin.revision != item['inviter_revision']
+            or not policy._membership_current(item['inviter'], item['workspace_id'])
+            or admin.revision != item['inviter_revision']
             or (member.revision if member else 0) != item['member_revision']
-            or (member is not None and member.state != 'revoked')):
+            or (member is not None and (member.state != 'revoked'
+                or not policy._membership_authority_current(item['principal_id'], item['workspace_id'])))):
         return 'invalidated'
     return 'pending'
 
@@ -110,6 +112,8 @@ def create(connection, policy, actor, workspace, body, key, now):
     member = policy._memberships.get((workspace, principal.id))
     if member is not None and member.state == 'active':
         raise PolicyError(409, 'already_member')
+    if member is not None and not policy._membership_authority_current(principal.id, workspace):
+        raise PolicyError(409, 'membership_authority_unavailable')
     pending = [item for item in records(connection, 'workspace_id=? AND state=?', (workspace,'pending'))
                if effective_state(policy,item,now) == 'pending']
     if any(item['principal_id'] == principal.id for item in pending):

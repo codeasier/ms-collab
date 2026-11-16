@@ -20,7 +20,7 @@ from packages.identity import AuthenticationError, Credential, Provider
 from packages.pipeline_api import decode_snapshots, resource_id
 from packages.pipeline_sync import BoundCredential, Connection, PipelineSynchronizer
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
-from packages.workspaces.tests.identity_fixture import simulate_identity
+from packages.workspaces.tests.identity_fixture import simulate_identity_with_core_regrant as simulate_identity
 from packages.pipeline_sync.tests.test_sync import Fake, ISSUER, NOW, ORIGIN, SCOPE, TOKEN, Verifier, initialize, payload
 
 
