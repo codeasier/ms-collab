@@ -88,9 +88,23 @@ async function main(){
   router.set(longSelectionPath,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:{initial_admin:longPrincipal,precondition:'ias1-'+'a'.repeat(64)}})}))
   await page.setViewportSize({width:390,height:844});await page.locator('#initial-admin').fill(longPrincipal);assert.equal(await page.locator('#create-save').isDisabled(),true);await page.locator('#initial-admin-review').click();await page.waitForFunction(()=>!document.querySelector('#create-save').disabled)
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('#create-dialog').scrollWidth<=document.querySelector('#create-dialog').clientWidth))
-  assert.ok((await page.locator('#initial-admin-selection').textContent()).includes(longPrincipal));await readable(page,['#create-save','#initial-admin-review','#initial-admin-selection','#create-status']);await page.screenshot({path:path.join(folder,'identity-selection-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1050})
+  assert.ok((await page.locator('#initial-admin-selection').textContent()).includes(longPrincipal));await readable(page,['#create-save','#initial-admin-review','#initial-admin-selection','#create-status'])
+  // Native dialog scrolling must expose the actions, not merely leave them
+  // checkVisibility()-true outside the viewport or clipped by the dialog.
+  await page.locator('#create-save').scrollIntoViewIfNeeded();await page.locator('#create-status').scrollIntoViewIfNeeded()
+  assert.deepEqual(page.viewportSize(),{width:390,height:844})
+  assert.ok(await page.evaluate(()=>{
+   const dialog=document.querySelector('#create-dialog'),clip=dialog.getBoundingClientRect()
+   return dialog.scrollTop>0&&['#create-save','#create-cancel','#create-status'].every(selector=>{
+    const node=document.querySelector(selector),box=node.getBoundingClientRect()
+    return box.width>0&&box.height>0&&box.left>=0&&box.top>=0&&box.right<=innerWidth&&box.bottom<=innerHeight&&box.left>=clip.left&&box.top>=clip.top&&box.right<=clip.right&&box.bottom<=clip.bottom
+   })
+  }),'Create, Cancel and final status must be inside the mobile viewport and dialog after scrolling')
+  for(const selector of ['#create-save','#create-cancel'])assert.equal(await page.locator(selector).isEnabled(),true)
+  assert.equal(await page.locator('#initial-admin').inputValue(),longPrincipal)
+  await page.screenshot({path:path.join(folder,'identity-selection-mobile.png'),fullPage:true})
   await within(router.drain(),'long identity selection route drain');router.remove(longSelectionPath)
-  await page.locator('#create-cancel').click();assert.equal(writes.length,before)
+  await page.locator('#create-cancel').click();assert.equal(await page.locator('#create-dialog').isVisible(),false);assert.equal(writes.length,before);await page.setViewportSize({width:1440,height:1050})
   await page.locator('#invite-open').click();await readable(page,['#invite-dialog h2','#invite-principal','#invite-role','#invite-save','#invite-cancel']);await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
   // Membership success notice precedes the separately awaited module/invitation reads.
   await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('outsider · developer · pending'))
