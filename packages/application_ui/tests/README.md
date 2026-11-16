@@ -38,10 +38,15 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
 - `synthetic_shutdown.py`, `test_synthetic_shutdown.py`: test-only graceful WSGI
   shutdown, including SIGTERM during an active request and while idle. The
   serving thread never raises SystemExit inside a request; shutdown runs on a
-  separate thread and the child must exit cleanly. Community, connection and assistant
+  separate thread and the child must exit cleanly. Unified, community, connection and assistant
   fixtures use this helper; no product shutdown or deployment behavior changes.
 
 - [Bound connection fixture startup](test_connections_fixture.py): real synthetic HTTPS child startup, strict persisted approval seeds and clean shutdown.
 - `test_assistant_fixture_shutdown.py`: real opt-in assistant HTTPS fixture,
   deterministic SIGTERM from inside its WSGI request and idle shutdown. Only a
   disposable test process is signalled; failures always reap it and remain failures.
+
+- `test_application_fixture_shutdown.py`: the actual unified HTTPS fixture in
+  both default and closed-provider modes, with SIGTERM while idle and from inside
+  an active WSGI request. Failures reap their child without converting forced
+  cleanup into passing acceptance; no product shutdown behavior changes.

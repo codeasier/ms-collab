@@ -22,4 +22,11 @@ async function stopSyntheticFixture(child,{graceMs=5000,killMs=5000}={}){
   if(result.code!==0||result.signal!==null)throw Error('Synthetic fixture did not stop cleanly')
  }finally{child.removeListener('exit',onExit);child.removeListener('error',onError)}
 }
-module.exports={stopSyntheticFixture}
+// Attempt every owned child even when an earlier cleanup fails. allSettled is
+// intentional: a forced reap remains an error, but must not strand its siblings.
+async function stopSyntheticFixtures(children,options){
+ const results=await Promise.allSettled(children.map(child=>stopSyntheticFixture(child,options)))
+ const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason)
+ if(failures.length)throw new AggregateError(failures,'Synthetic fixture batch cleanup failed')
+}
+module.exports={stopSyntheticFixture,stopSyntheticFixtures}

@@ -2,7 +2,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
-async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
+const {stopSyntheticFixtures}=require('./fixture-process.cjs')
+async function within(p,label){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 // Check actual computed foreground/background after the browser has applied both
 // stylesheets. Resolve transparent ancestors, reject invisible/disabled probes.
 async function readable(page,selectors){
@@ -18,10 +19,20 @@ async function readable(page,selectors){
  for(const [selector,ratio]of rows)assert.ok(ratio>=4.5,`${selector} text contrast ${ratio.toFixed(2)} < 4.5`)
 }
 async function main(){
- const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-application-cert-')),children=[];let browser
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-application-cert-')),children=[],diagnostics=[];let browser,failure
  try{
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',path.join(temp,'key.pem'),'-out',path.join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'})
-  const fixture=async closed=>{const child=spawn('python3',['-m','packages.application_ui.tests.browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem'),...(closed?['closed']:[])],{env:{...process.env,MS_COLLAB_SYNTHETIC_APPLICATION_UI:'1'},stdio:['ignore','pipe','pipe']});children.push(child);child.stderr.resume();const lines=readline.createInterface({input:child.stdout});return within(new Promise((resolve,reject)=>{lines.once('line',line=>{try{resolve(JSON.parse(line))}catch(e){reject(e)}});child.once('exit',()=>reject(new Error('fixture stopped')))}))}
+  const fixture=async closed=>{
+   const child=spawn('python3',['-m','packages.application_ui.tests.browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem'),...(closed?['closed']:[])],{env:{...process.env,MS_COLLAB_SYNTHETIC_APPLICATION_UI:'1'},stdio:['ignore','pipe','pipe']})
+   children.push(child)
+   const diagnostic={label:closed?'closed fixture':'main fixture',stderr:''};diagnostics.push(diagnostic)
+   child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{diagnostic.stderr=(diagnostic.stderr+chunk).slice(-8192)})
+   const lines=readline.createInterface({input:child.stdout})
+   return within(new Promise((resolve,reject)=>{
+    lines.once('line',line=>{try{resolve(JSON.parse(line))}catch(error){reject(error)}})
+    child.once('error',reject);child.once('exit',()=>reject(new Error(`${diagnostic.label} stopped during startup`)))
+   }),`${diagnostic.label} startup`)
+  }
   const main=await fixture(false),closed=await fixture(true),folder=path.join(process.env.RUNNER_TEMP||os.tmpdir(),'ms-collab-application-ui');fs.mkdirSync(folder,{recursive:true})
   browser=await chromium.launch({headless:true})
   // Certificate exception is confined to this disposable context, never OS trust.
@@ -36,8 +47,8 @@ async function main(){
   const router=createScenarioRouter({origin:main.origin,onExternal:()=>external.push('unexpected routed origin')});await context.route('**/api/**',route=>router.handle(route));await context.route('**/app/bootstrap',route=>router.handle(route))
   let bootSeen,bootRelease,bootFinished;const bootStarted=new Promise(r=>bootSeen=r),bootBarrier=new Promise(r=>bootRelease=r),bootDone=new Promise(r=>bootFinished=r)
   router.set('/app/bootstrap',async route=>{const response=await route.fetch();bootSeen();await bootBarrier;await route.fulfill({response});bootFinished()})
-  await page.goto(main.origin+'/');await within(bootStarted);assert.equal(await page.locator('#app-recheck').isDisabled(),true);await page.evaluate(()=>document.querySelector('#app-recheck').dispatchEvent(new Event('click')))
-  bootRelease();await within(bootDone);router.remove('/app/bootstrap');await page.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled)
+  await page.goto(main.origin+'/');await within(bootStarted,'bootstrap request barrier');assert.equal(await page.locator('#app-recheck').isDisabled(),true);await page.evaluate(()=>document.querySelector('#app-recheck').dispatchEvent(new Event('click')))
+  bootRelease();await within(bootDone,'bootstrap response release');router.remove('/app/bootstrap');await page.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled)
   await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden)
   assert.match(await page.locator('#app-workspaces').textContent(),/<img src=x onerror=alert\(1\)>/);assert.equal(await page.locator('#app-workspaces img').count(),0);assert.ok(!(await page.locator('#app-workspaces').textContent()).includes('commons'))
   const cookies=await context.cookies(main.origin),session=cookies.find(c=>c.name==='__Host-ms-collab-session'),csrf=cookies.find(c=>c.name==='__Host-ms-collab-csrf');assert.ok(session.secure&&session.httpOnly&&csrf.secure&&!csrf.httpOnly);assert.ok(!(await page.evaluate(()=>document.cookie)).includes('__Host-ms-collab-session'))
@@ -45,8 +56,8 @@ async function main(){
   // Internal Sign out must interrupt a still-running page activation, not be dropped as busy.
   let loadSeen,loadRelease,loadFinished;const loadStarted=new Promise(r=>loadSeen=r),loadBarrier=new Promise(r=>loadRelease=r),loadDone=new Promise(r=>loadFinished=r)
   router.set('/api/workspaces',async route=>{const response=await route.fetch();loadSeen();await loadBarrier;await route.fulfill({response});loadFinished()})
-  await page.locator('nav a[href="/manage/"]').click();await within(loadStarted);await page.locator('#disconnect').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))
-  loadRelease();await within(loadDone);await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));assert.equal(await page.locator('#app-principal').textContent(),'Not verified');assert.equal(await page.locator('#session').isVisible(),false);router.remove('/api/workspaces')
+  await page.locator('nav a[href="/manage/"]').click();await within(loadStarted,'management activation request barrier');await page.locator('#disconnect').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))
+  loadRelease();await within(loadDone,'management activation response release');await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));assert.equal(await page.locator('#app-principal').textContent(),'Not verified');assert.equal(await page.locator('#session').isVisible(),false);router.remove('/api/workspaces')
   await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden)
   const loginCount=logins.length;await page.locator('nav a[href="/manage/"]').click();await page.waitForFunction(()=>document.querySelector('#members').children.length===3)
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
@@ -77,17 +88,17 @@ async function main(){
   const routePath='/api/workspaces/alpha/responsibility/source/sample/project/config';let seen,release,finished;const started=new Promise(r=>seen=r),barrier=new Promise(r=>release=r),done=new Promise(r=>finished=r)
   let oldCandidates=0;const listener=request=>{if(request.url().includes('/alpha/responsibility/')&&request.url().includes('/candidates?'))oldCandidates++};page.on('request',listener)
   router.set(routePath,async route=>{const response=await route.fetch();seen();await barrier;await route.fulfill({response});finished()})
-  await page.locator('#reload').click();await within(started);await scope('beta');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'));const oldCount=oldCandidates
-  release();await within(done);await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));assert.equal(oldCandidates,oldCount);assert.equal(await page.locator('#panel').isVisible(),false)
+  await page.locator('#reload').click();await within(started,'responsibility stale-scope request barrier');await scope('beta');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'));const oldCount=oldCandidates
+  release();await within(done,'responsibility stale-scope response release');await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));assert.equal(oldCandidates,oldCount);assert.equal(await page.locator('#panel').isVisible(),false)
   page.off('request',listener);router.remove(routePath);await scope('alpha');await revision(3)
   // An accepted write with a late response cannot restore a page after pagehide/recheck.
   let putSeen,putRelease,putFinished;const putStarted=new Promise(r=>putSeen=r),putBarrier=new Promise(r=>putRelease=r),putDone=new Promise(r=>putFinished=r)
   router.set(routePath,async route=>{if(route.request().method()!=='PUT')return route.continue();const response=await route.fetch();putSeen();await putBarrier;await route.fulfill({response});putFinished()})
-  await page.locator('#edit').click();await page.locator('[data-entry="name"]').fill('Saved while page was hidden');await page.locator('#save').click();await page.locator('#confirm-submit').click();await within(putStarted)
+  await page.locator('#edit').click();await page.locator('[data-entry="name"]').fill('Saved while page was hidden');await page.locator('#save').click();await page.locator('#confirm-submit').click();await within(putStarted,'responsibility accepted-write request barrier')
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));assert.equal(await page.locator('#app-principal').textContent(),'Not verified');assert.equal(await page.locator('#editor-fields fieldset').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'')
   await page.locator('#app-recheck').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#session').hidden);await scope('alpha');await revision(4)
-  putRelease();await within(putDone);await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await revision(4);assert.match(await page.locator('#configuration').textContent(),/Saved while page was hidden/);router.remove(routePath)
-  await router.drain();await context.unrouteAll({behavior:'wait'})
+  putRelease();await within(putDone,'responsibility accepted-write response release');await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await revision(4);assert.match(await page.locator('#configuration').textContent(),/Saved while page was hidden/);router.remove(routePath)
+  await within(router.drain(),'scenario route drain');await within(context.unrouteAll({behavior:'wait'}),'scenario route removal')
   const noCSRF=await page.evaluate(async()=>{const r=await fetch('/api/workspaces/alpha/responsibility/source/sample/project/config',{method:'PUT',headers:{'Content-Type':'application/json','If-Match':'"4"'},body:'{"fields":[]}'});return r.status});assert.equal(noCSRF,401)
   // Current membership revocation applies to the same cookie across both modules.
   const revoked=await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status});assert.equal(revoked,200)
@@ -103,7 +114,25 @@ async function main(){
   assert.equal((await context.cookies(main.origin)).some(c=>c.name==='__Host-ms-collab-session'),false)
   await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#app-data').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
-  console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and seven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
- }finally{await browser?.close();for(const child of children){if(child.exitCode===null){child.kill();await within(new Promise(resolve=>child.once('exit',resolve)))}}fs.rmSync(temp,{recursive:true,force:true})}
+ }catch(error){failure=error}
+ finally{
+  const failures=failure?[failure]:[]
+  // Cleanup errors must neither replace the original scenario failure nor skip
+  // another child. A bounded/forced cleanup still fails the whole acceptance.
+  try{if(browser)await within(browser.close(),'browser close')}catch(error){failures.push(error)}
+  try{await stopSyntheticFixtures(children)}catch(error){failures.push(error)}
+  try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
+  if(failures.length)for(const diagnostic of diagnostics){
+   if(diagnostic.stderr)console.error(`[${diagnostic.label} stderr tail]\n${diagnostic.stderr}`)
+  }
+  if(failures.length===1)throw failures[0]
+  if(failures.length)throw new AggregateError(failures,'Unified UI scenario or cleanup failed')
+ }
+ console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and seven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
 }
-main().catch(error=>{console.error(error.stack);if(error.cause)console.error(error.cause.stack);process.exitCode=1})
+function reportFailure(error){
+ console.error(error?.stack||String(error))
+ if(error instanceof AggregateError)for(const nested of error.errors)reportFailure(nested)
+ if(error?.cause)reportFailure(error.cause)
+}
+main().catch(error=>{reportFailure(error);process.exitCode=1})

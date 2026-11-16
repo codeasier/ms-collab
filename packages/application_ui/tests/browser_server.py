@@ -2,7 +2,6 @@
 import json
 import os
 from pathlib import Path
-import signal
 import sqlite3
 import ssl
 import sys
@@ -13,6 +12,7 @@ from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 from packages.application_host.tests.fixtures import setup
 from packages.application_ui import ApplicationUI
+from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 
 
 def main():
@@ -92,9 +92,7 @@ def main():
             return app(env,start)
         server.set_app(fixture)
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(sys.argv[1],sys.argv[2]);server.socket=context.wrap_socket(server.socket,server_side=True)
-        signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(SystemExit()))
-        print(json.dumps({'origin':origin,'provider':provider}),flush=True)
-        try:server.serve_forever()
-        finally:server.server_close()
+        serve_synthetic(server, on_ready=lambda: print(
+            json.dumps({'origin':origin,'provider':provider}),flush=True))
 
 if __name__=='__main__':main()
