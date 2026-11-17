@@ -46,10 +46,19 @@ JSON input budget** per request: policy text before parsing, then publication an
 (for a granted administrator) candidate text before validation. Existing status
 may validate a scope for three capabilities; repeated inputs are charged each
 time. Codecs have a fixed bounded number of internal validation passes, not a
-hard CPU-time deadline. Each discovery SQL JSON projection is truncated to the
-existing 1 MiB character limit plus one, making oversized records fail closed
-without allocating their entire stored text. Raw key projections have a 129
-character bound. No cleanup, provider work or mutating transaction is involved.
+hard CPU-time deadline. Each discovery SQL JSON projection takes a **BLOB byte
+prefix of 1 MiB plus one sentinel byte**, not a TEXT substring: embedded NUL and
+trailing data must not disappear into an apparently valid JSON prefix. The
+existing codecs require exact canonical equality with `dump(ensure_ascii=True)`;
+every accepted record is therefore ASCII, so its 1 MiB character and byte limits
+are identical. Raw key projections similarly take 129 bytes for the existing
+128-character ASCII identifier limit, then validate the entire projected key.
+Both use strict UTF-8 decoding, never replacement or ignored bytes. Malformed or
+split multibyte sequences fail closed. Policy is decoded after module
+authorization and before the explicit per-scope grant check;
+publication/candidate byte projections are decoded only after the existing
+explicit grant succeeds, and reader queries still select SQL `NULL` for candidate.
+No cleanup, provider work or mutating transaction is involved.
 
 Every response has at most **25 currently authorized items** and a `next_after`
 value only if more authorized items exist. The opaque-to-UI value is simply
@@ -90,6 +99,12 @@ late responses even when AbortSignal is ignored. Repeated list clicks while
 pending do not create duplicate requests. Failures and stale cursors never retry.
 
 ## Verification boundary
+
+Cookie/SQLite projection regressions cover NUL-tailed canonical records, NUL key
+aliases, invalid UTF-8 and split multibyte prefixes, denied private payloads and
+the real 1 MiB/128-byte sentinel boundaries. They compare readable corrupt
+records with the existing exact catalog/status/review failures; reader candidate
+exclusion remains checked at the SQL projection boundary.
 
 Existing `artifact-session-ui` CI runs the new cookie/SQLite matrix and real HTTPS
 browser discovery journey, preserving all old gates and five screenshots plus

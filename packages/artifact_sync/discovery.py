@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl
 
 from packages.artifacts import Scope
 from packages.workspaces import PolicyError, StorageError
-from .records import _TABLE, authorized, check_schema
+from .records import _TABLE, _decode_projection, authorized, check_schema
 
 MAX_SCOPES = 256
 PAGE_SIZE = 25
@@ -60,7 +60,7 @@ def directory(policy, actor, db, workspace, after, *, status=None):
                 raise
             policy.authorize(actor, workspace, 'artifacts', 'write')
     check_schema(db)
-    keys = db.execute(f'SELECT substr(connection,1,129),substr(bucket,1,129) FROM {_TABLE} WHERE workspace=? ORDER BY connection,bucket LIMIT ?',
+    keys = db.execute(f'SELECT substr(CAST(connection AS BLOB),1,129),substr(CAST(bucket AS BLOB),1,129) FROM {_TABLE} WHERE workspace=? ORDER BY connection,bucket LIMIT ?',
                       (workspace, MAX_SCOPES + 1)).fetchall()
     if len(keys) > MAX_SCOPES:
         # No partial response, scan count, hidden cursor or truncation.
@@ -75,8 +75,12 @@ def directory(policy, actor, db, workspace, after, *, status=None):
             raise PolicyError(503, 'scope_directory_unavailable')
     visible = []
     for connection, bucket in keys:
-        if any(type(v) is not str or not _ID.fullmatch(v) for v in (connection, bucket)):
-            raise StorageError('invalid_artifact_index')
+        try:
+            connection, bucket = _decode_projection(connection), _decode_projection(bucket)
+            if any(not _ID.fullmatch(v) for v in (connection, bucket)):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise StorageError('invalid_artifact_index') from None
         scope = Scope(workspace, connection, bucket)
         try:
             if status is None:
