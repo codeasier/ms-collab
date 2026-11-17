@@ -13,3 +13,5 @@ body[data-page="artifacts"] :focus-visible,body[data-page="artifact-admin"] :foc
 body[data-page="artifact-admin"] .rows,body[data-page="artifact-admin"] .rows li,body[data-page="artifact-admin"] .readers li{border-color:#9eb4c4}
 
 body[data-page="artifacts"] #download-panel dd{margin:4px 0 18px;overflow-wrap:anywhere}body[data-page="artifacts"] #download-panel dt{font-weight:700}body[data-page="artifacts"] #download-digest{font-family:ui-monospace,monospace;font-size:.85rem}body[data-page="artifacts"] .download-actions{display:flex;gap:12px;flex-wrap:wrap}body[data-page="artifacts"] #results .secondary{margin-bottom:10px}
+
+.artifact-picker-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:end}.artifact-picker-grid label{display:grid;gap:8px;min-width:0}.artifact-picker-grid select{width:100%;min-width:0;padding:12px;background:#fff;color:#173044;border:1px solid #9eb4c4;border-radius:6px;font:inherit}#artifact-picker-status{overflow-wrap:anywhere}@media(max-width:640px){.artifact-picker-grid{grid-template-columns:minmax(0,1fr)}}

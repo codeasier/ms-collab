@@ -216,3 +216,12 @@ clear old observations/approvals atomically. Ordinary discovery only returns
 current readable, registered scopes. No credential or endpoint form exists.
 See the [connection contract](../workspace_connections/README.md) for deployment
 pins, revision handling, invalidation and deliberately unimplemented providers.
+
+### Artifact scope selection
+
+Both Artifacts and Artifact approval now offer an explicit current-workspace
+scope directory while preserving manual exact IDs. The reader lists only valid
+published scopes (including empty catalogs); approval lists only currently usable
+management capabilities. Neither listing grants access, contacts a provider nor
+selects credentials. Selecting or changing scope clears earlier catalog/review/
+download state. See the [bounded directory contract](../artifact_sync/DISCOVERY.md).

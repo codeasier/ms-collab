@@ -52,6 +52,7 @@ jobs:
           node --test frontend/application/tests/*.test.mjs
           python3 -m unittest discover -s packages/artifact_admin/tests -v
           node frontend/application/tests/artifacts.cjs
+          node frontend/application/tests/artifact-scopes.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -62,6 +63,10 @@ jobs:
             ${{ runner.temp }}/ms-collab-artifact-session/approval-desktop.png
             ${{ runner.temp }}/ms-collab-artifact-session/approval-mobile.png
             ${{ runner.temp }}/ms-collab-artifact-session/conflict.png
+            ${{ runner.temp }}/ms-collab-artifact-session/scopes-reader-desktop.png
+            ${{ runner.temp }}/ms-collab-artifact-session/scopes-reader-mobile.png
+            ${{ runner.temp }}/ms-collab-artifact-session/scopes-admin-desktop.png
+            ${{ runner.temp }}/ms-collab-artifact-session/scopes-admin-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

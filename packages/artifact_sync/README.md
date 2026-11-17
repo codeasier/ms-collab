@@ -149,3 +149,7 @@ For the cookie host, [configured refresh](../artifact_refresh/README.md) adds sa
 2/1/1 admission, bounded transport, original-session page guards and atomic lease
 completion. Its internal lifecycle hook adds restrictions only; this package's
 legacy explicit-provider API and approval contract remain unchanged.
+
+The configured indexed reader also supports [current-authority scope discovery](DISCOVERY.md):
+local published scopes only, public publication revisions, no candidate reads,
+explicit bounded pagination, and no provider requests or new grants.

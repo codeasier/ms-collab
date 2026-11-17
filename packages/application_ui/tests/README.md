@@ -55,3 +55,10 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
   same real pages/API/SQLite, explicit refresh initialization and scoped synthetic
   GitCode GET transport. Threaded synthetic HTTP permits actual concurrent logout
   while an acquisition is held. Default connection fixture stays refresh-disabled.
+
+Artifact discovery additions: `test_artifact_discovery.py` uses real host/Cookie/
+SQLite paths for three workspaces, public-only revision, candidate-free SELECT,
+reader/non-reader approver/write-only refresher matrices, current logout/expiry/
+identity ABA/provenance, schema/codec corruption, raw-key and aggregate-input
+bounds, visible-only pagination and no-provider/read-only assertions. Fixtures
+are synthetic and never imported by production factories.

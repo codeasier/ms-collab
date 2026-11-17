@@ -8,6 +8,7 @@ import re
 from packages.artifacts import Scope
 from packages.artifact_sync import ArtifactSynchronizer, ProviderError
 from packages.artifact_sync.records import authorized, publication_current
+from packages.artifact_sync.discovery import directory, directory_request
 from packages.artifact_refresh import ConfiguredArtifactRefresh
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
@@ -30,29 +31,14 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
 
     def _dispatch(self, environ):
         assertion = self._service._verify_request(environ)
+        listing = directory_request(environ, 'artifact-admin')
+        if listing is not None:
+            return self._service._authenticated_transaction(assertion,
+                lambda policy, actor, db: directory(policy, actor, db, *listing, status=self._status), with_connection=True)
         scope, action = self._route(environ)
         if action == 'status':
-            def status(policy, actor, connection):
-                grants, current = {}, None
-                for name in ('refresh', 'review', 'approve'):
-                    try:
-                        record = authorized(policy, actor, connection, scope, name)
-                        grants[name] = True
-                        current = record
-                    except PolicyError:
-                        grants[name] = False
-                if current is None or not any(grants.values()):
-                    raise PolicyError(404, 'not_found')
-                # Approval UI requires preview permission even if write-only host
-                # module configuration would allow the trusted service operation.
-                grants['approve'] = grants['approve'] and grants['review']
-                grants['refresh'] = grants['refresh'] and self._allow_refresh
-                if not any(grants.values()):
-                    raise PolicyError(404, 'not_found')
-                return {'scope': scope.as_dict(), 'revision': current.revision,
-                        'published_revision': current.published_revision if publication_current(policy,current) else None,
-                        'pending': current.candidate is not None, 'capabilities': grants}
-            return self._service._authenticated_transaction(assertion, status, with_connection=True)
+            return self._service._authenticated_transaction(assertion,
+                lambda policy, actor, connection: self._status(policy, actor, connection, scope), with_connection=True)
         expected = self._revision(environ)
         if action == 'review':
             result = self._service._review_verified(assertion, scope, expected_revision=expected)
@@ -83,6 +69,29 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
             result = self._service._approve_verified(assertion, scope, expected_revision=expected,
                 candidate_digest=body['candidate_digest'], expected_readers=body['readers'], require_review=True)
         return {'scope': scope.as_dict(), **result}
+
+    def _status(self, policy, actor, connection, scope, *, budget=None):
+        """The directory and exact-scope status share the SAME capabilities."""
+        grants, current = {}, None
+        for name in ('refresh', 'review', 'approve'):
+            try:
+                record = authorized(policy, actor, connection, scope, name, budget=budget)
+                grants[name] = True
+                current = record
+            except PolicyError as error:
+                if error.status not in (403, 404):
+                    raise
+                grants[name] = False
+        if current is None or not any(grants.values()):
+            raise PolicyError(404, 'not_found')
+        # A user-facing approval needs preview; refresh needs trusted host opt-in.
+        grants['approve'] = grants['approve'] and grants['review']
+        grants['refresh'] = grants['refresh'] and self._allow_refresh
+        if not any(grants.values()):
+            raise PolicyError(404, 'not_found')
+        return {'scope': scope.as_dict(), 'revision': current.revision,
+                'published_revision': current.published_revision if publication_current(policy, current) else None,
+                'pending': current.candidate is not None, 'capabilities': grants}
 
     @staticmethod
     def _route(environ):

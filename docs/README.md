@@ -64,3 +64,7 @@
 - [Configured service runtime](../packages/service_runtime/README.md): strict installation/configuration, cold backup/new-directory restore and fixed loopback TLS; real login remains disabled and no production deployment is asserted.
 - [Principal authority and durable workspace grants](principal-authority.md)：realm/代次、v3 成员/操作员持久授权侧表、显式离线 v1/v2 升级与旧授权 NULL 墓碑；普通编辑/转移/邀请不重绑，身份变更和真实登录仍关闭，恢复与历史备份回滚另行设门。
 - [Initial-admin selection acceptance](../packages/workspace_admin_api/tests/README.md#initial-admin-selection-acceptance-plan)：单 ID 核对、写锁内身份预条件、旧重试兼容及人工两步界面的合成验收计划；hash 不是凭据，无 TTL 或消费语义，文档不代表检查已通过。
+
+- [Artifact scope discovery](../packages/artifact_sync/DISCOVERY.md): bounded
+  current-authority reader/administration directories, explicit product selection,
+  public revision isolation, cursor/error semantics and synthetic CI boundaries.

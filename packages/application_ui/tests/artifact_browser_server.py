@@ -25,12 +25,28 @@ def main():
         origin='https://127.0.0.1:'+str(server.server_port)
         provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
         app,policy,login,exchange=application(directory,origin=origin,clock=lambda:datetime.now(timezone.utc),authorization_endpoint=provider)
+        discovery = os.environ.get('MS_COLLAB_SYNTHETIC_ARTIFACT_DISCOVERY') == '1'
+        subject = ['admin-sub']
+        if discovery:
+            from packages.application_ui.tests.artifact_discovery_fixtures import seed_directory
+            seed_directory(policy)
         def fixture(env,start):
             path=env.get('PATH_INFO')
             if path.startswith('/synthetic/artifact/'):
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
-                if path.endswith('/stage'):result={'revision':stage(directory)}
+                if discovery and path.endswith('/as-reader'):subject[0]='reader-sub';result={}
+                elif discovery and path.endswith('/as-second'):subject[0]='second-sub';result={}
+                elif discovery and path.endswith('/seed-pages'):
+                    from packages.application_ui.tests.artifact_discovery_fixtures import seed_pages
+                    seed_pages(policy);result={}
+                elif discovery and path.endswith('/invalidate-cursor'):
+                    import sqlite3
+                    with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
+                        db.execute("UPDATE artifact_indexes_v1 SET published=NULL,published_revision=NULL WHERE workspace='alpha' AND bucket='p022'")
+                    result={}
+                elif discovery and path.endswith('/as-admin'):subject[0]='admin-sub';result={}
+                elif path.endswith('/stage'):result={'revision':stage(directory)}
                 elif path.endswith('/revoke-membership'):
                     policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1);result={}
                 elif path.endswith('/revoke-session'):
@@ -43,7 +59,7 @@ def main():
                 if (env.get('HTTP_HOST')!='localhost:'+str(server.server_port) or params.get('code_challenge_method')!=['S256']
                         or params.get('redirect_uri')!=[login.binding.callback_uri] or params.get('client_id')!=[login.binding.audience]):
                     start('400 Bad Request',[('Content-Length','0')]);return [b'']
-                code=exchange.authorize(params['code_challenge'][0]);target=login.binding.callback_uri+'?'+urlencode({'code':code,'state':params['state'][0]})
+                code=exchange.authorize(params['code_challenge'][0],subject[0]);target=login.binding.callback_uri+'?'+urlencode({'code':code,'state':params['state'][0]})
                 start('303 See Other',[('Location',target),('Content-Length','0'),('Cache-Control','no-store'),('Referrer-Policy','no-referrer')]);return [b'']
             return app(env,start)
         server.set_app(fixture)
