@@ -120,7 +120,26 @@ current revocation. It asserts zero CI provider calls, XSS-as-text, 4.5:1 picker
 contrast and 390px no overflow. Its exact additional screenshot allowlist is
 `ms-collab-pipeline-scopes/{desktop,mobile,tasks}.png`.
 
+The same journey also keeps two actual Pages in one BrowserContext with the same
+synthetic session cookie: alpha and beta select independently through the picker
+and read identical run/task IDs with distinct stored stage/task labels. Per-page
+request records check canonical workspace routes. A held, real alpha response is
+interleaved with a successful beta request; late responses cannot reopen closed
+or cleared state. Reload and actual Back/Forward navigation clear alpha's scope
+without changing beta's existing selection or evidence. Fresh documents may
+inspect their cookie automatically, but neither restored nor new documents
+inherit or reopen a scope. The test explicitly rechecks and reselects afterward.
+Logout in beta is observed by alpha on its next real API request (401), before
+releasing an already-authorized held response. This is not immediate push
+revocation of an idle tab's displayed data. Query-bearing or scoped Pipeline
+HTML links remain unsupported (404, no automatic scope fallback); no deep-link
+resolver or legacy OBS URL compatibility is implemented or claimed. This is
+partial W10 acceptance for the supported picker, not full W10 or real-product
+migration acceptance. It adds no screenshots or workflow-timeout changes.
+
 All three pipeline browser journeys use `stopSyntheticFixture`. Cleanup must
-succeed before a PASS marker is printed. Only fictional metadata, synthetic
+succeed before a PASS marker is printed. The discovery journey bounds route
+drain and browser close, always attempts child reaping and temporary-file
+cleanup, and preserves both scenario and cleanup failures. Only fictional metadata, synthetic
 identity exchange and temporary SQLite/HTTPS are exercised. These gates are not
 real OBS/GitCode acceptance, live data migration or production readiness.
