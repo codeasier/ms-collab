@@ -199,8 +199,17 @@ class HostModuleStatusTests(unittest.TestCase):
     def test_exact_route_query_head_extra_and_hint_do_not_expand_dispatch(self):
         for query in ('x=1', 'after=%XX', 'capabilities=1', 'workspace_id=beta', 'offset=0'):
             self.rejected(self.request(query=query), 400, 'invalid_request')
-        for method in ('HEAD', 'OPTIONS'):
-            self.rejected(self.request(method=method), 404, 'not_found')
+        self.rejected(self.request(method='HEAD'), 404, 'not_found')
+        # OPTIONS is not a GET/HEAD exemption: existing Cookie Origin and CSRF
+        # checks precede the otherwise unsupported route's 404.
+        for origin, csrf in ((None, None), (None, self.session.csrf.value),
+                             (fixtures.ORIGIN, None)):
+            with self.subTest(method='OPTIONS', origin_present=origin is not None,
+                              csrf_present=csrf is not None):
+                self.rejected(self.request(method='OPTIONS', origin=origin, csrf=csrf),
+                              401, 'authentication_required')
+        self.rejected(self.request(method='OPTIONS', origin=fixtures.ORIGIN,
+                                   csrf=self.session.csrf.value), 404, 'not_found')
         for path in (STATUS + '/', STATUS + '/extra', STATUS.replace('/pipelines', '/Pipelines')):
             self.rejected(self.request(path), 404, 'not_found')
         for hint in ('beta', '', ' alpha', 'alpha ', 'ALPHA', 'alpha,beta', None, ['alpha']):
