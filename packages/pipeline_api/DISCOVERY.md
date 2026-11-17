@@ -78,7 +78,11 @@ transaction time are not newly cancellable or hard-time-bounded here.
 
 Malformed readable envelope, scope/hash mismatch or future observation yields
 `503 pipeline_data_unavailable`, with no partial page or offending value. Invalid
-resource state rejected by the existing loader yields `503 storage_unavailable`.
+resource validation errors normalized by the existing loader yield
+`503 storage_unavailable`. A SQLite read/UTF-8 decoding exception while loading
+current policy is instead mapped by the existing cookie session transaction to
+`503 authentication_unavailable`, before the directory callback is reached.
+Neither path returns a partial list or bypasses current authentication.
 An authorization error is not translated into an empty successful directory.
 A valid empty directory says only that no namespaced stored scopes exist here.
 

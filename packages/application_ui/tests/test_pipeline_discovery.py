@@ -140,8 +140,12 @@ class PipelineDiscoveryTests(unittest.TestCase):
 
     def test_invalid_utf8_fails_value_free_in_existing_loader(self):
         self.sql("UPDATE resources SET text=CAST(? AS TEXT) WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?", (b'\xff', resource_id(SCOPE)))
-        self.assertEqual(self.call()['body'], {'error': 'storage_unavailable'})
-        self.assertEqual(request(self.app, BASE + '/runs', cookies=self.cookies)['body'], {'error': 'storage_unavailable'})
+        # sqlite3's TEXT decoding failure occurs in policy._load, before the
+        # module callback. The existing cookie transaction maps this database
+        # exception to AuthenticationUnavailable, not loader validation errors.
+        for result in (self.call(), request(self.app, BASE + '/runs', cookies=self.cookies)):
+            self.assertEqual((result['status'], result['body']),
+                             (503, {'error': 'authentication_unavailable'}))
 
     def test_malformed_envelope_scope_hash_revision_future_and_duplicate_json_fail_all(self):
         good = encode_snapshots(SCOPE, [run()]); parsed = json.loads(good)
