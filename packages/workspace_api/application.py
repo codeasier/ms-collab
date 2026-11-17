@@ -4,7 +4,7 @@ There is no server command, default verifier, anonymous or mock identity.
 An explicit session boundary can replace (never mix with) bearer verification.
 Test doubles exist only under tests/.
 """
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 import json
@@ -22,6 +22,61 @@ _MAX_BODY = 16384
 
 def _invalid():
     return PolicyError(400, "invalid_request")
+
+
+@dataclass(frozen=True)
+class _ConflictingWorkspaceHint:
+    """Request-local rejection intent, never an identity or authority grant."""
+    assertion: object = field(repr=False)
+    workspace: str
+    control: bool
+
+
+def _workspace_hint(assertion, environ):
+    """Capture disagreement only; the router still decides whether a route exists.
+
+    Do not retain the raw hint or reinterpret aliases, unscoped routes, or trusted
+    Python callers without a path. Authentication and route visibility are checked
+    later under the existing transaction, not by this request-shape function.
+    """
+    if "HTTP_X_WORKSPACE_ID" not in environ:
+        return assertion
+    path = environ.get("PATH_INFO")
+    if type(path) is not str or len(path) > 1000:
+        return assertion
+    parts = path.split("/")
+    control = False
+    if len(parts) >= 5 and parts[:3] == ["", "api", "workspaces"]:
+        workspace = parts[3]
+    elif len(parts) == 5 and parts[:4] == ["", "api", "control", "workspaces"]:
+        workspace, control = parts[4], True
+    else:
+        return assertion
+    if not _SEGMENT.fullmatch(workspace):
+        return assertion
+    hint = environ["HTTP_X_WORKSPACE_ID"]
+    if type(hint) is str and hint == workspace:
+        return assertion
+    return _ConflictingWorkspaceHint(assertion, workspace, control)
+
+
+def _workspace_hint_operation(assertion, callback):
+    if type(assertion) is not _ConflictingWorkspaceHint:
+        return assertion, callback
+    workspace, control = assertion.workspace, assertion.control
+
+    def reject(policy, actor, connection=None):
+        # Same current authentication/snapshot as an ordinary operation. Never
+        # inspect the header's target, authorize by it, or run business effects.
+        if control:
+            policy._operator(actor)
+            if workspace not in policy._workspaces:
+                raise PolicyError(404, "not_found")
+        else:
+            policy._member(actor, workspace)
+        raise _invalid()
+
+    return assertion.assertion, reject
 
 
 def _object(pairs):
@@ -97,7 +152,7 @@ class WorkspaceApplication:
         except ValueError:
             raise AuthenticationError() from None
         # Protocol verification (possibly network I/O) occurs before any DB lock.
-        return self._verifier.verify(self._provider_key, credential)
+        return _workspace_hint(self._verifier.verify(self._provider_key, credential), environ)
 
     def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None):
         """Internal adapter seam, never an HTTP callback or reusable authority.
@@ -105,6 +160,7 @@ class WorkspaceApplication:
         Resolve the current subject binding and evaluate the complete adapter
         operation in the same policy snapshot. Callback is trusted Python code.
         """
+        assertion, callback = _workspace_hint_operation(assertion, callback)
         if self._session_boundary is not None:
             return self._session_boundary._authenticated_transaction(assertion, callback,
                 write=write, with_connection=with_connection, before_commit=before_commit)

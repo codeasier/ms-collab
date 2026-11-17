@@ -12,6 +12,7 @@ from packages.login_state import LoginCoordinator
 from packages.login_state.core import _secret
 from packages.workspaces import PolicyError, StorageError
 from packages.workspace_api import WorkspaceApplication
+from packages.workspace_api.application import _workspace_hint, _workspace_hint_operation
 from .store import SessionPolicyStore, SessionRequest
 
 _SESSION = "__Host-ms-collab-session"
@@ -136,10 +137,11 @@ class SessionWorkspaceApplication(WorkspaceApplication):
             cookie_csrf = _credential(cookies.get(_CSRF, ""))
             if not hmac.compare_digest(csrf.value, cookie_csrf.value):
                 raise AuthenticationError()
-        return SessionRequest(token, csrf)
+        return _workspace_hint(SessionRequest(token, csrf), environ)
 
     def _authenticated_transaction(self, request, callback, *, write=False,
                                    with_connection=False, before_commit=None):
+        request, callback = _workspace_hint_operation(request, callback)
         return self._sessions.transaction(request, callback, write=write,
             with_connection=with_connection, before_commit=before_commit)
 

@@ -48,6 +48,16 @@ class RefreshTests(unittest.TestCase):
         configure_index_fixture(self.policy,replace(config,**changes),actor='admin',republish=False)
     def revoke(self):self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
     def catalog(self,session=None):return self.call('quarters',session=session,extra={'PATH_INFO':'/api/workspaces/alpha/artifacts/source/bucket/quarters','REQUEST_METHOD':'GET'})
+    def test_conflicting_workspace_hint_stops_before_lease_secret_provider_and_audit(self):
+        before, audit = self.state(), self.sql('SELECT * FROM artifact_index_events_v1')
+        result = self.call(extra={'HTTP_X_WORKSPACE_ID': 'beta'})
+        self.assertEqual((result['status'], result['body']), (400, {'error': 'invalid_request'}))
+        self.assertEqual(self.call(scope='beta', extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 404)
+        self.assertEqual(self.call(extra={'HTTP_X_WORKSPACE_ID': 'beta', 'HTTP_COOKIE': ''})['status'], 401)
+        self.assertEqual(self.state(), before); self.assertEqual(self.sql('SELECT * FROM artifact_index_events_v1'), audit)
+        self.assertEqual(self.leases(), []); self.assertEqual(self.pages.loads, []); self.assertEqual(self.pages.calls, [])
+        self.assertEqual(self.call(extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 200)
+
     def test_private_refresh_then_complete_explicit_approval(self):
         before=self.state();self.assertTrue(self.call('status')['body']['data']['capabilities']['refresh'])
         r=self.call();self.assertEqual(r['status'],200,r);self.assertEqual(r['body']['data']['publication'],'pending')
