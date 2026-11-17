@@ -24,6 +24,14 @@ _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z')
 _TOKEN = re.compile(r'dcr1_[A-Za-z0-9_-]{43}\Z')
 KEY = 'actor_id,workspace_id,action'
 WHERE = 'actor_id=? AND workspace_id=? AND action=?'
+# The suffix order matches the existing position index after its partition key.
+# LIMIT bounds visited matching rows, not a full partition sort by token.
+_SNAPSHOT_SQL = f'''SELECT substr(CAST(token AS BLOB),1,49),
+    substr(CAST(context AS BLOB),1,33),substr(CAST(authority AS BLOB),1,33),
+    substr(CAST(visibility AS BLOB),1,33),substr(CAST(connection_id AS BLOB),1,129),
+    substr(CAST(object_id AS BLOB),1,129),issued_us,expires_us
+    FROM main.{RECEIPTS} INDEXED BY directory_cursor_position_v1 WHERE {WHERE}
+    ORDER BY context,authority,visibility,connection_id,object_id LIMIT 33'''
 SCHEMA = (
     f"CREATE TABLE {META} (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL CHECK(version=1), realm TEXT NOT NULL CHECK(length(CAST(realm AS BLOB))=32)) STRICT",
     f"CREATE TABLE {PARTITIONS} (actor_id TEXT NOT NULL REFERENCES principals(id) CHECK(length(CAST(actor_id AS BLOB)) BETWEEN 1 AND 800), workspace_id TEXT NOT NULL REFERENCES workspaces(id) CHECK(length(CAST(workspace_id AS BLOB)) BETWEEN 1 AND 128), action TEXT NOT NULL CHECK(action IN {ACTIONS}), clock_floor_us INTEGER NOT NULL CHECK(clock_floor_us BETWEEN 0 AND {MAX_TIME}), PRIMARY KEY({KEY})) STRICT",
@@ -196,11 +204,7 @@ class ReceiptStore:
         if floor is not None and (type(floor) is not int or not 0 <= floor <= MAX_TIME):
             raise unavailable()
         # No SELECT * / TEXT substr: hostile NUL/UTF8/oversized fields stay bounded.
-        raw = db.execute(f'''SELECT substr(CAST(token AS BLOB),1,49),
-            substr(CAST(context AS BLOB),1,33),substr(CAST(authority AS BLOB),1,33),
-            substr(CAST(visibility AS BLOB),1,33),substr(CAST(connection_id AS BLOB),1,129),
-            substr(CAST(object_id AS BLOB),1,129),issued_us,expires_us
-            FROM main.{RECEIPTS} WHERE {WHERE} ORDER BY token LIMIT 33''', key).fetchall()
+        raw = db.execute(_SNAPSHOT_SQL, key).fetchall()
         if len(raw) > QUOTA or (raw and floor is None):
             raise unavailable()
         rows = []
@@ -217,4 +221,4 @@ class ReceiptStore:
             rows.append(Row(token, digest(context), digest(authority), digest(visibility), connection_id, object_id, issued, expires))
         if len({r.position for r in rows}) != len(rows):
             raise unavailable()
-        return floor, tuple(rows)
+        return floor, tuple(sorted(rows, key=lambda row: row.token))

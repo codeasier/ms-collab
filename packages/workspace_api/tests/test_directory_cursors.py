@@ -326,3 +326,106 @@ class BearerReceiptFoundationTests(unittest.TestCase):
         def write(policy,actor,db,receipts):db.execute('DELETE FROM resources')
         with self.assertRaises(PolicyError):invoke(self.app,self.plan,write)
         self.assertEqual(self.state(),([],[]))
+
+    def test_read_only_pragma_allowlist_rejects_no_argument_maintenance(self):
+        # Exercise the real incremental-vacuum layout, not only a mocked action.
+        invoke(self.app,self.plan)
+        with sqlite3.connect(self.path) as db:
+            db.execute('PRAGMA auto_vacuum=INCREMENTAL');db.execute('VACUUM')
+            db.execute('CREATE TABLE synthetic_freelist (payload BLOB)')
+            db.executemany('INSERT INTO synthetic_freelist VALUES(zeroblob(8192))',[()]*32)
+            db.execute('DROP TABLE synthetic_freelist')
+        def layout():
+            with sqlite3.connect(self.path) as db:
+                return db.execute('PRAGMA page_count').fetchone()[0],db.execute('PRAGMA freelist_count').fetchone()[0]
+        before=layout();self.assertGreater(before[1],0)
+        for pragma in ('incremental_vacuum','main.incremental_vacuum','optimize','main.wal_checkpoint',
+                       'main.journal_mode=MEMORY','temp.application_id','foreign_key_check(principals)'):
+            with self.subTest(pragma=pragma):
+                def maintenance(policy,actor,db,receipts):
+                    token=issue_at()(policy,actor,db,receipts)
+                    db.execute('PRAGMA '+pragma).fetchall()
+                    return token
+                with self.assertRaises(PolicyError) as caught:invoke(self.app,self.plan,maintenance)
+                self.assertEqual((caught.exception.status,caught.exception.code),(503,'scope_directory_unavailable'))
+                self.assertEqual(layout(),before)
+        def read_metadata(policy,actor,db,receipts):
+            token=issue_at()(policy,actor,db,receipts)
+            for pragma in ('application_id','MAIN.application_id','main.user_version','foreign_key_check',
+                           'database_list','main.journal_mode','main.synchronous'):
+                db.execute('PRAGMA '+pragma).fetchall()
+            return token
+        self.assertIsInstance(invoke(self.app,self.plan,read_metadata),str)
+
+    def test_pragma_authorizer_requires_exact_name_schema_no_argument_no_source(self):
+        with sqlite3.connect(self.path) as db:
+            sql=_SQL(db)
+            try:
+                self.assertEqual(sql.authorize(sqlite3.SQLITE_PRAGMA,'APPLICATION_ID',None,'MAIN',None),sqlite3.SQLITE_OK)
+                self.assertEqual(sql.authorize(sqlite3.SQLITE_PRAGMA,'synchronous',None,'login',None),sqlite3.SQLITE_OK)
+                for name,arg,schema,source in (('incremental_vacuum',None,None,None),
+                        ('optimize',None,'main',None),('wal_checkpoint',None,'main',None),
+                        ('application_id',None,'temp',None),('application_id',None,'other',None),
+                        ('user_version','1','main',None),('application_id',None,'main','synthetic_view')):
+                    self.assertEqual(sql.authorize(sqlite3.SQLITE_PRAGMA,name,arg,schema,source),sqlite3.SQLITE_DENY)
+            finally:db.set_authorizer(None)
+
+    def test_restore_sql_failure_rolls_back_outer_transaction_without_success(self):
+        original=_SQL.sql
+        def deny(policy,actor,db,receipts):
+            issue_at()(policy,actor,db,receipts)
+            self.clock.now=NOW+timedelta(seconds=8)
+            raise PolicyError(409,'scope_directory_changed')
+        for after in (False,True):
+            with self.subTest(after_rollback=after):
+                def fail(sql,statement):
+                    if statement=='ROLLBACK TO receipt_work':
+                        if after:original(sql,statement)
+                        raise sqlite3.OperationalError('synthetic restore failure')
+                    return original(sql,statement)
+                with patch.object(_SQL,'sql',fail),patch.object(_SQL,'commit',side_effect=AssertionError('no commit')) as commit:
+                    with self.assertRaises(PolicyError) as caught:invoke(self.app,self.plan,deny)
+                    commit.assert_not_called()
+                self.assertEqual(caught.exception.code,'scope_directory_unavailable')
+                self.assertEqual(self.state(),([],[]))  # no claim that uncommitted time survived
+
+    def test_restore_readback_mismatch_aborts_instead_of_blessing_floor(self):
+        from packages.directory_cursors import ReceiptStore
+        original=ReceiptStore._snapshot;calls=[]
+        def snapshot(db,key):
+            value=original(db,key);calls.append(None)
+            return (instant(NOW),()) if len(calls)==2 else value
+        def deny(policy,actor,db,receipts):
+            issue_at()(policy,actor,db,receipts)
+            raise PolicyError(409,'scope_directory_changed')
+        with patch.object(ReceiptStore,'_snapshot',side_effect=snapshot):
+            with self.assertRaises(PolicyError) as caught:invoke(self.app,self.plan,deny)
+        self.assertEqual(caught.exception.code,'scope_directory_unavailable')
+        self.assertEqual(self.state(),([],[]))
+
+    def test_final_bearer_guard_baseexception_keeps_floor_and_original_exception(self):
+        marker=KeyboardInterrupt('synthetic final guard interruption');calls=[]
+        request=assertion(self.app);original=self.app._verifier.validate_current
+        def current(*args):
+            calls.append(None);original(*args)
+            if len(calls)==2:raise marker
+        def work(policy,actor,db,receipts):
+            token=issue_at()(policy,actor,db,receipts)
+            self.clock.now+=timedelta(seconds=6)
+            return token
+        with patch.object(self.app._verifier,'validate_current',side_effect=current):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                self.app._authenticated_transaction(request,work,with_connection=True,receipt_only=self.plan)
+        self.assertIs(caught.exception,marker);self.assertEqual(len(calls),2)
+        self.assertEqual(self.state()[1],[]);self.assertEqual(self.state()[0][0][-1],instant(self.clock.now))
+
+    def test_w05_conflict_final_bearer_expiry_precedes_hint_diagnostic(self):
+        request=assertion(self.app,extra={'HTTP_X_WORKSPACE_ID':'beta'})
+        original=self.app._verifier.validate_current;calls=[];callback=Mock()
+        def current(*args):
+            calls.append(None);original(*args)
+            if len(calls)==1:self.auth_clock.now=NOW+timedelta(hours=1)
+        with patch.object(self.app._verifier,'validate_current',side_effect=current):
+            with self.assertRaises(AuthenticationError):
+                self.app._authenticated_transaction(request,callback,with_connection=True,receipt_only=self.plan)
+        callback.assert_not_called();self.assertEqual(len(calls),2);self.assertEqual(self.state(),([],[]))

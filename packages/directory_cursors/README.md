@@ -78,7 +78,11 @@ this foundation do not prove that future adapter transition complete.
   rate-limiting claim.
 
 All receipt fields use bounded BLOB projections before strict decoding, including
-NUL, UTF-8 and one-byte-overflow rejection. The original policy loader still reads
+NUL, UTF-8 and one-byte-overflow rejection. The receipt query explicitly uses the
+existing position index's partition prefix and suffix order, fetches at most 33
+rows, then sorts only those bounded rows by token in memory. `LIMIT` alone would
+not bound a partition-wide sort; CI asserts the actual SQLite query plan and a
+VM-instruction ceiling for 33-row and larger over-quota corruption fixtures. The original policy loader still reads
 global policy/resources/audit. This does not make the entire request bounded or
 remove disk/lock/CPU contention and existing corruption side channels.
 
@@ -107,15 +111,23 @@ callback threw. Only safe clocks survive; original errors are not swallowed.
 
 Raw callback SQL is read-only under a phase-specific SQLite authorizer. Only
 controlled store phases allow exact auxiliary-table DML; callback writes to
-resources/grants/audit/login sessions, transaction control, PRAGMA writes and
-TEMP/schema DDL are rejected. The authorizer is reset at each phase, including
+resources/grants/audit/login sessions, transaction control and TEMP/schema DDL
+are rejected. PRAGMA admission is an explicit read-only name/schema allowlist:
+main application_id/user_version/foreign_key_check/database_list/journal_mode/
+synchronous, and login application_id/user_version/journal_mode/synchronous.
+Arguments, TEMP/other schemas and trigger/view origins are rejected. No-argument
+incremental_vacuum, optimize and wal_checkpoint are denied too; no argument does
+not imply no side effects. The authorizer is reset at each phase, including
 prepared-statement cache boundaries. This is defense against accidental trusted
 SQL, not a sandbox against hostile Python that replaces the authorizer or mutates
 private objects. All receipt and schema readbacks/CAS checks still apply.
 
 After final authentication, the sole permitted DML exception is exact partition
 floor and attached login clock CAS, with schema/no-trigger checks, bounded
-receipt-set and actor/session projections before/after. No new clock observation,
+receipt-set and actor/session projections before/after. Cookie principal readback
+uses the already authenticated actor's exact primary-key lookup, not a CAST
+predicate scanning all principals; initial authentication failure does not invent
+an actor from stored session bytes. No new clock observation,
 projection scan, callback or network call follows. There is no current→clock
 UPDATE→current loop. Receipt TTL is judged at its last receipt guard; this does
 not promise validity at arbitrary commit/network arrival time.
@@ -152,8 +164,23 @@ suite. They use temporary SQLite, synthetic identities and `spawn` processes:
   session/cookie shape, base→session delegation, CSRF unchanged, final expiry,
   rollback, both clocks, TEMP trigger rejection, process restart and logout.
 
+The query-plan checks use `EXPLAIN QUERY PLAN` on the actual production query
+strings, not a string assertion that `LIMIT` exists. Their expectations concern
+index searches/no temporary sort, not unstable full explain text. The extra
+failure tests cover restore/rollback failure, final-auth BaseException, login
+clock CAS failure and an interrupt during clock cleanup. Failure-state injection
+is labeled separately from real SQLite CAS and lock behavior.
+
 The injected commit faults are not a real I/O failure proof. The COMMIT BUSY
 case uses a real competing SQLite reader and checks the actual rolled-back state.
 No tests/build/browser were run locally while preparing this increment; execution
 belongs to the existing remote CI. Passing that CI would establish only this
 foundation, not three migrated HTTP directories, real providers or production.
+
+### SQLite references for these boundaries
+
+SQLite documents how [query plans distinguish searches and temporary sorting](https://www.sqlite.org/eqp.html)
+and that [incremental_vacuum can reclaim pages without an argument](https://www.sqlite.org/pragma.html#pragma_incremental_vacuum).
+The [authorizer action contract](https://www.sqlite.org/c3ref/c_alter_table.html)
+provides the pragma name, optional argument and database scope; the foundation
+checks that complete tuple instead of treating every argument-free pragma as a read.

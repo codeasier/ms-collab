@@ -66,7 +66,7 @@ class CookieReceiptFoundationTests(unittest.TestCase):
         self.assertEqual((caught.exception.status,caught.exception.code),(400,'invalid_request'))
         callback.assert_not_called();self.assertEqual(self.state()[:2],([],[]))
 
-    def test_revoked_expired_and_identity_aba_session_fail_before_arm(self):
+    def test_revoked_and_identity_aba_session_fail_before_arm(self):
         request=self.cookie_request();self.login.logout(self.session.token,self.session.csrf)
         with self.assertRaises(AuthenticationError):self.invoke(request=request)
         self.assertEqual(self.state()[:2],([],[]))
@@ -190,3 +190,90 @@ class CookieReceiptFoundationTests(unittest.TestCase):
         self.assertEqual(caught.exception.code,'scope_directory_changed')
         self.invoke(issue_at(('conn','new-generation')))
         self.assertEqual(len(self.state()[0]),1);self.assertEqual(len(self.state()[1]),2)
+
+    def test_cookie_principal_projection_uses_real_pk_query_plan(self):
+        from packages.session_api.store import _RECEIPT_PRINCIPAL_SQL
+        with sqlite3.connect(self.policy_path) as db:
+            details=[row[3].upper() for row in db.execute('EXPLAIN QUERY PLAN '+_RECEIPT_PRINCIPAL_SQL,('admin',)).fetchall()]
+        self.assertTrue(any('SEARCH' in detail and 'PRINCIPALS' in detail and '(ID=?)' in detail for detail in details),details)
+        self.assertFalse(any('SCAN ' in detail or 'TEMP B-TREE' in detail for detail in details),details)
+        statements=[];original=self.sessions._connect
+        def connect():
+            db=original();db.set_trace_callback(statements.append);return db
+        with patch.object(self.sessions,'_connect',side_effect=connect):self.invoke()
+        reads=[sql for sql in statements if 'active,generation,authority_epoch FROM main.principals' in sql]
+        self.assertTrue(reads)
+        self.assertTrue(all("WHERE id='admin'" in sql and 'CAST(id AS BLOB)' not in sql for sql in reads),reads)
+
+    def test_initial_expired_cookie_denies_before_arming_and_preserves_login_time(self):
+        self.clock.now=self.session.expires_at;callback=Mock()
+        with self.assertRaises(AuthenticationError):self.invoke(callback)
+        callback.assert_not_called();self.assertEqual(self.state()[:2],([],[]))
+        self.assertEqual(self.state()[2],instant(self.clock.now))
+
+    def test_initial_forged_cookie_does_not_infer_actor_for_clock_projection(self):
+        from packages.identity import Credential
+        statements=[];original=self.sessions._connect
+        def connect():
+            db=original();db.set_trace_callback(statements.append);return db
+        with patch.object(self.sessions,'_connect',side_effect=connect):
+            with self.assertRaises(AuthenticationError):self.invoke(request=SessionRequest(Credential('A'*43)))
+        self.assertFalse(any('active,generation,authority_epoch FROM main.principals' in sql for sql in statements))
+        self.assertEqual(self.state()[:2],([],[]))
+
+    def test_w05_conflict_still_runs_final_session_auth_and_expiry_wins(self):
+        original=self.sessions._current_actor;calls=[];callback=Mock()
+        request=self.cookie_request(extra={'HTTP_X_WORKSPACE_ID':'beta'})
+        def current(*args):
+            calls.append(None)
+            actor=original(*args)
+            if len(calls)==1:self.clock.now=self.session.expires_at
+            return actor
+        with patch.object(self.sessions,'_current_actor',side_effect=current):
+            with self.assertRaises(AuthenticationError):self.invoke(callback,request=request)
+        self.assertEqual(len(calls),2);callback.assert_not_called();self.assertEqual(self.state()[:2],([],[]))
+        self.assertEqual(self.state()[2],instant(self.clock.now))
+
+    def test_final_session_guard_baseexception_preserves_both_clocks(self):
+        marker=SystemExit('synthetic final session interruption');calls=[]
+        original=self.sessions._current_actor
+        def current(*args):
+            calls.append(None);actor=original(*args)
+            if len(calls)==2:raise marker
+            return actor
+        def work(policy,actor,db,receipts):
+            token=issue_at()(policy,actor,db,receipts)
+            self.clock.now+=timedelta(seconds=5);self.receipt_clock.now=self.clock.now
+            return token
+        with patch.object(self.sessions,'_current_actor',side_effect=current):
+            with self.assertRaises(SystemExit) as caught:self.invoke(work)
+        self.assertIs(caught.exception,marker);self.assertEqual(len(calls),2)
+        partitions,rows,login_floor=self.state();self.assertEqual(rows,[])
+        self.assertEqual(partitions[0][-1],instant(self.clock.now));self.assertEqual(login_floor,instant(self.clock.now))
+
+    def test_login_clock_real_cas_zero_rows_rolls_back_main_and_login(self):
+        original=self.sessions._connect;before=self.state()
+        self.clock.now+=timedelta(seconds=2);self.receipt_clock.now=self.clock.now
+        class Connection:
+            def __init__(self,db):self.db=db
+            def __getattr__(self,name):return getattr(self.db,name)
+            def execute(self,statement,parameters=()):
+                if statement.startswith('UPDATE login.metadata SET clock='):
+                    parameters=(*parameters[:-1],-1)  # real SQLite no-match CAS
+                return self.db.execute(statement,parameters)
+        with patch.object(self.sessions,'_connect',side_effect=lambda:Connection(original())):
+            with self.assertRaises(PolicyError) as caught:self.invoke()
+        self.assertEqual(caught.exception.code,'scope_directory_unavailable');self.assertEqual(self.state(),before)
+
+    def test_second_interruption_during_clock_finalizer_keeps_original_fatal(self):
+        from packages.session_api.store import _ReceiptLoginClock
+        original=KeyboardInterrupt('synthetic original interruption');second=SystemExit('synthetic cleanup interruption')
+        before=self.state()
+        def cancel(policy,actor,db,receipts):
+            issue_at()(policy,actor,db,receipts)
+            self.clock.now+=timedelta(seconds=3);self.receipt_clock.now=self.clock.now
+            raise original
+        with patch.object(_ReceiptLoginClock,'persist',side_effect=second) as persist:
+            with self.assertRaises(KeyboardInterrupt) as caught:self.invoke(cancel)
+            self.assertEqual(persist.call_count,1)
+        self.assertIs(caught.exception,original);self.assertEqual(self.state(),before)

@@ -69,6 +69,17 @@ class ReceiptOnly:
         return sha256(json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(',', ':')).encode('ascii')).digest()
 
 
+# SQLite PRAGMAs with no argument are NOT necessarily read-only. Only the
+# actual metadata reads used by this transaction are admitted, with fixed DBs.
+_READ_PRAGMAS = frozenset({
+    ('main', 'application_id'), ('main', 'user_version'),
+    ('main', 'foreign_key_check'), ('main', 'database_list'),
+    ('main', 'journal_mode'), ('main', 'synchronous'),
+    ('login', 'application_id'), ('login', 'user_version'),
+    ('login', 'journal_mode'), ('login', 'synchronous'),
+})
+
+
 class _SQL:
     """Deny raw callback writes. Reset authorizer on every phase/cache boundary."""
     def __init__(self, db):
@@ -78,8 +89,13 @@ class _SQL:
     def authorize(self, code, a, b, schema, source):
         if code in (sqlite3.SQLITE_READ, sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_RECURSIVE):
             return sqlite3.SQLITE_OK
-        if code == sqlite3.SQLITE_PRAGMA and b is None:
-            return sqlite3.SQLITE_OK
+        if code == sqlite3.SQLITE_PRAGMA:
+            database = 'main' if schema is None else schema
+            if (b is None and source is None and type(a) is str and a.isascii()
+                    and type(database) is str and database.isascii()
+                    and (database.lower(), a.lower()) in _READ_PRAGMAS):
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
         if code in (sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT) and self.control:
             return sqlite3.SQLITE_OK
         if (schema, a, code) in self.allowed and source is None:

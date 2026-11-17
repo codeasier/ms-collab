@@ -150,11 +150,16 @@ class SessionPolicyStore:
         return principal.id
 
 
+_RECEIPT_PRINCIPAL_SQL = """SELECT substr(CAST(issuer AS BLOB),1,801),substr(CAST(subject AS BLOB),1,801),
+    active,generation,authority_epoch FROM main.principals WHERE id=?"""
+
+
 class _ReceiptLoginClock:
     """Clock-only attached-login participant; no old business savepoint handler."""
     def __init__(self, owner, request):
         self.owner, self.request = owner, request
         self.floor = self.observed = None
+        self.actor = None  # Set only after real current-session authentication.
 
     def check(self, db):
         self.owner._storage_modes(db)
@@ -178,7 +183,10 @@ class _ReceiptLoginClock:
         self.observe()
 
     def current(self, policy, db):
-        return self.owner._current_actor(db, policy, self.request, self.observe())
+        actor = self.owner._current_actor(db, policy, self.request, self.observe())
+        if self.actor is None:
+            self.actor = actor
+        return actor
 
     def projection(self, db):
         # Fixed single-session / principal projection, never a full sessions scan.
@@ -188,10 +196,9 @@ class _ReceiptLoginClock:
         row = db.execute("""SELECT substr(CAST(csrf AS BLOB),1,65),substr(CAST(subject AS BLOB),1,801),
             created,expires,substr(CAST(principal_id AS BLOB),1,801),principal_generation,
             substr(CAST(policy_realm AS BLOB),1,33) FROM login.sessions WHERE token=?""", (token,)).fetchone()
-        principal = None
-        if row is not None:
-            principal = db.execute("""SELECT substr(CAST(issuer AS BLOB),1,801),substr(CAST(subject AS BLOB),1,801),
-                active,generation,authority_epoch FROM main.principals WHERE CAST(id AS BLOB)=?""", (row[4],)).fetchone()
+        # Use the authenticated actor and its existing PK, not an expression
+        # predicate over every principal or an identity inferred from raw bytes.
+        principal = None if self.actor is None else db.execute(_RECEIPT_PRINCIPAL_SQL, (self.actor,)).fetchone()
         return row, principal
 
     def persist(self, db, sql):

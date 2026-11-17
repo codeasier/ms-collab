@@ -163,7 +163,8 @@ class DirectoryReceiptStoreTests(unittest.TestCase):
         text='\n'.join(statements)
         self.assertIn("GLOB 'directory_cursor_*' LIMIT 5",text)
         self.assertIn('substr(CAST(token AS BLOB),1,49)',text)
-        self.assertIn('ORDER BY token LIMIT 33',text)
+        self.assertIn('INDEXED BY directory_cursor_position_v1',text)
+        self.assertIn('ORDER BY context,authority,visibility,connection_id,object_id LIMIT 33',text)
         self.assertNotIn('COUNT(*)',text.upper())
 
     def test_global_random_collision_retries_only_three_times_without_overwrite(self):
@@ -173,3 +174,40 @@ class DirectoryReceiptStoreTests(unittest.TestCase):
             self.error(issue_at(('conn','different-position')))
             self.assertEqual(random.call_count,3)
         self.assertEqual(self.snapshot()[1],before)
+
+    def test_snapshot_query_plan_is_partition_index_search_without_sort(self):
+        from packages.directory_cursors.store import _SNAPSHOT_SQL
+        invoke(self.app,self.plan)
+        with sqlite3.connect(self.path) as db:
+            details=[row[3].upper() for row in db.execute('EXPLAIN QUERY PLAN '+_SNAPSHOT_SQL,
+                ('admin','alpha','pipeline.scopes.read')).fetchall()]
+        self.assertTrue(any('SEARCH' in detail and 'DIRECTORY_CURSOR_POSITION_V1' in detail
+                            and 'ACTOR_ID=?' in detail and 'WORKSPACE_ID=?' in detail and 'ACTION=?' in detail
+                            for detail in details),details)
+        self.assertFalse(any('SCAN ' in detail or 'TEMP B-TREE' in detail for detail in details),details)
+
+    def test_actual_33_and_large_corrupt_partition_stop_at_sentinel(self):
+        import base64
+        token=invoke(self.app,self.plan)
+        with sqlite3.connect(self.path) as db:
+            template=db.execute(f'SELECT * FROM {RECEIPTS} WHERE token=?',(token,)).fetchone()
+            for size in (33,4097):
+                with self.subTest(size=size):
+                    db.execute(f'DELETE FROM {RECEIPTS} WHERE token!=?',(token,))
+                    rows=[]
+                    for i in range(size-1):
+                        synthetic='dcr1_'+base64.urlsafe_b64encode(i.to_bytes(32,'big')).decode('ascii').rstrip('=')
+                        rows.append((synthetic,*template[1:8],f'overflow{i:04d}',*template[9:]))
+                    db.executemany(f'INSERT INTO {RECEIPTS} VALUES(?,?,?,?,?,?,?,?,?,?,?)',rows)
+                    self.assertEqual(db.execute(f'SELECT count(*) FROM {RECEIPTS}').fetchone()[0],size)
+                    ticks=[]
+                    def bound_vm():
+                        ticks.append(None)
+                        return int(len(ticks)>200)  # 20,000 VM instructions, not a wall-clock test
+                    db.set_progress_handler(bound_vm,100)
+                    try:
+                        with self.assertRaises(PolicyError) as caught:
+                            ReceiptStore._snapshot(db,('admin','alpha','pipeline.scopes.read'))
+                        self.assertEqual((caught.exception.status,caught.exception.code),(503,'scope_directory_unavailable'))
+                        self.assertLessEqual(len(ticks),200)
+                    finally:db.set_progress_handler(None,0)
