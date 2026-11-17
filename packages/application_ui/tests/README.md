@@ -73,3 +73,11 @@ are synthetic and never imported by production factories.
 - `pipeline_discovery_fixtures.py` and opt-in `pipeline-discovery` browser mode:
   fictional same-name snapshots, temporary pagination controls and a CI-provider
   call trap; never runtime ingestion or provider configuration.
+
+- `test_artifact_fixture_shutdown.py`: the actual opt-in Artifact HTTPS fixture
+  in both catalog/approval and discovery modes, with SIGTERM while idle and from
+  inside an active WSGI request. The fixture uses the existing `serve_synthetic`
+  helper rather than raising `SystemExit` inside wsgiref. Every case requires a
+  clean child exit and preserves failure while forcibly reaping any stuck child.
+  Existing `unittest discover -s packages/application_ui/tests` CI commands pick
+  it up automatically; no new workflow, product shutdown route or upstream call.

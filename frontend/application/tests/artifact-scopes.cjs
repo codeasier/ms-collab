@@ -3,18 +3,19 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 const {stopSyntheticFixture}=require('./fixture-process.cjs')
-async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
+async function within(p,label='barrier'){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 const frames=p=>p.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))
 async function readable(page,selectors){
  const ratios=await page.evaluate(selectors=>{const rgb=v=>{const n=v.match(/[\d.]+/g).map(Number);return {rgb:n.slice(0,3),alpha:n[3]??1}},lum=a=>a.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);return selectors.map(selector=>{const e=document.querySelector(selector);if(!e?.checkVisibility()||e.disabled)throw Error('Invalid contrast probe '+selector);const fg=rgb(getComputedStyle(e).color);let n=e,bg;while(n){const b=rgb(getComputedStyle(n).backgroundColor);if(b.alpha===1){bg=b.rgb;break}if(b.alpha!==0)throw Error('Translucent background');n=n.parentElement}if(!bg||fg.alpha!==1)throw Error('Missing opaque contrast');const v=[lum(fg.rgb),lum(bg)].sort((a,b)=>a-b);return [selector,(v[1]+.05)/(v[0]+.05)]})},selectors)
  for(const [selector,ratio]of ratios)assert.ok(ratio>=4.5,`${selector}: ${ratio}<4.5`)
 }
 async function main(){
- const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-artifact-scopes-'));let child,browser,router;const releases=[]
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-artifact-scopes-'));let child,browser,router,failure,stderr='';const releases=[]
  try{
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',path.join(temp,'key.pem'),'-out',path.join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'})
-  child=spawn('python3',['-m','packages.application_ui.tests.artifact_browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_ARTIFACT_SESSION:'1',MS_COLLAB_SYNTHETIC_ARTIFACT_DISCOVERY:'1'},stdio:['ignore','pipe','pipe']});child.stderr.resume()
-  const lines=readline.createInterface({input:child.stdout}),info=await within(new Promise((resolve,reject)=>{lines.once('line',l=>{try{resolve(JSON.parse(l))}catch(e){reject(e)}});child.once('exit',()=>reject(Error('fixture stopped')))}))
+  child=spawn('python3',['-m','packages.application_ui.tests.artifact_browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_ARTIFACT_SESSION:'1',MS_COLLAB_SYNTHETIC_ARTIFACT_DISCOVERY:'1'},stdio:['ignore','pipe','pipe']})
+  child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-8192)})
+  const lines=readline.createInterface({input:child.stdout}),info=await within(new Promise((resolve,reject)=>{lines.once('line',l=>{try{resolve(JSON.parse(l))}catch(e){reject(e)}});child.once('error',reject);child.once('exit',()=>reject(Error('fixture stopped')))}),'artifact fixture startup')
   const folder=path.join(process.env.RUNNER_TEMP||os.tmpdir(),'ms-collab-artifact-session');fs.mkdirSync(folder,{recursive:true})
   browser=await chromium.launch({headless:true});const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1100}}),page=await context.newPage(),errors=[],outside=[],lists=[],writes=[]
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{assert.ok(!r.headers().authorization);const u=new URL(r.url());if(![info.origin,new URL(info.provider).origin].includes(u.origin))outside.push(u.origin);if(u.pathname.endsWith('/scopes'))lists.push(u.pathname);if(r.method()==='POST'&&/\/(refresh|approve)$/.test(u.pathname))writes.push(u.pathname)})
@@ -62,16 +63,27 @@ async function main(){
   await ctrl('as-admin');await page.locator('#app-sign-out').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'));await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin');await page.locator('#app-artifacts-link').click();await ready();await ctrl('seed-pages');await load();assert.equal(await page.locator('#artifact-picker-scope option').count(),25);assert.equal(await page.locator('#artifact-picker-next').isEnabled(),true)
   await ctrl('invalidate-cursor');before=lists.length;const denied=page.waitForResponse(r=>new URL(r.url()).pathname===readerPath&&new URL(r.url()).search);await page.locator('#artifact-picker-next').click();assert.equal((await denied).status(),409);await page.waitForFunction(()=>document.querySelector('#artifact-picker-status').textContent.includes('no request was retried'));await frames(page);assert.equal(lists.length,before+1);assert.equal(await page.locator('#artifact-picker-scope option').count(),0)
   await page.locator('#app-sign-out').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))
-  await router.drain();await context.unrouteAll({behavior:'wait'});await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#catalog').isVisible(),false);assert.equal(await page.locator('#artifact-picker').isVisible(),false)
+  await within(router.drain(),'scenario route drain');await within(context.unrouteAll({behavior:'wait'}),'scenario route removal');await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#catalog').isVisible(),false);assert.equal(await page.locator('#artifact-picker').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(outside,[])
- }finally{
-  const failures=[]
+ }catch(error){failure=error}
+ finally{
+  const failures=failure?[failure]:[]
+  // Release every held reply even when a scenario assertion fails. Each cleanup
+  // is attempted independently; forced fixture reaping must still fail CI.
   for(const release of releases){try{release()}catch(error){failures.push(error)}}
-  try{await browser?.close()}catch(error){failures.push(error)}
+  try{if(router)await within(router.drain(),'cleanup route drain')}catch(error){failures.push(error)}
+  try{if(browser)await within(browser.close(),'browser close')}catch(error){failures.push(error)}
   try{await stopSyntheticFixture(child)}catch(error){failures.push(error)}
   try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
-  if(failures.length)throw new AggregateError(failures,'Synthetic discovery cleanup failed')
+  if(failures.length&&stderr)console.error(`[artifact fixture stderr tail]\n${stderr}`)
+  if(failures.length===1)throw failures[0]
+  if(failures.length)throw new AggregateError(failures,'Artifact scenario or cleanup failed')
  }
-console.log('Artifact scope discovery: real HTTPS cookie directories, three isolated workspaces, published empty scope, reader approval loop, explicit selection, no automatic discovery/retry, ignored abort/manual/pagehide/logout/Back, four responsive screenshots.')
+ console.log('Artifact scope discovery: real HTTPS cookie directories, three isolated workspaces, published empty scope, reader approval loop, explicit selection, no automatic discovery/retry, ignored abort/manual/pagehide/logout/Back, four responsive screenshots.')
 }
-main().catch(e=>{console.error(e.stack);process.exitCode=1})
+function reportFailure(error){
+ console.error(error?.stack||String(error))
+ if(error instanceof AggregateError)for(const nested of error.errors)reportFailure(nested)
+ if(error?.cause)reportFailure(error.cause)
+}
+main().catch(error=>{reportFailure(error);process.exitCode=1})

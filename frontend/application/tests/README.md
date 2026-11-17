@@ -104,3 +104,12 @@ and 390px no overflow. Exact new screenshots: `ms-collab-pipeline-scopes/desktop
 `mobile.png`, `tasks.png`; the previous six remain required. All three pipeline
 browser journeys now use `stopSyntheticFixture` and print PASS only after clean
 shutdown. No live-provider or real migration acceptance is claimed.
+
+Artifact session cleanup: both `artifacts.cjs` and `artifact-scopes.cjs` release
+all held replies on every exit, bound route-drain/browser-close waits, and use the
+existing `stopSyntheticFixture` SIGTERM/forced-reap helper. Forced cleanup remains
+a failure. Original scenario and cleanup errors are reported together, with a
+bounded synthetic-fixture stderr tail; success is printed only after every
+cleanup succeeds. The five catalog/approval and four scope-picker screenshots,
+product assertions and existing 15-minute workflow gate are unchanged. This is
+test-infrastructure cleanup, not a product behavior or migration change.
