@@ -2,7 +2,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
-async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
+const {stopSyntheticFixture}=require('./fixture-process.cjs')
+async function within(p,label='barrier'){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 const frames=page=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))
 async function readable(page,selectors){
  const ratios=await page.evaluate(selectors=>{
@@ -12,11 +13,12 @@ async function readable(page,selectors){
  for(const [selector,ratio] of ratios)assert.ok(ratio>=4.5,`${selector}: contrast ${ratio}<4.5`)
 }
 async function main(){
- const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-artifact-session-cert-'));let child,browser,router
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-artifact-session-cert-'));let child,browser,router,failure,stderr='';const releases=[]
  try{
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',path.join(temp,'key.pem'),'-out',path.join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'})
-  child=spawn('python3',['-m','packages.application_ui.tests.artifact_browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_ARTIFACT_SESSION:'1'},stdio:['ignore','pipe','pipe']});child.stderr.resume()
-  const lines=readline.createInterface({input:child.stdout}),info=await within(new Promise((resolve,reject)=>{lines.once('line',l=>{try{resolve(JSON.parse(l))}catch(e){reject(e)}});child.once('exit',()=>reject(new Error('fixture stopped')))}))
+  child=spawn('python3',['-m','packages.application_ui.tests.artifact_browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem')],{env:{...process.env,MS_COLLAB_SYNTHETIC_ARTIFACT_SESSION:'1'},stdio:['ignore','pipe','pipe']})
+  child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-8192)})
+  const lines=readline.createInterface({input:child.stdout}),info=await within(new Promise((resolve,reject)=>{lines.once('line',l=>{try{resolve(JSON.parse(l))}catch(e){reject(e)}});child.once('error',reject);child.once('exit',()=>reject(new Error('fixture stopped')))}),'artifact fixture startup')
   const folder=path.join(process.env.RUNNER_TEMP||os.tmpdir(),'ms-collab-artifact-session');fs.mkdirSync(folder,{recursive:true})
   browser=await chromium.launch({headless:true});const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1100}}),page=await context.newPage(),errors=[],external=[],writes=[],logins=[],dialogs=[]
   page.on('pageerror',e=>{errors.push(e.message);console.error('Synthetic page error',e.message)});page.on('dialog',async d=>{dialogs.push(d.message());await d.dismiss()})
@@ -36,10 +38,10 @@ async function main(){
   await page.screenshot({path:path.join(folder,'catalog-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(folder,'catalog-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1100})
   const csrfDenied=await page.evaluate(async()=>{const r=await fetch('/api/workspaces/alpha/artifacts/source/bucket/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quarter:'2026Q1',definition:{}})});return r.status});assert.equal(csrfDenied,401)
   // Ineffective abort cannot revive an old catalog or launch its follow-up query.
-  let seen,release,finished;const started=new Promise(r=>seen=r),barrier=new Promise(r=>release=r),done=new Promise(r=>finished=r),quarters='/api/workspaces/alpha/artifacts/source/bucket/quarters'
+  let seen,release,finished;const started=new Promise(r=>seen=r),barrier=new Promise(r=>{release=r;releases.push(r)}),done=new Promise(r=>finished=r),quarters='/api/workspaces/alpha/artifacts/source/bucket/quarters'
   router.set(quarters,async route=>{const response=await route.fetch();seen();await barrier;await route.fulfill({response});finished()})
-  await page.locator('#reload').click();await within(started);await scope('beta');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'))
-  const beforeLate=writes.length;release();await within(done);await frames(page);assert.equal(writes.length,beforeLate);assert.equal(await page.locator('#catalog').isVisible(),false);router.remove(quarters)
+  await page.locator('#reload').click();await within(started,'catalog request barrier');await scope('beta');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'))
+  const beforeLate=writes.length;release();await within(done,'catalog response release');await frames(page);assert.equal(writes.length,beforeLate);assert.equal(await page.locator('#catalog').isVisible(),false);router.remove(quarters)
   const firstLogin=logins.length;await page.locator('#app-artifact-admin-link').click();await page.waitForFunction(()=>!document.querySelector('#session').hidden);assert.equal(logins.length,firstLogin);assert.equal(await page.locator('input[type=password]').count(),0)
   await scope();await page.waitForFunction(()=>!document.querySelector('#panel').hidden);assert.equal(await page.locator('#refresh').isVisible(),false)
   await page.locator('#review').click();await page.waitForFunction(()=>!document.querySelector('#preview').hidden);assert.match(await page.locator('#summary').textContent(),/3 metadata rows/);assert.match(await page.locator('#rows').textContent(),/private-candidate/);assert.equal(await page.locator('#rows svg').count(),0)
@@ -60,27 +62,45 @@ async function main(){
   await page.locator('#app-artifact-admin-link').click();await page.waitForFunction(()=>!document.querySelector('#session').hidden);await scope();await stage();await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#revision').textContent.startsWith('Index revision 5'))
   await page.locator('#review').click();await page.waitForFunction(()=>!document.querySelector('#preview').hidden);await page.locator('#acknowledge').check();await page.locator('#approve').click()
   // Server accepts approval; pagehide+recheck cannot be undone by its late reply.
-  let saveSeen,saveRelease,saveFinished;const saveStarted=new Promise(r=>saveSeen=r),saveBarrier=new Promise(r=>saveRelease=r),saveDone=new Promise(r=>saveFinished=r),approve='/api/workspaces/alpha/artifact-admin/source/bucket/approve'
+  let saveSeen,saveRelease,saveFinished;const saveStarted=new Promise(r=>saveSeen=r),saveBarrier=new Promise(r=>{saveRelease=r;releases.push(r)}),saveDone=new Promise(r=>saveFinished=r),approve='/api/workspaces/alpha/artifact-admin/source/bucket/approve'
   router.set(approve,async route=>{const response=await route.fetch();saveSeen();await saveBarrier;await route.fulfill({response});saveFinished()})
-  await page.locator('#confirm-submit').click();await within(saveStarted);await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));assert.equal(await page.locator('#rows li').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');assert.equal(await page.locator('#app-principal').textContent(),'Not verified')
+  await page.locator('#confirm-submit').click();await within(saveStarted,'accepted approval request barrier');await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));assert.equal(await page.locator('#rows li').count(),0);assert.equal(await page.locator('#workspace').inputValue(),'');assert.equal(await page.locator('#app-principal').textContent(),'Not verified')
   await page.locator('#app-recheck').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#session').hidden);await scope();await page.waitForFunction(()=>document.querySelector('#revision').textContent.startsWith('Index revision 6'))
-  saveRelease();await within(saveDone);await frames(page);assert.match(await page.locator('#revision').textContent(),/^Index revision 6/);router.remove(approve)
+  saveRelease();await within(saveDone,'accepted approval response release');await frames(page);assert.match(await page.locator('#revision').textContent(),/^Index revision 6/);router.remove(approve)
   await stage();await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#revision').textContent.startsWith('Index revision 7'))
   // A delayed private review cannot survive real explicit logout, even without abort.
-  let reviewSeen,reviewRelease,reviewFinished;const reviewStarted=new Promise(r=>reviewSeen=r),reviewBarrier=new Promise(r=>reviewRelease=r),reviewDone=new Promise(r=>reviewFinished=r),reviewPath='/api/workspaces/alpha/artifact-admin/source/bucket/review'
+  let reviewSeen,reviewRelease,reviewFinished;const reviewStarted=new Promise(r=>reviewSeen=r),reviewBarrier=new Promise(r=>{reviewRelease=r;releases.push(r)}),reviewDone=new Promise(r=>reviewFinished=r),reviewPath='/api/workspaces/alpha/artifact-admin/source/bucket/review'
   router.set(reviewPath,async route=>{const response=await route.fetch();reviewSeen();await reviewBarrier;await route.fulfill({response});reviewFinished()})
-  await page.locator('#review').click();await within(reviewStarted);await page.locator('#app-sign-out').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))
-  reviewRelease();await within(reviewDone);await frames(page);router.remove(reviewPath);assert.equal(await page.locator('#rows li').count(),0);assert.equal(await page.locator('#session').isVisible(),false);assert.equal(await page.locator('#app-principal').textContent(),'Not verified')
+  await page.locator('#review').click();await within(reviewStarted,'private review request barrier');await page.locator('#app-sign-out').click();await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))
+  reviewRelease();await within(reviewDone,'private review response release');await frames(page);router.remove(reviewPath);assert.equal(await page.locator('#rows li').count(),0);assert.equal(await page.locator('#session').isVisible(),false);assert.equal(await page.locator('#app-principal').textContent(),'Not verified')
   await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin');await page.locator('#app-artifact-admin-link').click();await page.waitForFunction(()=>!document.querySelector('#session').hidden);await scope();await page.waitForFunction(()=>document.querySelector('#revision').textContent.startsWith('Index revision 7'))
   // Current workspace revoke clears private preview without pretending to log out.
   await page.locator('#review').click();await page.waitForFunction(()=>!document.querySelector('#preview').hidden)
   await page.evaluate(()=>fetch('/synthetic/artifact/revoke-membership',{method:'POST'}));await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'));assert.equal(await page.locator('#rows li').count(),0);assert.equal(await page.locator('#panel').isVisible(),false)
   await page.locator('#app-artifacts-link').click();await page.waitForFunction(()=>!document.querySelector('#session').hidden);await scope();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable'));assert.equal(await page.locator('#results').textContent(),'')
   await page.evaluate(()=>fetch('/synthetic/artifact/revoke-session',{method:'POST'}));await scope();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false)
-  await router.drain();await context.unrouteAll({behavior:'wait'})
+  await within(router.drain(),'scenario route drain');await within(context.unrouteAll({behavior:'wait'}),'scenario route removal')
   await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#catalog').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert.deepEqual(dialogs,[])
-  console.log('Artifact session acceptance passed: real cookie-only catalog and whole-candidate approval, CSRF, CAS, cancellation/late replies, workspace/session revocation, safe text and five responsive screenshots. No real OBS or download UI claim.')
- }finally{await browser?.close();if(child&&child.exitCode===null){child.kill();await within(new Promise(r=>child.once('exit',r)))}fs.rmSync(temp,{recursive:true,force:true})}
+ }catch(error){failure=error}
+ finally{
+  const failures=failure?[failure]:[]
+  // Release every held reply even when a scenario assertion fails. Each cleanup
+  // is attempted independently; forced fixture reaping must still fail CI.
+  for(const release of releases){try{release()}catch(error){failures.push(error)}}
+  try{if(router)await within(router.drain(),'cleanup route drain')}catch(error){failures.push(error)}
+  try{if(browser)await within(browser.close(),'browser close')}catch(error){failures.push(error)}
+  try{await stopSyntheticFixture(child)}catch(error){failures.push(error)}
+  try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
+  if(failures.length&&stderr)console.error(`[artifact fixture stderr tail]\n${stderr}`)
+  if(failures.length===1)throw failures[0]
+  if(failures.length)throw new AggregateError(failures,'Artifact scenario or cleanup failed')
+ }
+ console.log('Artifact session acceptance passed: real cookie-only catalog and whole-candidate approval, CSRF, CAS, cancellation/late replies, workspace/session revocation, safe text and five responsive screenshots. No real OBS or download UI claim.')
 }
-main().catch(error=>{console.error(error.stack);process.exitCode=1})
+function reportFailure(error){
+ console.error(error?.stack||String(error))
+ if(error instanceof AggregateError)for(const nested of error.errors)reportFailure(nested)
+ if(error?.cause)reportFailure(error.cause)
+}
+main().catch(error=>{reportFailure(error);process.exitCode=1})

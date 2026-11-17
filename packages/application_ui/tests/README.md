@@ -62,3 +62,22 @@ reader/non-reader approver/write-only refresher matrices, current logout/expiry/
 identity ABA/provenance, schema/codec corruption, raw-key and aggregate-input
 bounds, visible-only pagination and no-provider/read-only assertions. Fixtures
 are synthetic and never imported by production factories.
+
+- `test_pipeline_discovery.py`: current Cookie/SQLite pipeline directory, member
+  role/lifecycle matrix, three-workspace isolation, valid empty snapshots, exact
+  namespace/hash/codec/revision/future checks, embedded-NUL key/JSON suffix and
+  invalid-UTF8 rejection, current cursor and final expiry,
+  true subject ABA (generation changes twice), actual 256/257 record boundary and
+  exact 10,000-byte/1-MiB UTF-8 limits plus one byte. The directory SQL uses the
+  existing primary-key prefix range; non-prefix generic resources are not parsed.
+- `pipeline_discovery_fixtures.py` and opt-in `pipeline-discovery` browser mode:
+  fictional same-name snapshots, temporary pagination controls and a CI-provider
+  call trap; never runtime ingestion or provider configuration.
+
+- `test_artifact_fixture_shutdown.py`: the actual opt-in Artifact HTTPS fixture
+  in both catalog/approval and discovery modes, with SIGTERM while idle and from
+  inside an active WSGI request. The fixture uses the existing `serve_synthetic`
+  helper rather than raising `SystemExit` inside wsgiref. Every case requires a
+  clean child exit and preserves failure while forcibly reaping any stuck child.
+  Existing `unittest discover -s packages/application_ui/tests` CI commands pick
+  it up automatically; no new workflow, product shutdown route or upstream call.

@@ -1,3 +1,4 @@
+import {mountPipelineScopePicker} from './pipeline-scopes.mjs'
 import {mountArtifactScopePicker} from './artifact-scopes.mjs'
 import {mountConnectionsPage,mountConnectionPicker} from './connections.mjs'
 import {mountGuiSmokePage} from '../gui-smoke/view.mjs'
@@ -102,7 +103,10 @@ async function start(){
   }
   else if(document.body.dataset.page==='pipelines'){
    if(!bootstrap.ui_modules.includes('pipelines'))throw new Error('Pipelines are not configured on this service.')
-   page=mountPipelinePage({client:createPipelineSessionClient(session),sessionMode:true,onSignOut:signOut})
+   let picker
+   const board=mountPipelinePage({client:createPipelineSessionClient(session),sessionMode:true,onSignOut:signOut,onBusyChange:()=>picker?.sync()})
+   picker=mountPipelineScopePicker({session,isOpening:()=>board.loading});let activation=0
+   page={clear:message=>{activation++;picker.clear();board.clear(message)},activate:async()=>{const turn=activation;await picker.activate();if(turn===activation)await board.activate()}}
   }
   else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
    const module=document.body.dataset.page;if(!bootstrap.ui_modules.includes(module))throw new Error('This artifact page is not configured on this service.')

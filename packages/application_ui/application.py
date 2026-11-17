@@ -23,6 +23,8 @@ _FILES = {
     '/assistant/history.mjs': ('assistant/history.mjs', 'text/javascript'),
     '/assistant/client.mjs': ('assistant/client.mjs', 'text/javascript'),
     '/assistant/style.css': ('assistant/style.css', 'text/css'),
+    '/app/pipeline-scopes.mjs': ('application/pipeline-scopes.mjs', 'text/javascript'),
+    '/app/pipeline-scope-client.mjs': ('application/pipeline-scope-client.mjs', 'text/javascript'),
     '/pipelines/': ('application/pipelines.html', 'text/html'),
     '/pipelines/runs.mjs': ('pipelines/runs.mjs', 'text/javascript'),
     '/pipelines/client.mjs': ('pipelines/client.mjs', 'text/javascript'),

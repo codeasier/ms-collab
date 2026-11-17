@@ -1,12 +1,12 @@
 import {scopeFrom,loadSnapshot,validateDetail,validateTasks} from './client.mjs'
-export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{}}){
+export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{},onBusyChange=()=>{}}){
 if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
 const el=id=>document.getElementById(id),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
-let active=false,epoch=0,controller,detailEpoch=0,detailController,taskEpoch=0,taskController,detailRun,taskPage,taskFilter='',scope,snapshot,page=0,filter={query:'',status:''}
+let loading=false,detailPending,taskLoading=false,active=false,epoch=0,controller,detailEpoch=0,detailController,taskEpoch=0,taskController,detailRun,taskPage,taskFilter='',scope,snapshot,page=0,filter={query:'',status:''}
 function text(tag,value,className){const n=document.createElement(tag);n.textContent=value;if(className)n.className=className;return n}
-function closeDetail(){detailEpoch++;taskEpoch++;taskController?.abort();taskController=undefined;detailRun=undefined;taskPage=undefined;taskFilter='';detailController?.abort();detailController=undefined;el('detail').close();el('detail-title').textContent='';el('detail-status').textContent='';el('detail-body').replaceChildren()}
+function closeDetail(){detailPending=undefined;taskLoading=false;detailEpoch++;taskEpoch++;taskController?.abort();taskController=undefined;detailRun=undefined;taskPage=undefined;taskFilter='';detailController?.abort();detailController=undefined;el('detail').close();el('detail-title').textContent='';el('detail-status').textContent='';el('detail-body').replaceChildren()}
 function clearPanel(){closeDetail();snapshot=undefined;page=0;el('panel').hidden=true;for(const id of ['scope-title','revision','summary','coverage'])el(id).textContent='';el('runs').replaceChildren();el('durations').replaceChildren()}
-function cancel(){epoch++;controller?.abort();controller=new AbortController();return epoch}
+function cancel(){epoch++;controller?.abort();controller=new AbortController();loading=false;onBusyChange();return epoch}
 function disconnect(message='Disconnected. Reconnect to read current authorized state.'){
  active=false;cancel();client.clear();clearPanel();scope=undefined;el('session').hidden=true;if(el('connect'))el('connect').hidden=!transportAllowed
  for(const id of ['credential','workspace','connection','pipeline','query'])if(el(id))el(id).value='';el('state').value='';filter={query:'',status:''};el('status').textContent=message
@@ -37,13 +37,13 @@ function renderDurations(){
  if(!report.groups.length)el('durations').append(text('p','No valid successful-job duration samples in this stored subset. Missing or invalid evidence is not zero duration.'))
 }
 async function load(){
- if(!active||!scope)return
- const selected={...scope},token=cancel();clearPanel();el('status').textContent='Reading an authorized, consistent snapshot…'
- try{const data=await loadSnapshot(client,selected,controller.signal);if(token!==epoch)return;snapshot=data;el('scope-title').textContent=`${selected.workspace_id} / ${selected.connection_id} / ${selected.pipeline_id}`;el('revision').textContent=`Stored snapshot version ${data.revision} · complete provider history: no · live provider verified: no`;el('panel').hidden=false;renderRuns();renderDurations();el('status').textContent='Current access checked by the service. This reads stored data, not a live provider refresh.'}catch(error){failure(error,token)}
+ if(!active||!scope||loading)return
+ const selected={...scope},token=cancel();loading=true;onBusyChange();clearPanel();el('status').textContent='Reading an authorized, consistent snapshot…'
+ try{const data=await loadSnapshot(client,selected,controller.signal);if(token!==epoch)return;snapshot=data;el('scope-title').textContent=`${selected.workspace_id} / ${selected.connection_id} / ${selected.pipeline_id}`;el('revision').textContent=`Stored snapshot version ${data.revision} · complete provider history: no · live provider verified: no`;el('panel').hidden=false;renderRuns();renderDurations();el('status').textContent='Current access checked by the service. This reads stored data, not a live provider refresh.'}catch(error){failure(error,token)}finally{if(token===epoch){loading=false;onBusyChange()}}
 }
 async function showDetail(runID){
- if(!active||!snapshot||!scope)return
- closeDetail();detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
+ if(!active||!snapshot||!scope||detailPending===runID)return
+ closeDetail();detailPending=runID;detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
  el('detail-title').textContent=runID;el('detail-status').textContent='Reading current authorized run details…';el('detail').showModal()
  try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID,summary);if(token!==epoch||detailToken!==detailEpoch)return
   const run=data.run;detailRun=run
@@ -57,10 +57,11 @@ async function showDetail(runID){
   select.addEventListener('change',()=>loadTasks(select.value,0));previous.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,Math.max(0,taskPage.offset-10))});next.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,taskPage.offset+10)})
   await loadTasks('',0)
 
- }catch(error){if(token!==epoch||detailToken!==detailEpoch||error.name==='AbortError')return;failure(error,token)}
+ }catch(error){if(token!==epoch||detailToken!==detailEpoch||error.name==='AbortError')return;failure(error,token)}finally{if(token===epoch&&detailToken===detailEpoch)detailPending=undefined}
 }
 async function loadTasks(status,offset){
- if(!active||!detailRun||!snapshot||!scope)return
+ if(!active||!detailRun||!snapshot||!scope||taskLoading)return
+ taskLoading=true
  const token=epoch,dt=detailEpoch,tt=++taskEpoch,selected={...scope},run=detailRun,version=snapshot.revision;taskController?.abort();taskController=new AbortController();taskPage=undefined
  for(const id of ['task-status-filter','task-previous','task-next'])el(id).disabled=true;el('tasks').replaceChildren();el('task-stages').replaceChildren();el('task-summary').textContent='Checking the same revision and current permissions…'
  try{const data=validateTasks(await client.request(selected,'tasks',{runID:run.id,revision:version,offset,limit:10,status,signal:taskController.signal}),selected,version,run,{offset,limit:10,status});if(token!==epoch||dt!==detailEpoch||tt!==taskEpoch||!active)return
@@ -71,12 +72,12 @@ async function loadTasks(status,offset){
   if(!data.items.length)el('tasks').append(text('p',run.stages===null?'Task details unavailable. This is not evidence that no tasks ran.':'No recorded tasks match this filter. No provider history completeness is implied.'))
   el('task-summary').textContent=`${data.total} matching of ${data.coverage.task_count} recorded tasks · Page ${Math.floor(data.offset/10)+1} of ${Math.max(1,Math.ceil(data.total/10))} · duplicate-ID observations: ${data.coverage.duplicate_id_tasks}`
   el('task-status-filter').disabled=false;el('task-previous').disabled=offset===0;el('task-next').disabled=offset+10>=data.total
- }catch(error){if(token!==epoch||dt!==detailEpoch||tt!==taskEpoch||error.name==='AbortError')return;failure(error,token)}
+ }catch(error){if(token!==epoch||dt!==detailEpoch||tt!==taskEpoch||error.name==='AbortError')return;failure(error,token)}finally{if(token===epoch&&dt===detailEpoch&&tt===taskEpoch)taskLoading=false}
 }
 if(!sessionMode)el('connect').addEventListener('submit',event=>{event.preventDefault();if(!transportAllowed)return;try{client.connect(el('credential').value)}catch{el('status').textContent='Enter a valid opaque access credential.';return}active=true;el('credential').value='';el('connect').hidden=true;el('session').hidden=false;el('status').textContent='Enter an operator-provided workspace, connection and pipeline.'})
 el('disconnect').addEventListener('click',()=>{disconnect();if(sessionMode)onSignOut()})
 for(const id of ['workspace','connection','pipeline'])el(id).addEventListener('input',()=>{cancel();clearPanel();scope=undefined;el('status').textContent='Scope changed. Open current authorized state again.'})
-el('scope-form').addEventListener('submit',event=>{event.preventDefault();if(!active||!transportAllowed)return;cancel();clearPanel();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('pipeline').value)}catch{scope=undefined;el('status').textContent='Enter valid scope identifiers.';return}filter={query:'',status:''};el('query').value='';el('state').value='';load()})
+el('scope-form').addEventListener('submit',event=>{event.preventDefault();if(!active||!transportAllowed||loading)return;cancel();clearPanel();try{scope=scopeFrom(el('workspace').value,el('connection').value,el('pipeline').value)}catch{scope=undefined;el('status').textContent='Enter valid scope identifiers.';return}filter={query:'',status:''};el('query').value='';el('state').value='';load()})
 el('reload').addEventListener('click',load)
 el('filters').addEventListener('submit',event=>{event.preventDefault();filter={query:el('query').value,status:el('state').value};page=0;renderRuns()})
 el('previous').addEventListener('click',()=>{page--;renderRuns()});el('next').addEventListener('click',()=>{page++;renderRuns()})
@@ -84,5 +85,5 @@ el('detail-close').addEventListener('click',closeDetail);el('detail').addEventLi
 window.addEventListener('pagehide',()=>disconnect())
 if(!sessionMode&&!transportAllowed){el('connect').hidden=true;el('status').textContent='HTTPS is required outside numeric loopback.'}
 
-return {activate(){if(!transportAllowed)throw new Error('HTTPS required.');active=true;el('session').hidden=false;el('status').textContent='Enter exact workspace, connection and pipeline IDs supplied by your administrator.'},clear:disconnect}
+return {get loading(){return loading},activate(){if(!transportAllowed)throw new Error('HTTPS required.');active=true;el('session').hidden=false;el('status').textContent=sessionMode?'Choose a stored scope or enter exact IDs. Every open checks current access.':'Enter exact workspace, connection and pipeline IDs supplied by your administrator.'},clear:disconnect}
 }

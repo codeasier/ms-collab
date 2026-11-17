@@ -21,7 +21,7 @@ Public/shared workspaces are not anonymous feeds.
 | `/manage/` | Workspace lifecycle, members, invitations, modules | Operator metadata access is not business-data access; invitations require acceptance |
 | `/responsibility/` | Scoped mappings, CAS edits, observed candidates | Path matches are not review approval; Issue assignment remains unknown |
 | `/community/` | Approved content, review, complete-set explicit approval and separately configured explicit refresh | Refresh requires trusted host opt-in and current grants; provider visibility is not publication |
-| `/pipelines/` | Published runs, details and duration observations | Not a runner, upstream trigger, live logs or independent execution proof |
+| `/pipelines/` | Stored-scope discovery, runs, task details and duration observations | Not a runner, upstream trigger, live logs or independent execution proof |
 | `/artifacts/` | Published artifact index and named views | No unapproved-candidate fallback; byte handoff is a separate explicit opt-in |
 | `/artifact-admin/` | Optional private refresh, staged metadata review and explicit approval | Refresh requires a separate trusted configuration and current grant; never automatic publication |
 | `/assistant/` | Current-owner saved display history, archive/restore | Not ACP execution, resume/cancel, prompts, MCP or agent dispatch |
@@ -95,3 +95,9 @@ limited to usable status capabilities. Refresh → private candidate → whole-s
 approval → catalog and separately granted downloads remain unchanged. This does
 not discover upstream buckets or add grant/template/credential configuration.
 See [scope discovery boundaries](../packages/artifact_sync/DISCOVERY.md).
+
+The Pipeline page adds explicit stored-scope discovery within a **Discovery
+workspace**, retaining manual exact IDs. Selection opens the existing current-
+authority runs/details/tasks/durations path. A valid empty snapshot is listed;
+there is no Artifact-style publication approval or provider discovery implied.
+See [Pipeline discovery boundaries](../packages/pipeline_api/DISCOVERY.md).

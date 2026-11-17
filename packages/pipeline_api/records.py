@@ -126,15 +126,36 @@ def _pairs(pairs):
     return result
 
 
-def decode_snapshots(scope, text):
-    """Reject malformed, out-of-scope or oversized data, without echoing it."""
+def _envelope(text):
+    """One bounded parse shared by exact reads and directory scope extraction."""
     try:
         if type(text) is not str or len(text) > MAX_BYTES or len(text.encode("utf-8")) > MAX_BYTES:
             raise InvalidRecord("record_too_large")
         body = json.loads(text, object_pairs_hook=_pairs,
                           parse_constant=lambda _: (_ for _ in ()).throw(InvalidRecord("invalid_record")))
         _exact(body, {"version", "scope", "runs"})
-        if type(body["version"]) is not int or body["version"] != 1 or body["scope"] != scope.as_dict():
+        if type(body["version"]) is not int or body["version"] != 1:
+            raise InvalidRecord("invalid_record")
+        return body
+    except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
+        raise InvalidRecord("invalid_record") from None
+
+
+def snapshot_scope(text):
+    """Extract identifiers, NOT authority. Callers must bind and fully decode."""
+    try:
+        body = _envelope(text)
+        _exact(body["scope"], {"workspace_id", "connection_id", "pipeline_id"})
+        return PipelineScope(**body["scope"])
+    except (ValueError, TypeError, KeyError):
+        raise InvalidRecord("invalid_record") from None
+
+
+def decode_snapshots(scope, text):
+    """Reject malformed, out-of-scope or oversized data, without echoing it."""
+    try:
+        body = _envelope(text)
+        if body["scope"] != scope.as_dict():
             raise InvalidRecord("invalid_record")
         return _runs(scope, body["runs"])
     except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):

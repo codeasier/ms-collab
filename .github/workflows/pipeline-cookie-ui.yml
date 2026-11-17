@@ -47,12 +47,14 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/ms-collab-browser-tools/node_modules
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
         run: |
+          python3 -m unittest discover -s packages/pipeline_api/tests -v
           python3 -m unittest discover -s packages/application_ui/tests -v
           python3 -m unittest discover -s packages/application_host/tests -v
           node --test frontend/application/tests/*.test.mjs
           node --test frontend/pipelines/tests/*.test.mjs
           node frontend/application/tests/pipeline-browser.cjs
           node frontend/application/tests/pipeline-tasks-browser.cjs
+          node frontend/application/tests/pipeline-scopes.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -72,6 +74,17 @@ jobs:
             ${{ runner.temp }}/ms-collab-pipeline-tasks/desktop.png
             ${{ runner.temp }}/ms-collab-pipeline-tasks/mobile.png
             ${{ runner.temp }}/ms-collab-pipeline-tasks/detail.png
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 3
+      - name: Upload only synthetic pipeline discovery screenshots
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-pipeline-discovery-screenshots
+          path: |
+            ${{ runner.temp }}/ms-collab-pipeline-scopes/desktop.png
+            ${{ runner.temp }}/ms-collab-pipeline-scopes/mobile.png
+            ${{ runner.temp }}/ms-collab-pipeline-scopes/tasks.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

@@ -39,3 +39,19 @@ test('session clear drops a late task response and cannot repopulate the dialog'
 test('a rejected task projection clears old authorized evidence without fallback',()=>harness(async({nodes,open,detail,setHook})=>{
  await open();setHook(async kind=>{const result=structuredClone(responses[kind]);if(kind==='tasks')result.coverage.stage_status_supplied=true;return result});await detail();assert.equal(nodes.get('panel').hidden,true);assert.equal(nodes.get('detail-body').textContent,'');assert.equal(nodes.get('detail').open,false);assert.match(nodes.get('status').textContent,/could not be validated/)
 }))
+test('repeated reload/manual-submit and same pending detail do not create parallel reads',()=>harness(async({nodes,calls,page,open,detail,setHook})=>{
+ await open();let release;const gate=new Promise(r=>release=r);setHook(async kind=>{if(kind==='runs')await gate;return structuredClone(responses[kind])})
+ const pending=nodes.get('reload').fire('click');await nodes.get('reload').fire('click');await nodes.get('scope-form').fire('submit');assert.equal(page.loading,true);assert.equal(calls.filter(k=>k==='runs').length,2)
+ release();await pending;assert.equal(page.loading,false)
+ let finish;const slow=new Promise(r=>finish=r);setHook(async kind=>{if(kind==='detail')await slow;return structuredClone(responses[kind])})
+ const first=detail();await detail();assert.equal(calls.filter(k=>k==='detail').length,1);finish();await first;assert.equal(calls.filter(k=>k==='tasks').length,1)
+}))
+test('old ignored-abort completion cannot unlock newer pending scope loading',()=>harness(async({nodes,calls,page,open,setHook})=>{
+ await open();let releaseOld,releaseNew,count=0
+ const old=new Promise(r=>releaseOld=r),fresh=new Promise(r=>releaseNew=r)
+ setHook(async kind=>{if(kind==='runs')return ++count===1?old:fresh;return structuredClone(responses[kind])})
+ const pending=nodes.get('reload').fire('click');await nodes.get('workspace').fire('input');await nodes.get('scope-form').fire('submit');assert.equal(page.loading,true);assert.equal(count,2)
+ releaseOld(structuredClone(responses.runs));await pending;assert.equal(page.loading,true);assert.equal(nodes.get('panel').hidden,true);assert.equal(calls.filter(k=>k==='durations').length,1)
+ await nodes.get('reload').fire('click');await nodes.get('scope-form').fire('submit');assert.equal(count,2)
+ releaseNew(structuredClone(responses.runs));await tick();assert.equal(page.loading,false);assert.equal(nodes.get('panel').hidden,false);assert.equal(calls.filter(k=>k==='durations').length,2)
+}))

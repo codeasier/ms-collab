@@ -1,3 +1,4 @@
+const {stopSyntheticFixture}=require('./fixture-process.cjs')
 // Fictional task metadata only. Never requests raw logs or contacts a real CI.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
@@ -43,7 +44,13 @@ async function main(){
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status}),200);await page.locator('#task-next').click();await page.waitForFunction(()=>document.querySelector('#panel').hidden);assert.equal(await page.locator('#detail-body').textContent(),'')
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-session',{method:'POST'});return r.status}),200);await page.locator('#scope-form button').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#workspace').inputValue(),'')
   assert.deepEqual(requests.filter(r=>r.path.includes('/pipelines/')&&(r.method!=='GET'||r.path.includes('/logs'))),[]);assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
+ }finally{
+  const failures=[]
+  try{await browser?.close()}catch(error){failures.push(error)}
+  try{await stopSyntheticFixture(server)}catch(error){failures.push(error)}
+  try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
+  if(failures.length)throw new AggregateError(failures,'Synthetic pipeline cleanup failed')
+ }
   console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three screenshots. No raw logs or live provider.')
- }finally{await browser?.close();if(server&&server.exitCode===null){server.kill();await within(new Promise(r=>server.once('exit',r)))}fs.rmSync(temp,{recursive:true,force:true})}
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

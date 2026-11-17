@@ -16,13 +16,14 @@ identity binding, active membership and the `pipelines` module's `read`
 capability are checked in the **same SQLite snapshot** as the selected resource.
 Assertion validity is rechecked after lock acquisition and before commit.
 
-Only a verified bearer credential selects the actor. Cookie/header/body actor
-claims are not authority. Unauthorized callers cannot parse snapshot contents,
+Standalone mode uses only a verified bearer credential. The configured unified
+host instead supplies the existing explicit cookie/session boundary, without
+credential conversion. Arbitrary cookie/header/body actor claims are not authority. Unauthorized callers cannot parse snapshot contents,
 calculate counts or access another space's records. Reads linearize at their
 SQLite snapshot; later revocation cannot retract an already authorized response.
 Upstream token revocation and production login remain separate work.
 
-The module's read permission grants access to approved snapshot resources **in
+The module's read permission grants access to stored snapshot resources **in
 that workspace**. There is no separate connection ACL in this slice, and no
 permission to access live external CI credentials. Every request names the exact
 `(workspace_id, connection_id, pipeline_id)` tuple. `commons` is an ordinary shared
@@ -127,3 +128,11 @@ reuse the original transaction boundary; no provider or writer is added.
   prerequisites for any separately reviewed log protocol.
 - [Task UI](../../frontend/pipelines/README.md): cookie/bearer adapters both use
   the same typed read path and version fence, never credential conversion.
+
+## Stored scope directory
+
+`GET /api/workspaces/{workspace}/pipelines/scopes` lists current readable stored
+snapshot tuples and revisions, including valid empty snapshots. It uses module
+read authority, not Artifact publication/grant semantics. See [the directory
+contract](DISCOVERY.md) for namespace binding, pagination, UTF-8 budgets, the
+existing global-loader limitation and the unified cookie picker acceptance path.

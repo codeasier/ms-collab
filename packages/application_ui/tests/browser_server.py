@@ -19,7 +19,7 @@ def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_APPLICATION_UI') != '1' or len(sys.argv) not in (3,4):
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
     mode=sys.argv[3] if len(sys.argv)==4 else ''
-    if mode not in {'','closed','pipelines','assets','pipeline-tasks'}:raise SystemExit('unknown synthetic mode')
+    if mode not in {'','closed','pipelines','assets','pipeline-tasks','pipeline-discovery'}:raise SystemExit('unknown synthetic mode')
     enabled=mode!='closed'
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
@@ -54,11 +54,35 @@ def main():
             from packages.pipelines import PipelineScope
             with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
                 db.execute("UPDATE resources SET text=? WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(snapshot(),resource_id(PipelineScope('alpha','example-ci','build'))))
+        ci_calls=[]
+        if mode=='pipeline-discovery':
+            from .pipeline_discovery_fixtures import seed_directory
+            seed_directory(policy)
+            # Any accidental reuse of upstream synchronization is a fixture
+            # failure, not a provider mock returning convenient data.
+            from packages.pipeline_sync import service as pipeline_sync
+            def forbidden_provider(*args, **kwargs):
+                ci_calls.append('unexpected'); raise AssertionError('no provider calls allowed')
+            pipeline_sync.collect=forbidden_provider
         if mode=='assets':
             from .research_asset_fixtures import provision
             provision(policy)
         def fixture(env,start):
             path=env.get('PATH_INFO')
+            if path.startswith('/synthetic/pipeline/') and mode=='pipeline-discovery':
+                if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
+                    start('403 Forbidden',[('Content-Length','0')]);return [b'']
+                from .pipeline_discovery_fixtures import seed_pages
+                from packages.pipeline_api import resource_id
+                from packages.pipelines import PipelineScope
+                if path.endswith('/seed-pages'):seed_pages(policy)
+                elif path.endswith('/invalidate-cursor'):
+                    with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
+                        db.execute("DELETE FROM resources WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(resource_id(PipelineScope('alpha','example-ci','p022')),))
+                elif not path.endswith('/status'):
+                    start('404 Not Found',[('Content-Length','0')]);return [b'']
+                raw=json.dumps({'ci_calls':len(ci_calls)}).encode()
+                start('200 OK',[('Content-Length',str(len(raw))),('Content-Type','application/json'),('Cache-Control','no-store')]);return [raw]
             if path=='/synthetic/advance-pipeline-tasks' and mode=='pipeline-tasks':
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
