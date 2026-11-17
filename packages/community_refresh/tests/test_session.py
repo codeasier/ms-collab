@@ -186,6 +186,8 @@ class RefreshTests(unittest.TestCase):
                 finally: case.doCleanups()
 
     def test_commit_session_expiry_rolls_back_snapshot_audit_completion(self):
+        # Isolate session expiry: the final one-second jump stays inside the lease deadline.
+        self.now=self.session.expires_at-timedelta(seconds=1)
         before=self.state(); audit=self.sql('SELECT count(*) FROM audit'); original=self.policy._persist
         def persist(db,policy,**kw):
             original(db,policy,**kw)

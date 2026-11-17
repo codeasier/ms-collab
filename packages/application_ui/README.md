@@ -129,12 +129,19 @@ state but never automatically resubmits. Already accepted writes may have commit
 clearing a view or logging out is not an undo. Every later action checks current
 server authority, including revocation while a confirmation is open.
 
-The unified host has no community credential loader: `refresh=false`, no refresh
-button, no upstream request. This increment does not enable acquisition or change
-approval/snapshot storage semantics. Existing source visibility alone is never a
-sharing grant. The dedicated community session workflow uses only synthetic local
-HTTPS, S256 identity, 101-row content, cookie/CSRF/CAS and lifecycle probes, with
-four desktop/mobile list/confirmation screenshots. It is not real GitCode or
+By default, the unified host has no community credential loader: `refresh=false`,
+no refresh button and no upstream request. The separate
+[explicit Community refresh opt-in](../community_refresh/README.md) enables a
+bounded, currently authorized acquisition into private review candidates. It
+preserves the existing complete-set exact-content approval and ordinary-reader
+boundary; source visibility alone is never a sharing grant. Connections grant
+changes clear old content before a fresh observation can be reviewed and approved.
+
+The dedicated community session workflow uses only synthetic local HTTPS, S256
+identity, 101-row content, cookie/CSRF/CAS and lifecycle probes, with four
+desktop/mobile list/confirmation screenshots. The connection workflow additionally
+checks the opt-in refresh-to-reader loop with a synthetic GitCode transport and
+five confirmation/private-review/reader screenshots. Neither is real GitCode or
 production-provider acceptance.
 
 ### Pipeline lifecycle

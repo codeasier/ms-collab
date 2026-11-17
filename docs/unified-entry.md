@@ -20,7 +20,7 @@ Public/shared workspaces are not anonymous feeds.
 | `/` | Current accessible workspace overview | No inferred repository/connection discovery |
 | `/manage/` | Workspace lifecycle, members, invitations, modules | Operator metadata access is not business-data access; invitations require acceptance |
 | `/responsibility/` | Scoped mappings, CAS edits, observed candidates | Path matches are not review approval; Issue assignment remains unknown |
-| `/community/` | Approved content, review and complete-set explicit approval | Provider visibility is not publication; no implicit refresh |
+| `/community/` | Approved content, review, complete-set explicit approval and separately configured explicit refresh | Refresh requires trusted host opt-in and current grants; provider visibility is not publication |
 | `/pipelines/` | Published runs, details and duration observations | Not a runner, upstream trigger, live logs or independent execution proof |
 | `/artifacts/` | Published artifact index and named views | No unapproved-candidate fallback; byte handoff is a separate explicit opt-in |
 | `/artifact-admin/` | Optional private refresh, staged metadata review and explicit approval | Refresh requires a separate trusted configuration and current grant; never automatic publication |
@@ -76,6 +76,12 @@ delegation can replace reader/refresher/approver sets only within approved bound
 Any actual change clears the old snapshot and all approvals in the same audited
 transaction. Current readable-scope discovery also feeds the existing community
 form, without placing private scopes in page URLs or browser storage.
+
+With the separate [Community refresh opt-in](../packages/community_refresh/README.md),
+this continues through explicit bounded refresh, private candidates, complete-set
+exact-content approval and the ordinary-reader board. Refresh alone publishes no
+new or changed content; only still-current approvals for unchanged content may be
+retained. Default refresh remains disabled, and Connections never enables it.
 
 This is one community vertical slice, not generic provider provisioning. No
 credentials, URLs or secret references are accepted or returned. Artifact and
