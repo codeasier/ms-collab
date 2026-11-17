@@ -146,3 +146,12 @@ to a synthesized bearer identity. It cannot be mixed with bearer configuration.
 The [unified host](../application_host/README.md) supplies its cookie response
 envelope and fixed module routing; it does not enable a real provider or change
 this package's existing explicitly configured bearer API.
+
+## Unmounted directory receipt foundation
+
+The private authenticated seam has an explicit, default-unused `receipt_only`
+mode. Existing HTTP routes do not select it. It uses writer reservation without
+business `_persist`, keeps real current Bearer authentication (including on
+callback failure), and rejects extra commit hooks. See the [foundation contract
+and limits](../directory_cursors/README.md); this is not W07 directory integration
+or a change to the current tuple protocol.

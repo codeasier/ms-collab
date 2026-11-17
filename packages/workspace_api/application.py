@@ -4,11 +4,13 @@ There is no server command, default verifier, anonymous or mock identity.
 An explicit session boundary can replace (never mix with) bearer verification.
 Test doubles exist only under tests/.
 """
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 import json
 import re
+import sqlite3
 from urllib.parse import parse_qsl
 
 from packages.identity import AuthenticationError, AuthenticationUnavailable, Credential, CredentialVerifier
@@ -65,7 +67,7 @@ def _workspace_hint_operation(assertion, callback):
         return assertion, callback
     workspace, control = assertion.workspace, assertion.control
 
-    def reject(policy, actor, connection=None):
+    def reject(policy, actor, connection=None, receipts=None):
         # Same current authentication/snapshot as an ordinary operation. Never
         # inspect the header's target, authorize by it, or run business effects.
         if control:
@@ -154,7 +156,7 @@ class WorkspaceApplication:
         # Protocol verification (possibly network I/O) occurs before any DB lock.
         return _workspace_hint(self._verifier.verify(self._provider_key, credential), environ)
 
-    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None):
+    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None, receipt_only=None):
         """Internal adapter seam, never an HTTP callback or reusable authority.
 
         Resolve the current subject binding and evaluate the complete adapter
@@ -163,16 +165,24 @@ class WorkspaceApplication:
         assertion, callback = _workspace_hint_operation(assertion, callback)
         if self._session_boundary is not None:
             return self._session_boundary._authenticated_transaction(assertion, callback,
-                write=write, with_connection=with_connection, before_commit=before_commit)
+                write=write, with_connection=with_connection, before_commit=before_commit, receipt_only=receipt_only)
+        if receipt_only is not None:
+            from packages.directory_cursors.transaction import run, validate_mode
+            validate_mode(receipt_only, write=write, with_connection=with_connection, before_commit=before_commit)
+            if not callable(callback):
+                raise ValueError('trusted receipt callback required')
+            def current(policy, connection):
+                return self._current_bearer_actor(assertion, policy)
+            try:
+                with closing(self._store._connect()) as connection:
+                    return run(connection, self._store, receipt_only, callback, current)
+            except (sqlite3.Error, OSError):
+                raise PolicyError(503, 'scope_directory_unavailable') from None
         def operation(policy, connection=None):
             # Recheck after waiting for the lock, not merely when token arrived.
-            self._verifier.validate_current(self._provider_key, assertion)
-            principal = next((p for p in policy._principals.values()
-                              if (p.issuer, p.subject) == (assertion.issuer, assertion.subject)), None)
-            if principal is None or not principal.active:
-                raise AuthenticationError()
-            result = (callback(policy, principal.id, connection) if with_connection
-                      else callback(policy, principal.id))
+            actor = self._current_bearer_actor(assertion, policy)
+            result = (callback(policy, actor, connection) if with_connection
+                      else callback(policy, actor))
             # An expiry during policy evaluation rolls back mutations and audit.
             self._verifier.validate_current(self._provider_key, assertion)
             return result
@@ -184,6 +194,14 @@ class WorkspaceApplication:
             self._verifier.validate_current(self._provider_key, assertion)
         return self._store._transaction(operation, write=write, with_connection=with_connection,
                                         before_commit=commit_guard)
+
+    def _current_bearer_actor(self, assertion, policy):
+        self._verifier.validate_current(self._provider_key, assertion)
+        principal = next((p for p in policy._principals.values()
+                          if (p.issuer, p.subject) == (assertion.issuer, assertion.subject)), None)
+        if principal is None or not principal.active:
+            raise AuthenticationError()
+        return principal.id
 
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
