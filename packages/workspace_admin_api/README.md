@@ -47,9 +47,17 @@ The existing bearer, body-size/type and duplicate-key checks continue to apply.
 | POST | `/api/control/workspaces` | Platform operator; unchanged `name`, `kind`, `initial_admin` body; new creation also requires `If-Initial-Admin-Match` |
 | PATCH | `/api/control/workspaces/{id}` | Platform operator; `state`, `If-Match` |
 | GET | `/api/workspaces/{id}/modules` | Current workspace admin; module metadata |
+| GET | `/api/workspaces/{id}/modules/{key}` | Current member; only stored `workspace_id/key/state/revision`, delegated to the base API |
 | GET | `/api/workspaces/{id}/module-catalog` | Active workspace admin; approved templates |
 | POST | `/api/workspaces/{id}/modules` | Active workspace admin; `key` |
 | PATCH | `/api/workspaces/{id}/modules/{key}` | Active workspace admin; `state`, `If-Match` |
+
+The exact member GET is a separate [minimal lifecycle observation](../workspace_api/README.md#minimal-member-module-status-w08-http-slice),
+not access to the admin module list, catalog, configuration or resource data.
+It requires neither this package's retry tables nor a directory receipt store.
+Disabled/disabling status is readable while data access remains denied; the
+administration wrapper does not verify the same request twice. No management
+permission or approved provider capability follows from observing a state.
 
 Creation atomically allocates a server UUID, a product/shared workspace and one
 explicit active initial admin from the already verified local directory. There

@@ -49,9 +49,54 @@ characters). The adapter deliberately has no dynamic method-dispatch endpoint.
 | GET | `/api/workspaces` | Current member-visible spaces |
 | GET | `/api/workspaces/{workspace}/members` | Admin-only member list |
 | PATCH | `/api/workspaces/{workspace}/members/{member}` | Exact `role`, `state` string fields |
+| GET | `/api/workspaces/{workspace}/modules/{module}` | Current member; exact stored lifecycle projection only |
 | GET | `/api/workspaces/{workspace}/modules/{module}/resources` | `total`, `items`; optional `offset`, `limit` |
 | GET | `/api/workspaces/{workspace}/modules/{module}/resources/{resource}` | One scoped record |
 | PUT | `/api/workspaces/{workspace}/modules/{module}/resources/{resource}` | Exact `text` string field |
+
+### Minimal member module status (W08 HTTP slice)
+
+The exact module GET returns only `workspace_id`, `key`, `state`, and module
+`revision` inside `data`. It exists in the base Bearer API, the direct
+`SessionWorkspaceApplication`, the administration wrapper and `ApplicationHost`.
+The wrapper delegates before verification, so composition does not run a bearer
+protocol verifier twice. It requires no administration retry table, receipt
+schema/handle, initializer, catalog entry or new configuration.
+
+Current identity and identity-bound membership precede workspace lifecycle and
+exact installed-key lookup. Nonmembers/operators without membership receive the
+same 404 as an unknown workspace. Suspended spaces return `workspace_unavailable`
+to current members; archived spaces allow this read. All member roles can inspect
+enabled/disabling/disabled, even with an empty configured capability set. Unknown
+keys return 404. Status does not reveal capabilities, config, resource contents,
+counts, connectors or credentials. It does not assert an effective permission,
+mounted host route, configured identity provider or ready acquisition provider.
+Business data remains denied while disabling/disabled. Admin module lists,
+catalog and PATCH permissions, and the older internal `get_module`, are unchanged.
+
+Only this new GET captures a policy denial as a private request-local outcome
+after unwrapping the existing workspace-hint check. Its real read transaction
+finishes the final authentication guards before returning data or rethrowing the
+original policy error. Thus final authentication/clock/storage failures take
+precedence over pending 400/404/409, including W05's replacement callback. It does
+not catch storage exceptions or fatal interruptions, expose the private outcome,
+or alter ordinary reads/writes. Query parameters are rejected with 400; HEAD and
+extra path segments are not this route. Existing router/shape errors are outside
+this policy-denial completion rule.
+
+The core read never calls business persistence/audit or dedicated receipt SQL.
+Cookie reads retain the ordinary login-clock update and CSRF rules (GET is not a
+business write). Bearer reads keep their existing deferred `BEGIN` snapshot:
+an EXCLUSIVE writer may delay the first read, but a RESERVED writer does not
+necessarily do so. Cookie `BEGIN IMMEDIATE` retains its existing serialization.
+No response retracts data already returned, and no global/non-interference or
+bounded-loader claim is added; the existing policy loader still materializes
+the database. Protocol authentication may perform its existing configured I/O;
+the status operation itself invokes no business provider.
+
+This implements only a minimal HTTP/core observation. There is no new UI, MCP,
+job cancellation, runtime identity activation, provider integration or production
+acceptance, and it does not mark all of W08 passed.
 
 `X-Workspace-ID` is an optional consistency hint, never an actor, membership,
 module grant or routing source. On recognized `/api/workspaces/{workspace}/...`

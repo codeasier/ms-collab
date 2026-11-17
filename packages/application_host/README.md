@@ -199,3 +199,13 @@ This is not enrollment, runtime migration or permission to change a real store.
 Do not use it on `service_runtime`: its installation markers are refused and its
 strict schema digest does not accept receipt objects. No constructor/GET creates
 schema. See the [full support and authority matrix](../directory_cursors/README.md).
+
+## Exact member module status
+
+`GET /api/workspaces/{workspace}/modules/{key}` is the shared core/API's
+[minimal member lifecycle observation](../workspace_api/README.md#minimal-member-module-status-w08-http-slice).
+It returns only `workspace_id`, `key`, `state`, and module `revision`, without
+requiring directory receipts or enabling any mounted business module. Stored
+`enabled` is not evidence that this host mounts the module or a provider is ready.
+Admin collection/configuration permissions and resource denials are unchanged.
+This adds no page, runtime configuration, identity activation or deployment.

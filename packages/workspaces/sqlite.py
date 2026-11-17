@@ -512,6 +512,9 @@ class SQLiteWorkspaceService:
     def get_module(self, actor_id, workspace_id, module_key):
         return self._call("get_module", actor_id, workspace_id, module_key)
 
+    def get_module_status(self, actor_id, workspace_id, module_key):
+        return self._call("get_module_status", actor_id, workspace_id, module_key)
+
     def set_workspace_state(self, actor_id, workspace_id, *, state, expected_revision):
         return self._call("set_workspace_state", actor_id, workspace_id, state=state, expected_revision=expected_revision, write=True)
 

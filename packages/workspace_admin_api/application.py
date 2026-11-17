@@ -48,6 +48,12 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                      and len(parts) in {5, 6} and parts[4] in {"modules", "module-catalog"})
         if not is_control and not is_module:
             return self._api._dispatch(environ)
+        if (is_module and len(parts) == 6 and parts[4] == "modules"
+                and environ.get("REQUEST_METHOD") == "GET"
+                and all(_SEGMENT.fullmatch(p) for p in parts[3:])):
+            # Member's four-field status is a base read, not admin config. Route
+            # before protocol verification to avoid verifying a bearer twice.
+            return self._api._dispatch(environ)
         assertion = self._api._verify_request(environ)
         if environ.get("QUERY_STRING", "") or any(not _SEGMENT.fullmatch(p) for p in parts[3:]):
             raise _invalid()

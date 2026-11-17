@@ -30,6 +30,17 @@ The existing loopback demo does **not** use this service yet.
 
 ## Trusted boundary
 
+`get_module_status(actor, workspace, key)` returns an immutable `ModuleStatus`
+with exactly `workspace_id`, `key`, `state`, and module `revision`. It checks the
+current identity-bound membership before workspace lifecycle and exact module
+existence. Viewers, developers and admins can observe enabled/disabling/disabled
+states, including an instance with no configured capabilities. Suspended spaces
+deny this observation; archived spaces retain it as a read. A platform operator
+without membership has no exception. This is stored lifecycle, not effective
+resource authority, host mounting or provider readiness. The old `get_module`,
+admin module listing, configuration/state mutation and resource checks are not
+widened. No new schema, grants or audit events are created by a status read.
+
 A real adapter must authenticate a **current** principal and supply its internal
 ID. Do not wire `actor_id` directly to a request parameter/header or let a client
 construct the bootstrap directory. Identity lookup is by the unique issuer and
