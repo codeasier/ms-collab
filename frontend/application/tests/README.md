@@ -91,3 +91,16 @@ Existing `artifact-refresh.cjs` starts through discovery. Existing
 `artifact-downloads.cjs` opens a reader selection and verifies picker workspace
 change immediately clears current download availability and catalog without a
 provider call. Their original acceptance gates and screenshots are retained.
+
+Pipeline discovery: `pipeline-scopes.test.mjs` checks strict minimal responses,
+current Cookie transport, visible cursors, no retries and the actual mounted
+picker with ignored abort, manual edits, duplicate operations and newer-request
+busy guards. `pipeline-scopes.cjs` uses the real HTTPS/Cookie/SQLite route to
+select and open existing runs/details/tasks/durations in alpha, beta and commons
+with identical IDs. It tests empty snapshots, current permission revocation,
+pagination/cursor invalidation, pending-old/pending-new races, manual entry,
+pagehide/logout/Back, zero CI provider calls, XSS-as-text, 4.5:1 picker contrast
+and 390px no overflow. Exact new screenshots: `ms-collab-pipeline-scopes/desktop.png`,
+`mobile.png`, `tasks.png`; the previous six remain required. All three pipeline
+browser journeys now use `stopSyntheticFixture` and print PASS only after clean
+shutdown. No live-provider or real migration acceptance is claimed.

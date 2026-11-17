@@ -41,3 +41,10 @@ body[data-page="pipelines"] :is(#revision,#summary,#coverage,#status,dt,footer){
 body[data-page="pipelines"] :is(#panel,.trend){background:#fff;border-color:#c8d8e3}
 body[data-page="pipelines"] :focus-visible{outline-color:#327993}
 @media(max-width:600px){body[data-page="pipelines"]>header:not(.app-shell),body[data-page="pipelines"] main{padding:20px 16px}}
+
+/* Cookie-only pipeline discovery, separate from manual exact scope fields. */
+body[data-page="pipelines"] #pipeline-picker{margin-top:24px;padding:20px;background:#fff;border:1px solid #adc4d1;border-radius:12px}
+body[data-page="pipelines"] .pipeline-picker-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:end}
+body[data-page="pipelines"] #pipeline-picker :is(select,button){width:100%}
+body[data-page="pipelines"] #pipeline-picker-status{color:#21485c}
+@media(max-width:700px){body[data-page="pipelines"] .pipeline-picker-grid{grid-template-columns:minmax(0,1fr)}body[data-page="pipelines"] #pipeline-picker .toolbar{align-items:stretch}body[data-page="pipelines"] #pipeline-picker .toolbar button{flex:1 1 100%}}

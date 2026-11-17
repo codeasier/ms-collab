@@ -8,6 +8,7 @@ from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import PolicyError
 from .records import InvalidRecord, decode_snapshots, resource_id
 from .tasks import task_page
+from .discovery import directory, directory_request
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _STATES = frozenset({"success", "failure", "cancelled", "timed_out", "skipped", "queued", "running", "unknown"})
@@ -17,7 +18,7 @@ class PipelineApplication(WorkspaceApplication):
     """Factory-only service. No listener, default identity or provider connection.
 
     A reviewed verifier and current local identity bindings are required. The
-    'pipelines' capability grants access to the approved snapshot resources in
+    'pipelines' capability grants access to the stored snapshot resources in
     that workspace, not to external CI credentials or arbitrary live pipelines.
     """
     def __init__(self, *, store=None, providers=None, provider_key=None,
@@ -27,6 +28,12 @@ class PipelineApplication(WorkspaceApplication):
 
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
+        discovery = directory_request(environ)
+        if discovery is not None:
+            workspace, after = discovery
+            return self._authenticated_transaction(assertion,
+                lambda policy, actor, db: directory(policy, actor, db, workspace, after, clock=self._clock),
+                with_connection=True)
         scope, endpoint, run_id, options = self._route(environ)
 
         def read(policy, actor):

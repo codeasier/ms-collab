@@ -42,3 +42,9 @@ The `/community/` page mounts the reviewed community board with `createCommunity
 - `connections.html`, `connections.mjs`, `connections.css`: opt-in current-session
   community policy management and authorized scope picker. The form cannot create
   connections or credentials, and grant changes invalidate old shared content.
+
+- `pipeline-scopes.mjs`, `pipeline-scope-client.mjs`: cookie-only current workspace
+  and stored snapshot picker, explicit load/open, strict minimal tuple/revision
+  validation and visible cursor. Discovery workspace stays separate from manual
+  exact IDs. It reuses the existing run/detail/task/duration controller and clears
+  it on selection, page changes and manual edits. See [directory boundaries](../../packages/pipeline_api/DISCOVERY.md).
