@@ -183,15 +183,20 @@ class ArtifactDiscoveryTests(unittest.TestCase):
     def test_expiry_after_directory_read_rejects_whole_response(self):
         from packages.artifact_sync import application as module
         original=module.directory
+        sessions=self.app._host._boundary._sessions
         def expired(*args,**kwargs):
-            result=original(*args,**kwargs)
-            self.assertTrue(result['items'])
+            projection=original(*args,**kwargs)
+            self.assertTrue(projection.value)
             self.now=self.session.expires_at
-            return result
-        with patch.object(module,'directory',side_effect=expired):
+            return projection
+        with patch.object(module,'directory',side_effect=expired) as projected, \
+                patch.object(sessions,'_current_actor',wraps=sessions._current_actor) as current:
             result=self.call()
-            self.assertEqual(result['status'],401)
-            self.assertEqual(result['body'],{'error':'authentication_required'})
+        self.assertEqual(projected.call_count,2)
+        self.assertEqual(current.call_count,2)
+        self.assertEqual(self.now,self.session.expires_at)
+        self.assertEqual(result['status'],401)
+        self.assertEqual(result['body'],{'error':'authentication_required'})
 
     def test_actual_256_key_boundary_then_257_fails_before_decode(self):
         scopes=[Scope('alpha','more',f'b{i:03d}') for i in range(MAX_SCOPES-4)]

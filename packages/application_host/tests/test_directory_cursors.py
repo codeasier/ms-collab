@@ -149,8 +149,10 @@ class DirectoryRuntimeExclusionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             root=Path(root);config=root/'config.json';state=root/'state'
             value={'version':1,'origin':fixtures.ORIGIN,'data_directory':str(state),
-                   'modules':['pipelines'],'login':{'mode':'disabled','issuer':fixtures.ISSUER,'audience':'synthetic-client'}}
+                   'modules':['pipelines'],'artifact_administration':False,
+                   'login':{'mode':'disabled','issuer':fixtures.ISSUER,'audience':'synthetic-client'}}
             config.write_text(json.dumps(value));config.chmod(0o600);initialize(config)
+            self.assertFalse(check(config)['login_enabled'])
             # Deliberate temporary corruption, NOT calling/bypassing initializer.
             with sqlite3.connect(state/'policy.sqlite') as db:
                 for sql in SCHEMA:db.execute(sql)
