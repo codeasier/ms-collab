@@ -19,13 +19,24 @@
 - `browser.cjs`: actual product pages over temporary HTTPS, synthetic provider and
   SQLite policy, explicit sign-in/out, management/invitation writes, responsibility
   save/conflict, no bearer, XSS text, cross-space/session revocation, interrupted
-  requests/pagehide, restored pages and six synthetic screenshots.
+  requests/pagehide, restored pages and nine synthetic screenshots, including
+  desktop/mobile initial-admin selection views. The maximum-length mobile ID is
+  an explicitly intercepted layout-only fixture, not a real directory entry;
+  actual selection and creation use the synthetic backend in separate cases.
 
 Run Node tests normally. Browser tooling is locked under `scripts/browser` and
 run by the [workflow](../../../.github/workflows/application-ui.yml). The temporary
 certificate is accepted only in a disposable browser context, never system-wide.
 
 Return to [frontend](../README.md).
+
+The initial-admin selection increment also requires the shared management
+controller's [two-step selection and unresolved-retry plan](../../workspace-admin/tests/README.md#initial-admin-selection-acceptance-plan)
+on the actual synthetic HTTPS cookie path. Verify the selection header, unchanged
+body/key, current session/CSRF, delayed responses after cleanup and 412 versus 409
+behavior without weakening existing browser assertions or process cleanup.
+This is an acceptance requirement, not a local execution or passing-CI claim;
+real login and identity transitions remain unavailable.
 
 - `pipeline-browser.cjs`: real synthetic HTTPS login into the shared pipeline
   controller; runs/details/durations, scope edits, malformed revisions,

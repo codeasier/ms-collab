@@ -69,3 +69,16 @@ test('pipeline cookie client only reads validated scoped paths without credentia
 })
 
 test('connection navigation requires its configured community dependency',()=>{assert.throws(()=>validateBootstrap({service:'ms-collab',ui_modules:['workspaces','connections'],login_configured:false,authorization_endpoint:null},'https://app.example.invalid'))})
+
+test('cookie transport binds identity selection to canonical GET and create-only header',async()=>{
+ const {client,calls}=fixture(),proof='ias1-'+'b'.repeat(64);await client.inspect()
+ const path='/api/control/initial-admin-selections/person%3A1',body={name:'Team',kind:'shared',initial_admin:'person:1'}
+ await client.request(path);await client.request('/api/control/workspaces',{method:'POST',body,requestKey:'same-key',initialAdminPrecondition:proof});await client.request('/api/control/workspaces',{method:'POST',body,requestKey:'same-key'})
+ assert.equal(calls[1].options.method,'GET');assert.equal(calls[1].options.headers['If-Initial-Admin-Match'],undefined);assert.equal(calls[1].options.headers['X-CSRF-Token'],undefined)
+ assert.equal(calls[2].options.headers['If-Initial-Admin-Match'],proof);assert.equal(calls[2].options.headers['X-CSRF-Token'],csrf);assert.equal(calls[2].options.headers.Authorization,undefined);assert.deepEqual(JSON.parse(calls[2].options.body),body);assert.equal(calls[3].options.headers['If-Initial-Admin-Match'],undefined)
+ for(const invalid of ['/api/control/initial-admin-selections','/api/control/initial-admin-selections/person:1','/api/control/initial-admin-selections/%70erson','/api/control/initial-admin-selections/a%2Fb','/api/control/initial-admin-selections/person?x=1'])await assert.rejects(client.request(invalid))
+ for(const options of [{method:'POST'},{body:{}},{initialAdminPrecondition:proof}])await assert.rejects(client.request(path,options))
+ for(const invalid of [proof+'\n',proof.toUpperCase(),'"'+proof+'"',''])await assert.rejects(client.request('/api/control/workspaces',{method:'POST',initialAdminPrecondition:invalid}))
+ for(const other of ['/api/workspaces','/api/control/workspaces/alpha'])await assert.rejects(client.request(other,{method:'POST',initialAdminPrecondition:proof}))
+ await assert.rejects(client.request('/api/control/workspaces',{initialAdminPrecondition:proof}));assert.equal(calls.length,4)
+})

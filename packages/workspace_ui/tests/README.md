@@ -10,3 +10,9 @@ HTTP, checks interrupted/repeated/error flows and emits only two synthetic PNGs.
 It does not prove real login or production deployment. [Parent](../README.md).
 
 The synthetic operator has no workspace memberships. Lifecycle/module tests use the explicitly configured administration extension and initialized retry schema, with catalog templates limited to test data.
+
+The initial-admin selection increment must additionally satisfy the
+[two-step browser acceptance plan](../../../frontend/workspace-admin/tests/README.md#initial-admin-selection-acceptance-plan).
+It covers reviewed-target state and retained unresolved key/precondition pairs,
+not a new provider or identity-transition fixture. Existing CI on the reviewed
+head is the acceptance gate; this document does not claim a local UT/build run.

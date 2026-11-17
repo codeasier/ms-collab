@@ -58,6 +58,8 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                 command = "capabilities"
             elif parts == ["", "api", "control", "workspaces"] and verb == "GET":
                 command = "control_list"
+            elif len(parts) == 5 and parts[3] == "initial-admin-selections" and verb == "GET":
+                command, args = "initial_admin_selection", (parts[4],)
             elif parts == ["", "api", "control", "workspaces"] and verb == "POST":
                 command, write = "create", True
                 body = self._body(environ, {"name", "kind", "initial_admin"})
@@ -86,6 +88,8 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                 return {"manage_workspaces": policy._operator_current(actor)}
             if command == "control_list":
                 return [asdict(w) for w in policy.list_control_workspaces(actor)]
+            if command == "initial_admin_selection":
+                return policy.initial_admin_selection(actor, args[0])
             if command == "lifecycle":
                 return asdict(policy.set_workspace_state(actor, args[0],
                               state=body["state"], expected_revision=args[1]))
@@ -96,7 +100,15 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                 result, identity, digest = remembered(policy, connection, actor, "workspace.create", "platform", args[0], body)
                 if result is not None:
                     return asdict(policy._workspaces[result])
-                workspace = policy.create_workspace(actor, **body)
+                # Exact old-key replay is resolved above, without interpreting
+                # a new selection header or changing its durable body digest.
+                # Only a fresh mutation requires the retained selection, checked
+                # inside this same writer transaction by the core service.
+                selected = environ.get("HTTP_IF_INITIAL_ADMIN_MATCH")
+                if "HTTP_IF_INITIAL_ADMIN_MATCH" in environ and type(selected) is not str:
+                    raise PolicyError(400, "invalid_initial_admin_selection")
+                workspace = policy.create_workspace(actor, **body,
+                    expected_initial_admin_selection=selected)
                 remember(policy, connection, identity, digest, workspace.id, body)
                 return asdict(workspace)
             workspace = args[0]

@@ -6,6 +6,13 @@ const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.key
 const token=/^[A-Za-z0-9_-]{43}$/
 const exactToken=value=>typeof value==='string'&&value.match(token)?.[0]===value
 const integer=n=>Number.isSafeInteger(n)&&n>0
+function initialAdminSelectionRequest(path,method,precondition){
+ if(path.startsWith('/api/control/initial-admin-selections')){
+  let principal;try{principal=decodeURIComponent(path.slice('/api/control/initial-admin-selections/'.length))}catch{throw Error('Invalid identity selection path.')}
+  if(method!=='GET'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(principal)||/[\u0000-\u0020\u007f]/.test(principal)||path!=='/api/control/initial-admin-selections/'+encodeURIComponent(principal))throw Error('Invalid identity selection path.')
+ }
+ if(precondition!==undefined&&(path!=='/api/control/workspaces'||method!=='POST'||typeof precondition!=='string'||precondition.length!==69||!/^ias1-[a-f0-9]{64}$/.test(precondition)))throw Error('Invalid initial administrator precondition.')
+}
 const messages={401:'Your session expired or was rejected. Sign in or explicitly recheck the session.',403:'Your current permissions do not allow this change.',404:'This scope or capability is unavailable to your identity.',409:'The current lifecycle or request conflicts with this change.',412:'The revision changed. Nothing was retried. Reload and review current state.',428:'A current revision is required.',503:'The configured service is unavailable. No login or result is assumed.'}
 export function csrfCookie(raw){
  if(typeof raw!=='string'||raw.length>8192||/[\u0000-\u001f\u007f]/.test(raw))throw new Error('CSRF proof unavailable.')
@@ -34,14 +41,16 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  let active=false,epoch=0
  const transfers=new Set()
  const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
- async function send(path,{method='GET',body,revision,requestKey,signal,login=false,authenticated=false}={}){
+ async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,signal,login=false,authenticated=false}={}){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
+  initialAdminSelectionRequest(path,method,initialAdminPrecondition)
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
   if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
   if(revision!==undefined){if(!integer(revision))throw new Error('Current revision required.');headers['If-Match']=`"${revision}"`}
   if(requestKey!==undefined){if(typeof requestKey!=='string'||requestKey.match(/^[A-Za-z0-9_-]{1,200}$/)?.[0]!==requestKey)throw new Error('Invalid retry key.');headers['Idempotency-Key']=requestKey}
+  if(initialAdminPrecondition!==undefined)headers['If-Initial-Admin-Match']=initialAdminPrecondition
   if(method!=='GET'){
    // A fresh cookie is read for each mutation. A missing/duplicate token fails locally.
    if(login){headers['X-MS-Collab-Login']='1';const raw=cookie();if(raw.split(';').some(x=>x.trim().startsWith('__Host-ms-collab-csrf=')))headers['X-CSRF-Token']=csrfCookie(raw)}

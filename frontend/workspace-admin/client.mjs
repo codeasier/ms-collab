@@ -1,5 +1,23 @@
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
 export const validId = value => typeof value === 'string' && !/[\u0000-\u0020\u007f]/.test(value) && idPattern.test(value)
+export const validInitialAdminPrecondition = value => typeof value === 'string' && /^ias1-[a-f0-9]{64}$/.test(value) && value.length === 69
+export function initialAdminSelectionURL(principal) {
+  if (!validId(principal)) throw new Error('Invalid initial administrator ID.')
+  return `/api/control/initial-admin-selections/${encodeURIComponent(principal)}`
+}
+export function validateInitialAdminSelection(data, principal) {
+  if (!validId(principal) || !data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).sort().join(',') !== 'initial_admin,precondition' || data.initial_admin !== principal || !validInitialAdminPrecondition(data.precondition)) throw new Error('Invalid identity selection response.')
+  return data
+}
+export function initialAdminSelectionRequest(path, method, precondition) {
+  if (path.startsWith('/api/control/initial-admin-selections')) {
+    const suffix = path.slice('/api/control/initial-admin-selections/'.length)
+    let principal
+    try { principal = decodeURIComponent(suffix) } catch { throw new Error('Invalid identity selection path.') }
+    if (method !== 'GET' || !validId(principal) || path !== initialAdminSelectionURL(principal)) throw new Error('Invalid identity selection path.')
+  }
+  if (precondition !== undefined && (path !== '/api/control/workspaces' || method !== 'POST' || !validInitialAdminPrecondition(precondition))) throw new Error('Invalid initial administrator precondition.')
+}
 const revision = value => Number.isSafeInteger(value) && value > 0
 export function validateWorkspaces(data) {
   if (!Array.isArray(data) || data.some(w => !w || !validId(w.id) || typeof w.name !== 'string' || w.name.length > 200 || !['product', 'shared'].includes(w.kind) || !['active', 'suspended', 'archived'].includes(w.state) || !revision(w.revision)) || new Set(data.map(w => w.id)).size !== data.length) throw new Error('Invalid service response.')
@@ -33,13 +51,15 @@ export function createClient({fetcher = fetch} = {}) {
   return {
     connect(value) { if (typeof value !== 'string' || !value || value.length > 8192 || /\s/.test(value)) throw new Error('Enter a valid opaque credential.'); credential = value },
     clear() { credential = '' },
-    async request(path, {method='GET', body, revision, requestKey, signal} = {}) {
+    async request(path, {method='GET', body, revision, requestKey, initialAdminPrecondition, signal} = {}) {
       if (!credential) throw new Error('Disconnected.')
-      if (typeof path !== 'string' || /[\u0000-\u0020\u007f]/.test(path) || !['GET','POST','PATCH'].includes(method) || (path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?)$/.test(path))) throw new Error('Invalid service path.')
+      if (typeof path !== 'string' || /[\u0000-\u0020\u007f]/.test(path) || !['GET','POST','PATCH'].includes(method) || (method === 'GET' && body !== undefined) || (path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?|initial-admin-selections\/[A-Za-z0-9%._:-]+)$/.test(path))) throw new Error('Invalid service path.')
+      initialAdminSelectionRequest(path, method, initialAdminPrecondition)
       const headers = {Authorization: `Bearer ${credential}`}
       if (body !== undefined) headers['Content-Type'] = 'application/json'
       if (revision !== undefined) headers['If-Match'] = `"${revision}"`
       if (requestKey !== undefined) headers['Idempotency-Key'] = requestKey
+      if (initialAdminPrecondition !== undefined) headers['If-Initial-Admin-Match'] = initialAdminPrecondition
       const response = await fetcher(path, {method, headers, body:body === undefined ? undefined : JSON.stringify(body), signal, credentials:'omit', cache:'no-store', redirect:'error'})
       if (!response.ok) { const error = new Error(messageFor(response.status)); error.status = response.status; throw error }
       const payload = await response.json()

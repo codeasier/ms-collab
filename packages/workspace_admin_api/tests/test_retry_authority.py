@@ -319,9 +319,10 @@ from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import SQLiteWorkspaceService
 api=WorkspaceApplication(store=SQLiteWorkspaceService(sys.argv[1]),providers=(f.Provider('test',f.ISSUER,'test-api',f.SyntheticVerifier()),),provider_key='test',clock=lambda:f.NOW)
 app=WorkspaceAdministrationApplication(api=api)
+selected=f.call(app,'/api/control/initial-admin-selections/other')['body']['data']['precondition']
 print('ready',flush=True)
 if sys.stdin.readline().strip()!='go':raise RuntimeError('no start')
-result=f.call(app,'/api/control/workspaces',method='POST',body={'name':'Concurrent','kind':'product','initial_admin':'other'},extra={'HTTP_IDEMPOTENCY_KEY':sys.argv[2]})
+result=f.call(app,'/api/control/workspaces',method='POST',body={'name':'Concurrent','kind':'product','initial_admin':'other'},extra={'HTTP_IDEMPOTENCY_KEY':sys.argv[2],'HTTP_IF_INITIAL_ADMIN_MATCH':selected})
 print(json.dumps(result),flush=True)
 """
         children=[]

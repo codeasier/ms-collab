@@ -62,6 +62,12 @@ configuration, audit export, bulk update or file upload endpoint in this batch.
 Archived spaces retain the existing policy: reads and admin-only authority
 reduction remain possible, ordinary resource writes are rejected.
 
+The separately configured [administration extension](../workspace_admin_api/README.md)
+adds operator creation and exact-ID initial-admin selection. New creations there
+require `If-Initial-Admin-Match` as well as `Idempotency-Key`; its existing
+three-field body and valid old-record exact replay are preserved. These are not
+base API routes, actor claims or a replacement for this authentication boundary.
+
 The application emits no CORS allowance, cookie, token, provider error body or
 SQL/path detail. It never logs request environments or credentials. Deployments
 must ensure their own server/error telemetry does not log those values either.

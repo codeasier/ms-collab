@@ -80,7 +80,8 @@ class CounterTests(unittest.TestCase):
             'workspace': lambda: store.set_workspace_state('operator', 'alpha', state='suspended', expected_revision=expected),
             'module': lambda: store.set_module_state('alpha_admin', 'alpha', 'board', state='disabling', expected_revision=expected),
             'resource': lambda: store.update_resource('alpha_admin', 'alpha', 'board', 'same', text='new', expected_revision=expected),
-            'create': lambda: store.create_workspace('operator', name='Synthetic new', kind='product', initial_admin='viewer'),
+            'create': lambda: store.create_workspace('operator', name='Synthetic new', kind='product', initial_admin='viewer',
+                expected_initial_admin_selection=store.initial_admin_selection('operator','viewer')['precondition']),
             'install': lambda: store.install_module('alpha_admin', 'alpha', 'new', capabilities=('read',)),
             'transfer': lambda: store.transfer_admin('alpha_admin', 'alpha', 'multi', expected_revision=expected, replacement_revision=expected),
         }

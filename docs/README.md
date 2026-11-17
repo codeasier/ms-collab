@@ -15,7 +15,7 @@
 - [Transactional workspace API](../packages/workspace_api/README.md)：可信验证器与 SQLite 同事务授权的配置式 WSGI 适配器；没有真实登录提供方或生产启动入口。
 
 - [Workspace administration UI](../packages/workspace_ui/README.md)：显式配置事务 API 的成员管理页面；不含默认身份或真实登录流程。
-- [Workspace lifecycle and modules](../packages/workspace_admin_api/README.md)：平台操作员创建/归档、空间管理员的目录约束模块安装/启停，以及同事务持久幂等；无默认身份或外部执行权限。
+- [Workspace lifecycle and modules](../packages/workspace_admin_api/README.md)：平台操作员创建/归档、空间管理员的目录约束模块安装/启停，以及同事务持久幂等；新建空间需显式核对 initial-admin 身份并提交预条件，旧有效记录仍可精确重放；无默认身份或外部执行权限。
 - [Authorized artifact HTTP API](../packages/artifacts_api/README.md)：同一 SQLite 快照中的身份/权限、季度目录和命名视图查询；无真实 provider 或下载。
 - [GitCode community snapshot adapter](../packages/community_sync/README.md)：显式凭据、只读 provider 与离线 SQLite 快照；事务授权 HTTP 另见下方社区 API。
 
@@ -62,3 +62,4 @@
 - [Configured session artifact refresh](../packages/artifact_refresh/README.md)：显式可信 provider、同会话持续授权、共享并发租约、有界采集到私有候选，再完整审批与展示；仅合成 HTTPS 验证，真实云/部署另行验收。
 - [Configured service runtime](../packages/service_runtime/README.md): strict installation/configuration, cold backup/new-directory restore and fixed loopback TLS; real login remains disabled and no production deployment is asserted.
 - [Principal authority and durable workspace grants](principal-authority.md)：realm/代次、v3 成员/操作员持久授权侧表、显式离线 v1/v2 升级与旧授权 NULL 墓碑；普通编辑/转移/邀请不重绑，身份变更和真实登录仍关闭，恢复与历史备份回滚另行设门。
+- [Initial-admin selection acceptance](../packages/workspace_admin_api/tests/README.md#initial-admin-selection-acceptance-plan)：单 ID 核对、写锁内身份预条件、旧重试兼容及人工两步界面的合成验收计划；hash 不是凭据，无 TTL 或消费语义，文档不代表检查已通过。

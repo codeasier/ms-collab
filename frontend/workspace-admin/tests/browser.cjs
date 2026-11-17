@@ -1,6 +1,8 @@
 // Acceptance uses only the test-harness verifier and temporary synthetic store.
 const assert=require('node:assert/strict'), fs=require('node:fs'), path=require('node:path'), os=require('node:os')
 const {spawn}=require('node:child_process'), {chromium}=require('playwright')
+const {createScenarioRouter}=require('./scenario-router.cjs')
+const {exerciseIdentitySelection}=require('./identity-selection.cjs')
 const within=async(promise)=>{let t;try{return await Promise.race([promise,new Promise((_,reject)=>t=setTimeout(()=>reject(new Error('barrier timeout')),10000))])}finally{clearTimeout(t)}}
 async function main(){
  const child=spawn('python3',['-m','packages.workspace_ui.tests.browser_server'],{cwd:path.resolve(__dirname,'../../..'),stdio:['ignore','pipe','pipe']});child.stderr.resume()
@@ -16,8 +18,8 @@ async function main(){
     window.fetch=async(...args)=>{window.acceptanceRequests.push(String(args[0]));const response=await original(...args);window.acceptanceCompleted.push(String(args[0]));return response}
   })
   const external=[], errors=[], mutations=[], writes=[]
-  await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();external.push(route.request().url());return route.abort()})
-  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='PATCH')mutations.push(r.url());if(['PATCH','POST'].includes(r.method()))writes.push({method:r.method(),url:r.url(),key:r.headers()['idempotency-key']});assert.ok(!r.url().includes('synthetic-admin'))})
+  const router=createScenarioRouter({origin,onExternal:()=>external.push('unexpected origin')});await context.route('**/*',route=>router.handle(route))
+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='PATCH')mutations.push(r.url());if(['PATCH','POST'].includes(r.method()))writes.push({method:r.method(),url:r.url(),key:r.headers()['idempotency-key'],precondition:r.headers()['if-initial-admin-match'],body:r.postData()});assert.ok(!r.url().includes('synthetic-admin'))})
   await page.goto(origin+'/manage/');assert.equal(await page.locator('#session').isVisible(),false)
   await page.locator('#credential').fill('synthetic-admin');await page.locator('#connect button').click();await page.locator('#panel:not([hidden])').waitFor()
   assert.equal(await page.locator('#credential').inputValue(),'');assert.equal(await page.locator('#workspace option').count(),2)
@@ -63,7 +65,11 @@ async function main(){
   assert.equal(await page.locator('#panel').isVisible(),false)
   const operatorHeaders={Authorization:'Bearer synthetic-operator'}
   assert.equal((await context.request.get(origin+'/api/workspaces/alpha/members',{headers:operatorHeaders})).status(),404)
-  const fillCreate=async(name,kind='product')=>{await page.locator('#create-open').click();await page.locator('#space-name').fill(name);await page.locator('#space-kind').selectOption(kind);await page.locator('#initial-admin').fill('admin')}
+  const operatorReady=()=>page.waitForFunction(()=>!document.querySelector('#operator-panel').hidden&&!document.querySelector('#session').hidden&&!document.querySelector('#status').textContent.startsWith('Loading'))
+  const reconnectOperator=async()=>{await page.locator('#credential').fill('synthetic-operator');await page.locator('#connect button').click();await operatorReady()}
+  await operatorReady()
+  await exerciseIdentitySelection({page,router,ready:operatorReady,reconnect:reconnectOperator,invalidations:[()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide'))),()=>page.evaluate(()=>document.querySelector('#disconnect').dispatchEvent(new Event('click')))]})
+  const fillCreate=async(name,kind='product')=>{await page.locator('#create-open').click();await page.locator('#space-name').fill(name);await page.locator('#space-kind').selectOption(kind);await page.locator('#initial-admin').fill('admin');await page.locator('#initial-admin-review').click();await page.waitForFunction(()=>!document.querySelector('#create-save').disabled)}
   await fillCreate('Cancelled Team');const beforeCancel=writes.length;await page.locator('#create-cancel').click();assert.equal(writes.length,beforeCancel)
   // A committed creation with a lost response is retried with the same key.
   let lost=false
@@ -72,9 +78,10 @@ async function main(){
   await page.unroute('**/api/control/workspaces')
   // Completing another creation must not discard the unresolved request's key.
   await fillCreate('Interleaved Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Workspace created: Interleaved Team'))
-  await fillCreate('Retry Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Workspace created:'))
-  const createWrites=writes.filter(r=>r.method==='POST'&&new URL(r.url).pathname==='/api/control/workspaces')
-  assert.equal(createWrites.length,3);assert.equal(createWrites[0].key,createWrites[2].key);assert.notEqual(createWrites[0].key,createWrites[1].key)
+  router.set('/api/control/initial-admin-selections/admin',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:{initial_admin:'admin',precondition:'ias1-'+'c'.repeat(64)}})}))
+  await fillCreate('Retry Team');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Workspace created:'));await within(router.drain());router.remove('/api/control/initial-admin-selections/admin')
+  const createWrites=writes.filter(r=>r.method==='POST'&&new URL(r.url).pathname==='/api/control/workspaces'&&['Retry Team','Interleaved Team'].includes(JSON.parse(r.body).name))
+  assert.equal(createWrites.length,3);assert.equal(createWrites[0].key,createWrites[2].key);assert.notEqual(createWrites[0].key,createWrites[1].key);assert.equal(createWrites[0].precondition,createWrites[2].precondition);assert.equal(createWrites[0].body,createWrites[2].body)
   let controls=(await (await context.request.get(origin+'/api/control/workspaces',{headers:operatorHeaders})).json()).data
   assert.equal(controls.filter(w=>w.name==='Retry Team').length,1);const team=controls.find(w=>w.name==='Retry Team')
   await fillCreate('Shared Team','shared');await page.locator('#create-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Workspace created: Shared Team'))
@@ -129,6 +136,7 @@ async function main(){
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
   assert.equal(await page.locator('#control-spaces').textContent(),'');assert.equal(await page.locator('#modules').textContent(),'');assert.equal(await page.locator('#initial-admin').inputValue(),'')
   assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length})),{local:0,session:0})
+  await within(router.drain());await context.unrouteAll({behavior:'wait'})
   assert.deepEqual(external,[]);assert.deepEqual(errors,[]);console.log('Workspace administration browser acceptance passed; two synthetic screenshots written.')
  }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
 }

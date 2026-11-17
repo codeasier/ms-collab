@@ -20,3 +20,42 @@ legacy conflict tombstones, exact runtime schema checks, lost-authority legacy
 row retention, per-stage conversion rollback, post-write rollback and a separate
 process holding the actual SQLite writer lock across test-only identity ABA.
 The simulator is only for disposable tests; identity mutation remains disabled.
+
+## Initial-admin selection acceptance plan
+
+This plan must be checked by existing CI on the exact reviewed head. No local
+UT/build execution or successful acceptance is claimed by this document.
+
+- GET only one explicit target under current operator authority; exact
+  `initial_admin`/`precondition` fields, `ias1-` plus 64 lowercase hex, no query,
+  list, external identity claims or exposed raw pins. Unknown and inactive
+  targets share the same safe error. Lookup creates no policy/retry/audit data;
+  cookie security-clock maintenance is not a business write.
+- New-key POST requires one canonical `If-Initial-Admin-Match`. Missing, malformed
+  and changed selections yield 428/400/412 with complete business/retry rollback.
+  Cover target and actor ABA, foreign realm, inactive target, different ID,
+  writer-lock waits and current-operator precedence. Keep actor's synthetic core
+  grant current when testing the selection fence itself.
+- Seed genuine old v2 records using the original three-field body digest. Exact
+  replay remains valid without a header, after restart and after a lost response;
+  an old client with an unused key cannot create. Existing-key handling precedes
+  selection parsing. Changed body, stale actor/target provenance, NULL tombstones,
+  corrupt records and missing results retain their original safe outcomes and
+  never become misses, even with a fresh selection value.
+- Multiple processes using the same key create one workspace, one current target
+  membership and one success audit. The v2 schema, key namespace and digest remain
+  unchanged. Replays neither re-enroll a member nor rebind grants.
+- Bearer assertion expiry and cookie session/CSRF/Origin/current-identity checks
+  remain independent gates, including final expiry and injected persistence/audit
+  failure. The new header cannot supply authentication or operator authority.
+- Reject merged/noncanonical header forms in the adapter and duplicate raw
+  headers at the configured runtime boundary; other WSGI deployments retain their
+  explicit raw-header normalization requirement.
+- Run both management UI compositions and their existing interrupted-write,
+  wrong-scope, no-bearer, stale-response and synthetic-fixture-cleanup checks. See
+  the [browser plan](../../../frontend/workspace-admin/tests/README.md#initial-admin-selection-acceptance-plan).
+
+No selection nonce table, credential, expiry, reservation or consumption is part
+of this protocol. A normal restart need not invalidate an unchanged selection.
+These cases do not open invitations/other identity selection, identity transitions,
+legacy grant recovery, real login, whole-backup anti-rollback or production use.

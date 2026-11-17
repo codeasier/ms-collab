@@ -11,6 +11,37 @@ An intervening successful creation must not discard another unresolved creation'
 retry key. Transport abort is disabled in browser acceptance so generation guards
 must independently stop stale rendering and multi-stage follow-up requests.
 
+## Initial-admin selection acceptance plan
+
+This is a required exact-head CI plan, not a claim of local UT/build execution or
+passed acceptance. Preserve the existing lifecycle/invitation assertions and
+fixture cleanup while adding both standalone bearer and unified cookie coverage:
+
+- A valid typed local ID does not itself enable creation. Review performs only
+  GET; Create requires the exact returned ID and canonical `ias1-` value and
+  sends one header without changing the body or treating the hash as a credential.
+- Target edits, Cancel/Escape, disconnect/pagehide and malformed/wrong-target
+  responses invalidate the choice. Delayed responses cannot repopulate a closed
+  or newer dialog, even with ineffective transport abort. Repeated clicks cannot
+  issue duplicate writes or automatically chain selection GET into creation.
+- A lost accepted response followed by explicit retry produces one workspace and
+  audit. For the same body, an ordinary failure, close/reopen or later review
+  retains the original key/precondition pair; an intervening successful creation
+  cannot erase another unresolved pair. A 409 does not rotate or silently retry.
+- Only an explicit 412 permits a later user review to update the selection, still
+  retaining the original key. No automatic review or resubmission is allowed.
+  Page/session departure retains the existing memory-only cleanup boundary; no
+  cross-session persistence is introduced.
+- Synthetic actor/target change between review and creation fails without a grant.
+  Old valid v2 exact replay remains compatible without a new header, while an
+  unused key without it fails. Cookie CSRF/current session, no bearer fallback,
+  independent operator authority and all direct-API denials remain enforced.
+
+The precondition has no TTL, expiry timer or consumption to test. It is not proof
+of externally verified identity or a substitute for the still-closed identity
+transition and real-login gates. See the
+[API plan](../../../packages/workspace_admin_api/tests/README.md#initial-admin-selection-acceptance-plan).
+
 ## Invitations
 
 `node frontend/workspace-admin/tests/invitations.cjs` starts a separate temporary

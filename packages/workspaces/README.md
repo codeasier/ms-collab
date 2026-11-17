@@ -52,6 +52,34 @@ nonmember receives no shape/revision diagnostics about hidden objects. A future
 HTTP adapter must first validate scalar input types, authenticate and reconcile
 canonical route/body scope, rather than exposing Python exceptions.
 
+## Initial-admin selection precondition
+
+Both services expose `initial_admin_selection(actor_id, initial_admin)` for a
+current operator to inspect one active local target. It returns exactly
+`{"initial_admin": ..., "precondition": ...}`. Creating a new workspace requires
+that value as `create_workspace(..., expected_initial_admin_selection=value)`.
+Omitting it, including `None`, returns 428; malformed values return 400 and a
+changed/unavailable selection returns 412. There is no trusted-caller fallback
+that captures the current target inside creation. Explicit fresh constructor/
+`initialize()` bootstrap remains a separate trusted operation.
+
+The `ias1-` plus 64-lowercase-hex value deterministically compares version,
+purpose, realm and both actor/target identity pins. Comparison, current operator
+checks, workspace creation, the new membership pin and audit share the same
+lock. The SQLite adapter acquires its writer lock before loading and comparing.
+The value is not a credential, permission, unforgeable proposal, external identity
+verification or evidence of human intent. It has no expiry/consumption and stays
+equal across a normal restart if those identities are unchanged. It does not
+detect an entire old database being restored with identical pins.
+
+A trusted UI/adapter must retain the explicitly reviewed value, not silently
+fetch a new one when a write conflicts. The
+[HTTP administration contract](../workspace_admin_api/README.md#initial-admin-identity-selection)
+defines the single-target GET, separate request header and old-record exact
+replay compatibility. Core methods themselves do not add HTTP authentication or
+idempotency. Invitations/other selections, legacy grant recovery and identity
+transitions remain separate gates.
+
 ## Run tests
 
 From the repository root:
