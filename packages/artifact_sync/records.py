@@ -47,6 +47,13 @@ def _json(raw):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
 
 
+def _decode_projection(raw):
+    """Decode a bounded BLOB prefix without dropping NUL or malformed bytes."""
+    if type(raw) is not bytes:
+        raise ValueError('invalid record projection')
+    return raw.decode('utf-8')
+
+
 @dataclass(frozen=True, slots=True)
 class IndexPolicy:
     """Trusted exact-scope publication grants, NOT credentials or HTTP input."""
@@ -264,8 +271,9 @@ class Record:
     policy: IndexPolicy
     revision: int
     policy_raw: str
-    candidate: str | None
-    published_raw: str | None
+    # Directory loads defer decoding these byte projections until explicit grant.
+    candidate: str | bytes | None
+    published_raw: str | bytes | None
     published_revision: int | None
     authority: dict | None
     grant_revision: int
@@ -283,7 +291,10 @@ def load(connection, scope, *, allow_legacy=False, read_candidate=True, budget=N
     check_schema(connection)
     # A reader directory must not fetch the private candidate at all. Bounded
     # discovery projections cap allocation before applying the aggregate budget.
-    field = lambda name: f'substr({name},1,{_MAX_BYTES + 1})' if budget is not None else name
+    # BLOB substr preserves embedded NUL (TEXT substr does not). Valid codecs
+    # round-trip through ensure_ascii=True dump, so their character/byte limits
+    # coincide; the extra byte makes an oversized canonical prefix fail closed.
+    field = lambda name: f'substr(CAST({name} AS BLOB),1,{_MAX_BYTES + 1})' if budget is not None else name
     candidate_column = field('candidate') if read_candidate else 'NULL'
     row = connection.execute(f"SELECT revision,{field('policy')},{candidate_column},{field('published')},published_revision FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?", scope_key(scope)).fetchone()
     if row is None:
@@ -291,6 +302,7 @@ def load(connection, scope, *, allow_legacy=False, read_candidate=True, budget=N
     try:
         revision, raw, candidate, published, published_revision = row
         if budget is not None:
+            raw = _decode_projection(raw)
             budget(raw)
         if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
             raise ValueError()
@@ -313,6 +325,9 @@ def authorized(policy, actor, connection, scope, action, *, budget=None):
     try:
         # Do not parse private candidate metadata for readers or denied actors.
         if budget is not None:
+            record = replace(record,
+                candidate=None if record.candidate is None else _decode_projection(record.candidate),
+                published_raw=None if record.published_raw is None else _decode_projection(record.published_raw))
             # Only granted scopes contribute snapshot bytes; denied scopes never
             # decode publication/candidate. Each authorized validation input is charged.
             for raw in ((record.published_raw,) if action == 'read' else (record.candidate, record.published_raw)):
