@@ -91,8 +91,14 @@ to the exact allowlisted projection. It is never a normal source-resource fetch.
 - Module: `disabled -> enabled -> disabling -> disabled`. Only admins can change
   configuration. Disabling rejects new module actions immediately, cancels queued
   tasks, signals running tasks to stop, and denies module data/download endpoints
-  once disabled. Minimal lifecycle status remains admin-readable. An external
-  side effect already executed cannot be undone by hiding the module.
+  once disabled. Current members may read an exact installed module's minimal
+  lifecycle projection: `workspace_id`, `key`, `state`, `revision`. This remains
+  readable for disabling/disabled modules and in archives, but not suspended
+  workspaces. It is not effective resource permission, configuration, a module
+  directory, host mounting or provider readiness. Existing full-module inspection
+  permissions are unchanged; admin-only listing/configuration remains separate.
+  An external side effect already executed cannot be undone by hiding the module. This
+  observation does not establish that a task-cancellation mechanism exists.
 - Re-enabling uses the last approved config after validation. It does not replay
   old jobs, restore revoked shares or silently expand connector permissions.
 

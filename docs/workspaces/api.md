@@ -37,7 +37,7 @@ No fallback to the current UI tab, a default space, or the shared space.
 | `POST /api/v1/workspaces/{w}/invitations` | Workspace admin; verified target identity and bounded workspace role. |
 | `PATCH /api/v1/workspaces/{w}/memberships/{m}` | Workspace admin; ETag and last-admin protection. |
 | `POST /api/v1/workspaces/{w}/admin-transfers` | Atomic replacement of current admin with eligible active member. |
-| `GET/PATCH /api/v1/workspaces/{w}/modules/{key}` | Member sees capability status; only admin changes validated config/state. |
+| `GET/PATCH /api/v1/workspaces/{w}/modules/{key}` | Member reads the exact minimal lifecycle projection, not effective capabilities; only admin changes validated config/state. |
 | `GET/POST /api/v1/workspaces/{w}/connections` | Admin manages approved bindings; never return secrets or grant new provider authority. |
 | `GET /api/v1/workspaces/{w}/modules/{key}/resources` | Capability-checked collection; module may expose a more specific resource type. |
 | `GET/PATCH /api/v1/workspaces/{w}/modules/{key}/resources/{id}` | Composite owner lookup; PATCH needs resource write capability and revision. |
@@ -51,6 +51,12 @@ Platform-only suspend/archive operations use a distinct control surface. They
 must not reuse workspace-admin label updates. Resource delete, invitation
 acceptance, connector secrets provisioning and provider-specific actions require
 their own reviewed schemas; this table does not implicitly authorize them.
+
+The implemented unversioned `/api/workspaces/{w}/modules/{key}` GET is a narrow
+[member-status slice](../../packages/workspace_api/README.md#minimal-member-module-status-w08-http-slice),
+not an implementation of every proposed v1 route. Its four-field stored-state
+projection is separate from admin list/configuration APIs and never grants a
+resource action. It adds no MCP, UI, task-cancellation or provider contract.
 
 Targets for sharing are explicitly registered/approved through platform
 governance; a source admin cannot enumerate private workspace names to find one.

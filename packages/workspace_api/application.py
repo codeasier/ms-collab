@@ -216,6 +216,27 @@ class WorkspaceApplication:
                 return [asdict(item) for item in result]
             return asdict(result)
 
+        if method == "get_module_status":
+            # Only this new read completes its ordinary final-current guards on
+            # policy denial. Unwrap FIRST so W05's replacing rejection is also
+            # inside capture; never infer identity/scope from the failed hint.
+            assertion, operation = _workspace_hint_operation(assertion, operation)
+            pending, denied = None, object()  # Request-local, never serialized.
+
+            def observed(policy, actor):
+                nonlocal pending
+                try:
+                    return operation(policy, actor)
+                except PolicyError as error:
+                    pending = error
+                    return denied
+
+            result = self._authenticated_transaction(assertion, observed, write=False)
+            # Authentication/storage/fatal exceptions above win. Only a normal
+            # completed read can reach this rethrow, after Cookie clock commit.
+            if pending is not None:
+                raise pending
+            return result
         return self._authenticated_transaction(assertion, operation, write=write)
 
     @staticmethod
@@ -287,6 +308,10 @@ class WorkspaceApplication:
             body = self._body(environ, {"role", "state"})
             body["expected_revision"] = self._revision(environ)
             return "set_membership", (parts[3], parts[5]), body, True, "record"
+        if len(parts) == 6 and parts[4] == "modules" and verb == "GET":
+            if query:
+                raise _invalid()
+            return "get_module_status", (parts[3], parts[5]), {}, False, "record"
         if len(parts) >= 7 and parts[4] == "modules" and parts[6] == "resources":
             if len(parts) == 7 and verb == "GET":
                 return "list_resources", (parts[3], parts[5]), self._page(query), False, "page"

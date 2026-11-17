@@ -48,6 +48,15 @@ pass in an in-memory demo does not prove a database, queue, connector or filesys
 integration. Required real integration tests run with isolated synthetic resources
 and explicit credentials, never implicit production access.
 
+For W08, a member's precise lifecycle observation is distinct from a business-data
+request. The [minimal HTTP status slice](../../packages/workspace_api/README.md#minimal-member-module-status-w08-http-slice)
+returns only an exact installed module's `workspace_id/key/state/revision` after
+current membership and workspace checks. Disabled/disabling data remains denied;
+status does not imply effective capability, host mounting or provider readiness.
+Admin list/configuration gates remain separate. Its core/API regressions do not
+establish the MCP, UI, queued/running-task or real-provider portions of acceptance,
+and this clarification does not mark W08 as passed.
+
 ## Release evidence
 
 - Unit policy tests, API integration tests and cross-space storage/worker tests.

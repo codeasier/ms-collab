@@ -41,6 +41,13 @@ configuration, never client-selected data.
 routes through this transaction boundary. This does not automatically convert
 other module APIs, administration wrappers or existing browser UIs to cookies.
 
+It also serves the base API's [four-field member module status](../workspace_api/README.md#minimal-member-module-status-w08-http-slice).
+That exact GET alone completes final current-session validation even after a
+captured policy/W05 denial, then returns the original denial if authentication
+remains valid. The safe login clock still commits; no business persistence,
+receipt schema or new CSRF exception is added. Router/shape errors and unrelated
+ordinary read/write behavior are unchanged.
+
 - `POST /auth/start`: exact same-origin request, JSON `{}` and
   `X-MS-Collab-Login: 1`. Existing sessions also require their CSRF proof.
   Returns a fixed-provider `authorization_url` for the UI to navigate, with

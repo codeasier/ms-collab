@@ -86,6 +86,22 @@ class ModuleInstance:
 
 
 @dataclass(frozen=True)
+class ModuleStatus:
+    """Minimal stored lifecycle observation, never resource authority/config."""
+    workspace_id: str
+    key: str
+    state: str
+    revision: int
+
+    def __post_init__(self):
+        identifier(self.workspace_id)
+        identifier(self.key)
+        if self.state not in {"enabled", "disabling", "disabled"}:
+            raise ValueError("invalid module state")
+        revision(self.revision)
+
+
+@dataclass(frozen=True)
 class Resource:
     workspace_id: str
     module_key: str

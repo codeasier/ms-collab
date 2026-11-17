@@ -14,7 +14,7 @@ from threading import RLock
 from uuid import uuid4
 
 from .authority import authority_current, capture_authority, principal_pin, validate_authority
-from .model import MAX_REVISION, AuditEvent, Decision, Membership, ModuleInstance, Principal, Resource, Workspace, revision
+from .model import MAX_REVISION, AuditEvent, Decision, Membership, ModuleInstance, ModuleStatus, Principal, Resource, Workspace, revision
 
 
 class PolicyError(Exception):
@@ -362,7 +362,7 @@ class WorkspaceService:
             return new
 
     def get_module(self, actor_id, workspace_id, module_key):
-        """Only admins can inspect a disabling/disabled module lifecycle."""
+        """Legacy full-instance getter: disabled/disabling remains admin-only."""
         with self._lock:
             member = self._member(actor_id, workspace_id)
             if self._workspaces[workspace_id].state == "suspended":
@@ -373,6 +373,21 @@ class WorkspaceService:
             if module.state != "enabled" and member.role != "admin":
                 raise PolicyError(409, "module_unavailable")
             return module
+
+    def get_module_status(self, actor_id, workspace_id, module_key):
+        """Current members may inspect only an exact installed module's state.
+
+        Disabled/disabling status is not permission to read its data, enumerate
+        other modules, inspect configuration, or bypass a host/provider gate.
+        """
+        with self._lock:
+            self._member(actor_id, workspace_id)
+            if self._workspaces[workspace_id].state == "suspended":
+                raise PolicyError(409, "workspace_unavailable")
+            module = self._modules.get((workspace_id, module_key))
+            if module is None:
+                raise PolicyError(404, "not_found")
+            return ModuleStatus(workspace_id, module.key, module.state, module.revision)
 
     def set_workspace_state(self, actor_id, workspace_id, *, state, expected_revision):
         with self._lock:
