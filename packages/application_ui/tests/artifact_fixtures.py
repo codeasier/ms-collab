@@ -33,5 +33,5 @@ def application(directory, *, origin='https://app.example.invalid', clock=lambda
 
 def stage(directory):
     with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
-        db.execute('UPDATE artifact_indexes_v1 SET candidate=?,revision=revision+1 WHERE workspace=?',(snapshot_text(CANDIDATE),'alpha'))
-        return db.execute('SELECT revision FROM artifact_indexes_v1 WHERE workspace=?',('alpha',)).fetchone()[0]
+        db.execute("UPDATE artifact_indexes_v1 SET candidate=?,revision=revision+1 WHERE workspace=? AND connection='source' AND bucket='bucket'",(snapshot_text(CANDIDATE),'alpha'))
+        return db.execute("SELECT revision FROM artifact_indexes_v1 WHERE workspace=? AND connection='source' AND bucket='bucket'",('alpha',)).fetchone()[0]

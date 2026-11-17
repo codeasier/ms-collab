@@ -87,3 +87,11 @@ This is one community vertical slice, not generic provider provisioning. No
 credentials, URLs or secret references are accepted or returned. Artifact and
 pipeline configuration remains separate, and no real provider is enabled by this
 page. See [the contract](../packages/workspace_connections/README.md).
+
+Artifacts and Artifact approval now also expose explicit, current-authority local
+scope selection within a chosen workspace, alongside manual exact IDs. Reader
+selection is limited to valid published catalogs; administration selection is
+limited to usable status capabilities. Refresh → private candidate → whole-set
+approval → catalog and separately granted downloads remain unchanged. This does
+not discover upstream buckets or add grant/template/credential configuration.
+See [scope discovery boundaries](../packages/artifact_sync/DISCOVERY.md).

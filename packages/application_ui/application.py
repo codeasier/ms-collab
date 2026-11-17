@@ -39,6 +39,8 @@ _FILES = {
     '/artifact-admin/': ('application/artifact-admin.html', 'text/html'),
     '/app/artifact-download-ui.mjs': ('application/artifact-download-ui.mjs', 'text/javascript'),
     '/app/artifact-downloads.mjs': ('application/artifact-downloads.mjs', 'text/javascript'),
+    '/app/artifact-scopes.mjs': ('application/artifact-scopes.mjs', 'text/javascript'),
+    '/app/artifact-scope-client.mjs': ('application/artifact-scope-client.mjs', 'text/javascript'),
     '/app/artifacts-session.mjs': ('application/artifacts-session.mjs', 'text/javascript'),
     '/app/artifacts.css': ('application/artifacts.css', 'text/css'),
     '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),

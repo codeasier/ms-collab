@@ -6,11 +6,16 @@ from packages.artifacts_api import ArtifactApplication
 from packages.artifacts_api.records import load_view, record_id
 from packages.workspaces import PolicyError
 from .records import authorized, decode_snapshot
+from .discovery import directory, directory_request
 
 
 class IndexedArtifactApplication(ArtifactApplication):
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
+        listing = directory_request(environ, 'artifacts')
+        if listing is not None:
+            return self._authenticated_transaction(assertion,
+                lambda policy, actor, db: directory(policy, actor, db, *listing), with_connection=True)
         scope, kind, selected, definition, view_id, pagination = self._request(environ)
         def operation(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'read')

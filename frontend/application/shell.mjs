@@ -1,3 +1,4 @@
+import {mountArtifactScopePicker} from './artifact-scopes.mjs'
 import {mountConnectionsPage,mountConnectionPicker} from './connections.mjs'
 import {mountGuiSmokePage} from '../gui-smoke/view.mjs'
 import {createGuiSmokeSessionClient} from './gui-smoke-session.mjs'
@@ -108,7 +109,9 @@ async function start(){
    const clients=createArtifactSessionClients(session)
    const download=module==='artifacts'&&bootstrap.ui_modules.includes('artifact-downloads')?mountArtifactDownload({session}):null
    if(download)el('download-notice').hidden=false
-   page=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut,onDownload:download?.select,clearDownload:()=>download?.clear()}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
+   const board=module==='artifacts'?mountArtifactCatalogPage({client:clients.catalog,sessionMode:true,onSignOut:signOut,onDownload:download?.select,clearDownload:()=>download?.clear()}):mountArtifactAdministrationPage({client:clients.administration,sessionMode:true,onSignOut:signOut})
+   const picker=mountArtifactScopePicker({session,managed:module==='artifact-admin'});let activation=0
+   page={clear:message=>{activation++;picker.clear();board.clear(message)},activate:async()=>{const turn=activation;await picker.activate();if(turn===activation)await board.activate()}}
   }
   else if(document.body.dataset.page==='research-assets'){
    if(!bootstrap.ui_modules.includes('research-assets'))throw new Error('Research assets are not configured on this service.')

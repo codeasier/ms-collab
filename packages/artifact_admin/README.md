@@ -107,3 +107,11 @@ The unified cookie host can explicitly enable [configured refresh](../artifact_r
 It reuses these routes but adds same-session persistent admission and bounded
 provider ownership. Neither a browser nor a workspace name can configure secrets
 or endpoints. An omitted host flag keeps refresh unavailable.
+
+## Discovering currently usable scopes
+
+`GET /api/workspaces/{workspace}/artifact-admin/scopes` uses the same capability
+helper as exact-scope status, including write-only refresh and the trusted host's
+refresh gate. It lists no pending state, audience or candidate data. See the
+[shared directory contract](../artifact_sync/DISCOVERY.md) for bounds, current
+policy, pagination and failure semantics. This is not grant/configuration editing.

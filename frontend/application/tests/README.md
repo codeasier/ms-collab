@@ -76,3 +76,18 @@ real login and identity transitions remain unavailable.
   changed-content reapproval, Cancel/Escape, repeat submit, missing CSRF, CAS,
   accepted-but-lost response without retries, true concurrent logout/revocation
   and five additional responsive screenshots in the existing Connection CI.
+
+`artifact-scopes.cjs` adds real HTTPS Cookie/API/SQLite acceptance for both scope
+pickers, three isolated workspaces with identical tuple names, empty publication,
+non-reader approver, ordinary reader after full approval, ignored abort, repeated
+clicks, manual scope, pagehide/logout/Back and a genuinely stale pagination cursor
+(single 409, no retry). `artifact-scopes.test.mjs` checks strict client shape,
+minimal fields, ordering, cursor binding and cookie transport. New screenshots
+are exactly `scopes-reader-desktop.png`, `scopes-reader-mobile.png`,
+`scopes-admin-desktop.png`, `scopes-admin-mobile.png` in the existing synthetic
+artifact-session output directory. The browser checks 4.5:1 contrast and 390px
+no-overflow; all five pre-existing artifact-session screenshots remain required.
+Existing `artifact-refresh.cjs` starts through discovery. Existing
+`artifact-downloads.cjs` opens a reader selection and verifies picker workspace
+change immediately clears current download availability and catalog without a
+provider call. Their original acceptance gates and screenshots are retained.

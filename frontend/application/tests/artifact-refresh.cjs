@@ -21,7 +21,7 @@ async function main(){
   const login=async()=>{await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin');await page.locator('#app-artifact-admin-link').click();await page.waitForFunction(()=>!document.querySelector('#session').hidden)}
   const confirm=async()=>{await page.locator('#refresh').click();await page.locator('#confirm-submit').click()}
   const endpoint='/api/workspaces/alpha/artifact-admin/source/bucket/refresh'
-  await page.goto(info.origin+'/artifact-admin/');await page.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled);await login();await scope();await ready()
+  await page.goto(info.origin+'/artifact-admin/');await page.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled);await login();await page.locator('#artifact-picker-load').click();await page.waitForFunction(()=>!document.querySelector('#artifact-picker-use').disabled);await page.locator('#artifact-picker-use').click();await ready()
   assert.equal(await page.locator('input[type=password]').count(),0);assert.equal((await ctrl('state')).calls,0)
   assert.equal(await page.evaluate(async endpoint=>(await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','If-Match':'"1"'},body:'{}'})).status,endpoint),401)
   await page.locator('#refresh').click();await page.screenshot({path:path.join(output,'confirmation.png'),fullPage:true});await page.locator('#cancel').click();assert.equal((await ctrl('state')).calls,0)

@@ -29,6 +29,8 @@ def main():
         server=make_server('127.0.0.1',0,lambda e,s:[],server_class=Server,handler_class=Handler)
         origin='https://127.0.0.1:'+str(server.server_port);provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
         host,policy,login,exchange,objects=setup_download(directory,origin=origin,clock=lambda:datetime.now(timezone.utc),authorization_endpoint=provider)
+        from packages.application_ui.tests.artifact_discovery_fixtures import seed_directory
+        seed_directory(policy)
         app=ApplicationUI(host=host);release=Event();paused=[False]
         def pause_read():
             if paused[0]:paused[0]=False;release.wait(15)

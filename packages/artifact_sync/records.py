@@ -279,13 +279,19 @@ class Record:
         return _publication(self.published_raw,self.policy.connection)[1]
 
 
-def load(connection, scope, *, allow_legacy=False):
+def load(connection, scope, *, allow_legacy=False, read_candidate=True, budget=None):
     check_schema(connection)
-    row = connection.execute(f'SELECT revision,policy,candidate,published,published_revision FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?', scope_key(scope)).fetchone()
+    # A reader directory must not fetch the private candidate at all. Bounded
+    # discovery projections cap allocation before applying the aggregate budget.
+    field = lambda name: f'substr({name},1,{_MAX_BYTES + 1})' if budget is not None else name
+    candidate_column = field('candidate') if read_candidate else 'NULL'
+    row = connection.execute(f"SELECT revision,{field('policy')},{candidate_column},{field('published')},published_revision FROM {_TABLE} WHERE workspace=? AND connection=? AND bucket=?", scope_key(scope)).fetchone()
     if row is None:
         raise PolicyError(404, 'not_found')
     try:
         revision, raw, candidate, published, published_revision = row
+        if budget is not None:
+            budget(raw)
         if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
             raise ValueError()
         policy,authority,grant_revision = _bound_policy(raw,scope,legacy=allow_legacy)
@@ -296,16 +302,22 @@ def load(connection, scope, *, allow_legacy=False):
         raise StorageError('invalid_artifact_index') from None
 
 
-def authorized(policy, actor, connection, scope, action):
+def authorized(policy, actor, connection, scope, action, *, budget=None):
     policy.authorize(actor, scope.workspace_id, 'artifacts', 'read' if action in ('read', 'review') else 'write')
     if action != 'read':
         policy._admin(actor, scope.workspace_id)
-    record = load(connection, scope)
+    record = load(connection, scope, read_candidate=action != 'read', budget=budget)
     allowed = record.policy.readers if action == 'read' else record.policy.refreshers if action == 'refresh' else record.policy.approvers
     if actor not in allowed or not authority_current(policy,actor,record.authority):
         raise PolicyError(404, 'not_found')
     try:
         # Do not parse private candidate metadata for readers or denied actors.
+        if budget is not None:
+            # Only granted scopes contribute snapshot bytes; denied scopes never
+            # decode publication/candidate. Each authorized validation input is charged.
+            for raw in ((record.published_raw,) if action == 'read' else (record.candidate, record.published_raw)):
+                if raw is not None:
+                    budget(raw)
         values = (record.published,) if action == 'read' else (record.candidate, record.published)
         for raw in values:
             if raw is not None:
