@@ -50,3 +50,8 @@ The standalone pipeline workflow separately retains provider-to-UI coverage.
   both default and closed-provider modes, with SIGTERM while idle and from inside
   an active WSGI request. Failures reap their child without converting forced
   cleanup into passing acceptance; no product shutdown behavior changes.
+
+- Connection fixture's separate `MS_COLLAB_SYNTHETIC_COMMUNITY_REFRESH_UI=1` mode:
+  same real pages/API/SQLite, explicit refresh initialization and scoped synthetic
+  GitCode GET transport. Threaded synthetic HTTP permits actual concurrent logout
+  while an acquisition is held. Default connection fixture stays refresh-disabled.

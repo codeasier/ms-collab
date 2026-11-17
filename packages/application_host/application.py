@@ -9,6 +9,7 @@ from packages.artifact_admin import ArtifactAdministrationAPI
 from packages.artifact_refresh import ArtifactRefreshConfiguration, ConfiguredArtifactRefresh
 from packages.artifact_download import ArtifactDownloader, ArtifactDownloadConfiguration, ArtifactSessionDownloadAPI
 from packages.community_api import CommunityApplication
+from packages.community_refresh import CommunityRefreshConfiguration, ConfiguredCommunityRefresh
 from packages.pipeline_api import PipelineApplication
 from packages.research_assets import AssetApplication
 from packages.responsibility_api import ResponsibilityApplication
@@ -34,6 +35,7 @@ class HostConfig:
     artifact_downloads: bool = False
     artifact_refresh: bool = False
     community_connections: tuple[CommunityConnectionTemplate, ...] = ()
+    community_refresh: bool = False
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
@@ -51,6 +53,8 @@ class HostConfig:
             raise ValueError("artifact administration requires its explicit hosted module")
         if type(self.artifact_downloads) is not bool or (self.artifact_downloads and "artifacts" not in self.modules):
             raise ValueError("artifact downloads require the explicit hosted module")
+        if type(self.community_refresh) is not bool or (self.community_refresh and "community" not in self.modules):
+            raise ValueError("community refresh requires its explicit hosted module")
         connection_templates(self.community_connections)
         if self.community_connections and "community" not in self.modules:
             raise ValueError("connection management requires its explicit community module")
@@ -69,7 +73,8 @@ class ApplicationHost:
     """
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
-                 clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None):
+                 clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
+                 community_refresh=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
         if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
@@ -78,6 +83,9 @@ class ApplicationHost:
         if (config.artifact_refresh and type(artifact_refresh) is not ArtifactRefreshConfiguration
                 or not config.artifact_refresh and artifact_refresh is not None):
             raise ValueError('explicit refresh switch and trusted configuration required together')
+        if (config.community_refresh and type(community_refresh) is not CommunityRefreshConfiguration
+                or not config.community_refresh and community_refresh is not None):
+            raise ValueError("explicit community refresh switch and trusted configuration required together")
         self._config = config
         self._boundary = SessionWorkspaceApplication(sessions=sessions, origin=config.origin,
             exchange=exchange, authorization_endpoint=authorization_endpoint,
@@ -91,8 +99,12 @@ class ApplicationHost:
                         "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication,
                         "gui-smoke": GuiSmokeApplication}
         self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
-                         **({"connections": config.gui_smoke_connections} if key == "gui-smoke" else {}))
+                         **({"connections": config.gui_smoke_connections} if key == "gui-smoke" else
+                            {"credential_loader": community_refresh.credential_loader} if key == "community" and config.community_refresh else {}))
                          for key in config.modules}
+        if config.community_refresh:
+            community = self._modules["community"]
+            community._refresher = ConfiguredCommunityRefresh(service=community, transport=community_refresh.transport)
         self._artifact_admin = None
         if config.artifact_administration:
             def unavailable_provider(*_):

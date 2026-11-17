@@ -31,6 +31,7 @@ class CommunityApplication(WorkspaceApplication):
         self._credential_loader = credential_loader
         self._provider = provider if provider is not None else GitCodeProvider()
         self._clock = clock
+        self._refresher = None
 
     @staticmethod
     def _state(policy, actor, connection, scope, action):
@@ -66,7 +67,11 @@ class CommunityApplication(WorkspaceApplication):
                 return {"scope":scope.as_dict(), "revision":current.revision, "capabilities":granted}
             return self._authenticated_transaction(assertion, capabilities, with_connection=True)
         if action == "refresh":
-            return self._refresh(assertion, scope, self._revision(environ), self._empty_body(environ))
+            expected = self._revision(environ)
+            self._empty_body(environ)
+            if self._refresher is not None:
+                return self._refresher.refresh(assertion, scope, expected)
+            return self._refresh(assertion, scope, expected, None)
         if action == "approve":
             expected = self._revision(environ)
             approved = self._approvals_body(environ)
@@ -98,7 +103,7 @@ class CommunityApplication(WorkspaceApplication):
             return result
         return self._authenticated_transaction(assertion, query, with_connection=True)
 
-    def _refresh(self, assertion, scope, expected, _):
+    def _refresh(self, assertion, scope, expected, _, *, lifecycle=None):
         def flow_pin(policy, actor):
             return (principal_pin(policy,actor),
                     policy._memberships[(scope.workspace_id,actor)].revision,
@@ -109,6 +114,8 @@ class CommunityApplication(WorkspaceApplication):
             policy._match(expected, state.revision)
             if state.revision >= _MAX_REVISION:
                 raise PolicyError(409, "connection_revision_exhausted")
+            if lifecycle is not None:
+                lifecycle.guard(policy, actor, connection)
             return flow_pin(policy,actor), state
         actor_pin, prior = self._authenticated_transaction(assertion, preflight, with_connection=True)
         def current(policy, actor, connection):
@@ -116,6 +123,8 @@ class CommunityApplication(WorkspaceApplication):
             if flow_pin(policy,actor)!=actor_pin:raise PolicyError(409,"refresh_authority_changed")
             policy._match(prior.revision,state.revision)
             if state.config_raw!=prior.config_raw:raise PolicyError(409,"connection_changed")
+            if lifecycle is not None:
+                lifecycle.guard(policy, actor, connection)
             return state
         def before_read():
             self._authenticated_transaction(assertion,current,with_connection=True)
@@ -131,7 +140,7 @@ class CommunityApplication(WorkspaceApplication):
                 raise ValueError("aware_clock_required")
             observed_at = cutoff.astimezone(timezone.utc).isoformat()
             before_read()
-            snapshot = self._provider.observe(prior.policy.connection, credential, observed_at=observed_at, before_read=before_read)
+            snapshot = (self._provider if lifecycle is None else lifecycle.provider).observe(prior.policy.connection, credential, observed_at=observed_at, before_read=before_read)
             before_read()
             if type(snapshot) is not Snapshot or snapshot.scope != scope:
                 raise ProviderError("snapshot_scope_mismatch")
@@ -140,6 +149,8 @@ class CommunityApplication(WorkspaceApplication):
         except (PolicyError,AuthenticationError,AuthenticationUnavailable,StorageError):
             raise
         except Exception:
+            if lifecycle is not None:
+                lifecycle.remaining()
             raise PolicyError(502, "provider_unavailable") from None
         def publish(policy, current_actor, connection):
             state = current(policy, current_actor, connection)
@@ -157,9 +168,14 @@ class CommunityApplication(WorkspaceApplication):
                     raise PolicyError(409, "stale_observation") from None
             approvals = state.approvals & {fingerprint(scope, item) for item in snapshot.items}
             self._save(policy, current_actor, connection, state, snapshot, approvals, state.provenance if approvals else None)
+            if lifecycle is not None:
+                saved = replace(state, snapshot=snapshot, approvals=frozenset(approvals),
+                                provenance=state.provenance if approvals else None, revision=state.revision + 1)
+                lifecycle.complete(policy, connection, saved)
             return {"scope":scope.as_dict(), "revision":state.revision + 1,
                     "observed_at":snapshot.observed_at, "approved_count":len(approvals)}
-        return self._authenticated_transaction(assertion, publish, write=True, with_connection=True)
+        return self._authenticated_transaction(assertion, publish, write=True, with_connection=True,
+            before_commit=None if lifecycle is None else lifecycle.verify_commit)
 
     @staticmethod
     def _save(policy, actor, connection, state, snapshot, approvals, provenance):
