@@ -24,8 +24,9 @@ def seed_directory(store):
 
 def seed_pages(store):
     def provision(policy):
-        for i in range(26):
-            scope = PipelineScope('alpha', 'example-ci', f'p{i:03d}')
-            record = Resource('alpha', 'pipelines', resource_id(scope), encode_snapshots(scope, []))
-            policy._resources[('alpha', 'pipelines', record.id)] = record
+        for workspace in ('alpha', 'beta'):
+            for i in range(26):
+                scope = PipelineScope(workspace, 'example-ci', f'p{i:03d}')
+                record = Resource(workspace, 'pipelines', resource_id(scope), encode_snapshots(scope, []))
+                policy._resources[(workspace, 'pipelines', record.id)] = record
     store._transaction(provision, write=True)

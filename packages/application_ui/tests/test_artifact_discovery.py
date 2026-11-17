@@ -214,11 +214,11 @@ class ArtifactDiscoveryTests(unittest.TestCase):
 
     def test_visible_only_pagination_cursor_and_raw_key_capacity(self):
         self.add_scopes(26);first=self.call()['body']['data'];self.assertEqual(len(first['items']),25)
-        after=first['next_after'];self.assertEqual(after,'source~'+first['items'][-1]['scope']['bucket_id'])
+        after=first['next_after'];self.assertRegex(after,r'^dcr1_[A-Za-z0-9_-]{43}$')
         last=self.call(suffix='?after='+after)['body']['data'];self.assertEqual(len(last['items']),3);self.assertIsNone(last['next_after'])
         self.assertEqual(self.call(suffix='?after=source~hidden')['status'],409)
         self.assertEqual(self.call(suffix='?after=source~absent')['status'],409)
-        self.sql("UPDATE artifact_indexes_v1 SET published=NULL,published_revision=NULL WHERE bucket=?",(after.split('~')[1],))
+        self.sql("UPDATE artifact_indexes_v1 SET published=NULL,published_revision=NULL WHERE bucket=?",(first['items'][-1]['scope']['bucket_id'],))
         self.assertEqual(self.call(suffix='?after='+after)['status'],409)
         # A low cap models overflow without decoding or returning a partial page.
         with patch('packages.artifact_sync.discovery.MAX_SCOPES',3):
@@ -239,7 +239,7 @@ class ArtifactDiscoveryTests(unittest.TestCase):
             with patch('packages.artifact_sync.discovery.MAX_DIRECTORY_BYTES',1):
                 self.assertEqual(self.call(managed=managed)['body'],{'error':'scope_directory_unavailable'})
         for suffix in ('?after=source','?after=source~bucket&after=source~empty','?limit=999','?after=source~bucket~other','?after='):
-            self.assertEqual(self.call(suffix=suffix)['status'],400)
+            self.assertEqual(self.call(suffix=suffix)['status'],400 if suffix.startswith('?limit=') else 409)
         self.assertEqual(request(self.app,'/api/workspaces/'+('a'*1001)+'/artifacts/scopes',cookies=self.cookies)['status'],400)
         self.assertEqual(self.call(method='POST',body={},origin=fixtures.ORIGIN,csrf=self.session.csrf.value)['status'],404)
 

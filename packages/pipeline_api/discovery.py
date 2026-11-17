@@ -7,9 +7,10 @@ here apply only to the additional directory projection and snapshot parsing.
 """
 from datetime import datetime, timezone
 import re
-from urllib.parse import parse_qsl
 
 from packages.pipelines import InvalidSnapshot, timestamp
+from packages.directory_cursors import Projection
+from packages.directory_cursors.directory import fingerprint
 from packages.workspaces import PolicyError
 from packages.workspaces.model import revision
 from .records import MAX_BYTES, InvalidRecord, decode_snapshots, resource_id, snapshot_scope
@@ -30,24 +31,11 @@ def directory_request(environ):
         return None
     if environ.get('REQUEST_METHOD') != 'GET' or not _ID.fullmatch(parts[3]):
         raise PolicyError(404, 'not_found')
-    query = environ.get('QUERY_STRING', '')
-    try:
-        if type(query) is not str or len(query) > 600:
-            raise ValueError()
-        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True, max_num_fields=1)
-        after = None
-        if pairs:
-            if pairs[0][0] != 'after':
-                raise ValueError()
-            after = tuple(pairs[0][1].split('~'))
-            if len(after) != 2 or any(not _ID.fullmatch(v) for v in after):
-                raise ValueError()
-        return parts[3], after
-    except (ValueError, TypeError):
-        raise PolicyError(400, 'invalid_request') from None
+    # Query diagnostics are deferred until current authentication + module gate.
+    return parts[3], environ.get('QUERY_STRING', '')
 
 
-def directory(policy, actor, db, workspace, after, *, clock):
+def directory(policy, actor, db, workspace, *, clock):
     # Current module read covers all its stored snapshots. There are no separate
     # reader/refresher/approver grants or publication provenance in this model.
     policy.authorize(actor, workspace, 'pipelines', 'read')
@@ -90,12 +78,7 @@ def directory(policy, actor, db, workspace, after, *, clock):
     except (InvalidRecord, InvalidSnapshot, ValueError, TypeError, UnicodeError):
         raise PolicyError(503, 'pipeline_data_unavailable') from None
     visible.sort(key=lambda entry: entry[0])
-    start = 0
-    if after is not None:
-        positions = [i for i, (key, _) in enumerate(visible) if key == after]
-        if not positions:
-            raise PolicyError(409, 'scope_directory_changed')
-        start = positions[0] + 1
-    page = visible[start:start + PAGE_SIZE]
-    next_after = '~'.join(page[-1][0]) if start + len(page) < len(visible) else None
-    return {'workspace_id': workspace, 'items': [item for _, item in page], 'next_after': next_after}
+    # Module read is the sole authority: snapshot content/revisions/key set are
+    # data, not authorization epochs. Anchor existence is checked by the pager.
+    return Projection(fingerprint(['pipeline-module-read', 1]),
+                      fingerprint(['pipeline-keyset', 1]), tuple(visible))

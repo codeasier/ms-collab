@@ -40,7 +40,7 @@ class HostScopeHintTests(unittest.TestCase):
         initialize_connections(self.policy, (template,))
         self.app = ApplicationHost(config=replace(original._config, artifact_administration=True,
                                    community_connections=(template,)), sessions=original._boundary._sessions,
-                                   clock=lambda: self.now)
+                                   clock=lambda: self.now, directory_cursors=original._directory_cursors)
         self.sign_in()
 
     def sign_in(self, subject='admin-sub'):

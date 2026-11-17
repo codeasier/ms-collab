@@ -101,3 +101,16 @@ workspace**, retaining manual exact IDs. Selection opens the existing current-
 authority runs/details/tasks/durations path. A valid empty snapshot is listed;
 there is no Artifact-style publication approval or provider discovery implied.
 See [Pipeline discovery boundaries](../packages/pipeline_api/DISCOVERY.md).
+
+### Explicit scope-directory receipt configuration
+
+The Pipeline and two Artifact scope pickers require the host's explicit
+same-policy-DB `directory_cursors` handle and initialized auxiliary schema.
+Unconfigured factories now return authorized 503 for these three directories;
+existing exact/manual-ID paths remain available. The opaque protocol has no
+old-tuple fallback or automatic retry. Current identity and scoped permissions
+are checked on every page; tokens are only transient in-page pagination state.
+Selecting/Open within the same loaded directory preserves its Next position
+while clearing old exact results. Directory resets clear both token and local
+last-tuple state. See the [support matrix and authority/data distinction](../packages/directory_cursors/README.md).
+Strict service_runtime is not integrated or migrated by this increment.

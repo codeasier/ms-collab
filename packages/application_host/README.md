@@ -171,3 +171,31 @@ exact-content approval and ordinary reader board. Current authority, 2 global /
 post-persistence readback protect the entire flow. See the
 [Community refresh contract](../community_refresh/DESIGN.md). No real GitCode,
 production startup/runtime enablement, periodic refresh or deployment is claimed.
+
+## Explicit directory cursor migration
+
+The three Pipeline/Artifact scope directories now require an explicitly supplied
+same-policy-DB `directory_cursors` handle. Existing factories without it return
+503 after current identity/scope/module checks, even if receipt tables exist.
+There is no old-tuple or first-page fallback. Manual exact-scope APIs are unchanged.
+Artifact administration still needs its original mount switch; this handle does
+not enable administration, refresh, downloads or any grant.
+
+For an already reviewed **explicit factory layout only**, trusted maintenance
+may initialize once and then pass a handle:
+
+```python
+from packages.directory_cursors import initialize_directory_cursors, ReceiptStore
+
+initialize_directory_cursors(initialized_session_policy_store.policy,
+                             layout="explicit-factory-v1")
+receipts = ReceiptStore(initialized_session_policy_store.policy)
+app = ApplicationHost(config=reviewed_host_config,
+                      sessions=initialized_session_policy_store,
+                      directory_cursors=receipts)
+```
+
+This is not enrollment, runtime migration or permission to change a real store.
+Do not use it on `service_runtime`: its installation markers are refused and its
+strict schema digest does not accept receipt objects. No constructor/GET creates
+schema. See the [full support and authority matrix](../directory_cursors/README.md).

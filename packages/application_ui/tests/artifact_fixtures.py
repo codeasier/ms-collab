@@ -22,7 +22,7 @@ CANDIDATE = replace(PUBLISHED, artifacts=(*PUBLISHED.artifacts,
 def application(directory, *, origin='https://app.example.invalid', clock=lambda:NOW, authorization_endpoint=None, administration=True, enabled=True):
     original,policy,login,exchange=setup(directory,origin=origin,clock=clock,authorization_endpoint=authorization_endpoint,enabled=enabled)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or 'https://identity.example.invalid/authorize',authorization_scopes=('synthetic_user',)) if enabled else {}
-    host=ApplicationHost(config=replace(original._config,artifact_administration=administration),sessions=original._boundary._sessions,clock=clock,**args)
+    host=ApplicationHost(config=replace(original._config,artifact_administration=administration),sessions=original._boundary._sessions,clock=clock,directory_cursors=original._directory_cursors,**args)
     view=view_resource(SavedView(SCOPE,'files','Synthetic files',Definition(files_only=True,recursive=True)))
     seed_publication(policy,SCOPE,PUBLISHED)
     with sqlite3.connect(Path(directory)/'policy.sqlite') as db:

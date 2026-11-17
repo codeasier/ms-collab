@@ -143,12 +143,13 @@ composed host. There is no automatic adoption or database upgrade. Refer to the
 [authority foundation](../../docs/principal-authority.md), including code-level
 closed identity administration and the remaining local-ID ACL migration gates.
 
-## Unmounted auxiliary receipt transactions
+## Auxiliary receipt transactions
 
-The private `receipt_only` seam is not selected by any HTTP route. It preserves
+The three explicitly configured Pipeline/Artifact directories select the private
+`receipt_only` seam. Other routes keep their ordinary transactions. It preserves
 current Cookie/session identity and ordinary mutation CSRF checks without
 requiring CSRF for a receipt-only read. A separate finalizer rolls back receipt
 work on error, rechecks current identity and commits only safe clocks. After the
 last identity check, only exact clock metadata CAS/readback and commit are
-permitted. See the [foundation contract](../directory_cursors/README.md), including
+permitted. See the [receipt contract](../directory_cursors/README.md), including
 storage-fault recovery and runtime integration that remain unsupported.

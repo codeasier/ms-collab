@@ -277,3 +277,14 @@ class CookieReceiptFoundationTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt) as caught:self.invoke(cancel)
             self.assertEqual(persist.call_count,1)
         self.assertIs(caught.exception,original);self.assertEqual(self.state(),before)
+
+    def test_private_malformed_session_request_remains_401_and_commits_login_clock(self):
+        from packages.identity import Credential
+        self.clock.now += timedelta(seconds=9)
+        callback = Mock()
+        with self.assertRaises(AuthenticationError):
+            self.invoke(callback, request=SessionRequest(Credential('short')))
+        callback.assert_not_called()
+        partitions, rows, floor = self.state()
+        self.assertEqual((partitions, rows), ([], []))
+        self.assertEqual(floor, instant(self.clock.now))

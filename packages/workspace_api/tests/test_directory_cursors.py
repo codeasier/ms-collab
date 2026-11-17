@@ -292,7 +292,7 @@ class BearerReceiptFoundationTests(unittest.TestCase):
             finally:moved.rename(self.path)
         self.assertEqual(self.state(),([],[]))
 
-    def test_existing_pipeline_http_tuple_pages_are_unchanged_and_unmounted(self):
+    def test_unconfigured_pipeline_directory_is_closed_but_exact_http_unchanged(self):
         from packages.pipeline_api import PipelineApplication
         from packages.pipeline_api.records import encode_snapshots, resource_id
         from packages.pipelines import PipelineScope
@@ -307,9 +307,11 @@ class BearerReceiptFoundationTests(unittest.TestCase):
             providers=(Provider('synthetic',ISSUER,'synthetic',SyntheticVerifier(),timedelta(hours=1)),),
             provider_key='synthetic',clock=self.auth_clock)
         first=call(app,'/api/workspaces/alpha/pipelines/scopes',token='admin')
-        self.assertEqual(first['status'],200);self.assertEqual(first['body']['data']['next_after'],'conn~p24')
+        self.assertEqual((first['status'],first['body']),(503,{'error':'scope_directory_unavailable'}))
         last=call(app,'/api/workspaces/alpha/pipelines/scopes',token='admin',query='after=conn~p24')
-        self.assertEqual(last['status'],200);self.assertEqual(len(last['body']['data']['items']),1)
+        self.assertEqual((last['status'],last['body']),(503,{'error':'scope_directory_unavailable'}))
+        exact=call(app,'/api/workspaces/alpha/pipelines/conn/p24/runs',token='admin')
+        self.assertEqual(exact['status'],200);self.assertEqual(exact['body']['data']['items'],[])
         self.assertEqual(self.state(),([],[]))
 
     def test_cached_store_delete_cannot_be_reused_to_modify_another_actor(self):

@@ -192,7 +192,12 @@ class _ReceiptLoginClock:
         # Fixed single-session / principal projection, never a full sessions scan.
         if self.observed is None or type(self.request.token) is not Credential:
             return None
-        token = _digest(_secret(self.request.token))
+        try:
+            token = _digest(_secret(self.request.token))
+        except AuthenticationError:
+            if self.actor is not None:
+                raise
+            return None
         row = db.execute("""SELECT substr(CAST(csrf AS BLOB),1,65),substr(CAST(subject AS BLOB),1,801),
             created,expires,substr(CAST(principal_id AS BLOB),1,801),principal_generation,
             substr(CAST(policy_realm AS BLOB),1,33) FROM login.sessions WHERE token=?""", (token,)).fetchone()

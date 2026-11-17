@@ -4,14 +4,16 @@
 
 No provider discovery, configuration or new access grants.
 Reader discovery never reads candidate data.
-A cursor names only the last visible tuple, never a hidden scan position/count.
+Only currently visible scopes contribute authority or visibility fences.
 """
 import re
-from urllib.parse import parse_qsl
 
 from packages.artifacts import Scope
+from packages.directory_cursors import Projection
+from packages.directory_cursors.directory import fingerprint, gate
+from packages.workspaces.authority import principal_pin
 from packages.workspaces import PolicyError, StorageError
-from .records import _TABLE, _decode_projection, authorized, check_schema
+from .records import _TABLE, _decode_projection, authorized, check_schema, digest
 
 MAX_SCOPES = 256
 PAGE_SIZE = 25
@@ -29,36 +31,11 @@ def directory_request(environ, namespace):
         return None
     if environ.get('REQUEST_METHOD') != 'GET' or not _ID.fullmatch(parts[3]):
         raise PolicyError(404, 'not_found')
-    query = environ.get('QUERY_STRING', '')
-    try:
-        if type(query) is not str or len(query) > 600:
-            raise ValueError()
-        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True, max_num_fields=1)
-        after = None
-        if pairs:
-            if pairs[0][0] != 'after':
-                raise ValueError()
-            after = tuple(pairs[0][1].split('~'))
-            if len(after) != 2 or any(not _ID.fullmatch(v) for v in after):
-                raise ValueError()
-        return parts[3], after
-    except (ValueError, TypeError):
-        raise PolicyError(400, 'invalid_request') from None
+    return parts[3], environ.get('QUERY_STRING', '')
 
 
-def directory(policy, actor, db, workspace, after, *, status=None):
-    # Check identity, membership, workspace/module availability before reading
-    # any index keys. Admin status may legally be write-only (refresh grant).
-    if status is None:
-        policy.authorize(actor, workspace, 'artifacts', 'read')
-    else:
-        policy._admin(actor, workspace)
-        try:
-            policy.authorize(actor, workspace, 'artifacts', 'read')
-        except PolicyError as error:
-            if error.status != 403:
-                raise
-            policy.authorize(actor, workspace, 'artifacts', 'write')
+def directory(policy, actor, db, workspace, *, status=None):
+    gate(policy, actor, workspace, 'artifact.scopes.read' if status is None else 'artifact.scopes.admin')
     check_schema(db)
     keys = db.execute(f'SELECT substr(CAST(connection AS BLOB),1,129),substr(CAST(bucket AS BLOB),1,129) FROM {_TABLE} WHERE workspace=? ORDER BY connection,bucket LIMIT ?',
                       (workspace, MAX_SCOPES + 1)).fetchall()
@@ -73,7 +50,7 @@ def directory(policy, actor, db, workspace, after, *, status=None):
         used += len(raw.encode('utf-8'))
         if used > MAX_DIRECTORY_BYTES:
             raise PolicyError(503, 'scope_directory_unavailable')
-    visible = []
+    visible, authority = [], []
     for connection, bucket in keys:
         try:
             connection, bucket = _decode_projection(connection), _decode_projection(bucket)
@@ -90,22 +67,27 @@ def directory(policy, actor, db, workspace, after, *, status=None):
                 if record.published_raw is None:
                     continue
                 item = {'scope': scope.as_dict(), 'catalog_revision': record.published_revision}
+                proof = record.provenance
+                approver = proof['actor']
+                member = policy._memberships[(workspace, approver)]
+                fence = [grant_fence(record, actor), approver, proof['authority'],
+                         principal_pin(policy, approver),
+                         [member.role, member.state, member.revision,
+                          policy._membership_authority[(workspace, approver)]],
+                         proof['membership_revision'], proof['policy_digest']]
             else:
-                current = status(policy, actor, db, scope, budget=budget)
+                current, fence = status(policy, actor, db, scope, budget=budget)
                 item = {'scope': scope.as_dict(), 'capabilities': current['capabilities']}
         except PolicyError as error:
             if error.status not in (403, 404):
                 raise
             continue
         visible.append(((connection, bucket), item))
-    start = 0
-    if after is not None:
-        # Revocation/removal invalidates this cursor rather than exposing where
-        # a now-invisible tuple sorts. Every page is a fresh authorization check.
-        positions = [i for i, (key, _) in enumerate(visible) if key == after]
-        if not positions:
-            raise PolicyError(409, 'scope_directory_changed')
-        start = positions[0] + 1
-    page = visible[start:start + PAGE_SIZE]
-    next_after = '~'.join(page[-1][0]) if start + len(page) < len(visible) else None
-    return {'workspace_id': workspace, 'items': [item for _, item in page], 'next_after': next_after}
+        authority.append([(connection, bucket), fence])
+    return Projection(fingerprint(authority), fingerprint([key for key, _ in visible]), tuple(visible))
+
+
+def grant_fence(record, actor):
+    """Existing validated grant only. Never recapture/regrant during discovery."""
+    return [record.grant_revision, digest(record.policy_raw),
+            record.authority['realm'], record.authority['principals'][actor]]

@@ -3,7 +3,7 @@
 This is read-only discovery of **already provisioned local index scopes**, not
 provider bucket discovery, grant management, or a new permission model. The
 configured host uses `IndexedArtifactApplication`, not the legacy resource/hash
-catalog adapter. No generic resource endpoint, new table, credential, scheduler,
+catalog adapter. No generic resource endpoint, new business table, credential, scheduler,
 real identity-provider protocol or production migration is added.
 
 ## API and authority
@@ -42,7 +42,7 @@ real identity-provider protocol or production migration is added.
 A request selects at most **257 bounded key projections** in one workspace and
 rejects more than **256 raw scopes**. It validates all these local rows before
 returning a page, not only the displayed 25. There is an **8 MiB aggregate UTF-8
-JSON input budget** per request: policy text before parsing, then publication and
+JSON input budget** per projection pass: policy text before parsing, then publication and
 (for a granted administrator) candidate text before validation. Existing status
 may validate a scope for three capabilities; repeated inputs are charged each
 time. Codecs have a fixed bounded number of internal validation passes, not a
@@ -58,15 +58,35 @@ split multibyte sequences fail closed. Policy is decoded after module
 authorization and before the explicit per-scope grant check;
 publication/candidate byte projections are decoded only after the existing
 explicit grant succeeds, and reader queries still select SQL `NULL` for candidate.
-No cleanup, provider work or mutating transaction is involved.
+No business mutation or provider work is involved. The separate receipt-only
+transaction now writes only auxiliary receipts and safe clocks; each successful
+GET performs at most two bounded directory projections, never 32 receipt-driven
+rescans. The existing global policy loader remains outside those budgets.
 
-Every response has at most **25 currently authorized items** and a `next_after`
-value only if more authorized items exist. The opaque-to-UI value is simply
-`connection~bucket` for the last returned item; it contains no hidden scan
-position. Supply it as the sole `after` query parameter for the next page.
-Every page rescans/re-authorizes. An absent, hidden, removed or newly invalid
-cursor yields the same `409 scope_directory_changed`, no partial list or count.
-Restart explicitly. Pagination is not a stable snapshot across requests.
+Every response has at most **25 currently authorized items**. `next_after` is
+null or a canonical 48-character `dcr1_` opaque receipt; it is not a tuple or
+hidden scan position. Current identity and common scoped authority, plus the
+visible scopes' grant revisions/bound policies, are bound server-side. Reader
+receipts additionally bind the actual current approval authority and membership
+proof. Admin receipts use the shared exact-status capability evaluator, without
+reader proof or private candidate/index/publication revisions in the fence.
+
+Both actions separately bind the current **visible key set**. Visible additions
+or removal require explicit reload; ordinary candidate/content changes and
+same-authority re-publication do not. Normal still-hidden scope changes do not
+add an invalidation signal. Reader SQL NULL and delayed denied-payload decoding
+remain mandatory. Full codec validation still precedes output.
+
+Only the sole `after` query parameter continues a page. Old tuples, expired,
+unknown, misbound or changed-fence tokens return the same value-free
+`409 scope_directory_changed` after current identity/scope/module checks.
+There is no fallback or automatic retry. The [receipt support matrix and
+transaction contract](../directory_cursors/README.md) describes explicit schema
+initialization, same-DB factory handle, 300-second fixed TTL, scoped quota and
+clock retention. Existing unconfigured factories now return authorized 503 for
+these directories, even with complete tables; exact hand-entered APIs stay
+available under original authorization. Unmounted admin remains 404. Strict
+service_runtime is not migrated and must not run the receipt initializer.
 
 Bad keys, schema, policies or readable publication/candidate records fail with
 `503 storage_unavailable`; capacity/input budget failures give

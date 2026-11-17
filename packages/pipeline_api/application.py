@@ -9,6 +9,7 @@ from packages.workspaces import PolicyError
 from .records import InvalidRecord, decode_snapshots, resource_id
 from .tasks import task_page
 from .discovery import directory, directory_request
+from packages.directory_cursors.directory import configured, serve
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _STATES = frozenset({"success", "failure", "cancelled", "timed_out", "skipped", "queued", "running", "unknown"})
@@ -22,18 +23,19 @@ class PipelineApplication(WorkspaceApplication):
     that workspace, not to external CI credentials or arbitrary live pipelines.
     """
     def __init__(self, *, store=None, providers=None, provider_key=None,
-                 clock=lambda: datetime.now(timezone.utc), session_boundary=None):
+                 clock=lambda: datetime.now(timezone.utc), session_boundary=None, directory_cursors=None):
         super().__init__(store=store, providers=providers, provider_key=provider_key, clock=clock, session_boundary=session_boundary)
         self._clock = clock
+        self._directory_cursors = configured(directory_cursors)
 
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
         discovery = directory_request(environ)
         if discovery is not None:
-            workspace, after = discovery
-            return self._authenticated_transaction(assertion,
-                lambda policy, actor, db: directory(policy, actor, db, workspace, after, clock=self._clock),
-                with_connection=True)
+            workspace, query = discovery
+            return serve(self, assertion, workspace=workspace, query=query,
+                         action='pipeline.scopes.read', store=self._directory_cursors,
+                         projection=lambda policy, actor, db: directory(policy, actor, db, workspace, clock=self._clock))
         scope, endpoint, run_id, options = self._route(environ)
 
         def read(policy, actor):
