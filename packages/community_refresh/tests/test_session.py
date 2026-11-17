@@ -65,6 +65,16 @@ class RefreshTests(unittest.TestCase):
                                          write=False, with_connection=True)
         replace_policy(self.policy, replace(config, **changes), expected_revision=self.state()[3], actor_id='admin')
 
+    def test_conflicting_workspace_hint_stops_before_lease_secret_provider_and_audit(self):
+        before, audit = self.state(), self.sql('SELECT * FROM audit')
+        result = self.call(extra={'HTTP_X_WORKSPACE_ID': 'beta'})
+        self.assertEqual((result['status'], result['body']), (400, {'error': 'invalid_request'}))
+        self.assertEqual(self.call(workspace='beta', extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 404)
+        self.assertEqual(self.call(extra={'HTTP_X_WORKSPACE_ID': 'beta', 'HTTP_COOKIE': ''})['status'], 401)
+        self.assertEqual(self.state(), before); self.assertEqual(self.sql('SELECT * FROM audit'), audit)
+        self.assertEqual(self.leases(), []); self.assertEqual(self.pages.loads, []); self.assertEqual(self.pages.calls, [])
+        self.assertEqual(self.call(extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 200)
+
     def test_private_candidate_and_complete_approval_then_changed_content(self):
         reader = host.session(self.login, self.exchange, 'reader-sub')
         self.configure(reader_ids=('admin', 'reader', 'second'))  # a real grant change clears old content

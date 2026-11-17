@@ -107,6 +107,18 @@ class DownloadTests(unittest.TestCase):
     def revoke(self):
         self.store.set_membership('admin', 'alpha', 'reader', role='viewer', state='revoked', expected_revision=1)
 
+    def test_workspace_hint_is_not_ignored_by_standalone_binary_adapter(self):
+        for value in ('beta', '', 'alpha,beta', None):
+            result = self.call(extra={'HTTP_X_WORKSPACE_ID': value})
+            self.assertEqual((result['status'], json.loads(result['raw'])), (400, {'error': 'invalid_request'}))
+        self.assertEqual(self.call(who=None, extra={'HTTP_X_WORKSPACE_ID': 'beta'})['status'], 401)
+        self.assertEqual(self.call(who='other', extra={'HTTP_X_WORKSPACE_ID': 'beta'})['status'], 404)
+        self.assertEqual(self.call(extra={'PATH_INFO': BASE.replace('/alpha/', '/beta/'),
+                                        'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 404)
+        self.assertEqual(self.loads, []); self.assertEqual(self.objects.calls, []); self.assertEqual(self.leases(), [])
+        result = self.call(extra={'HTTP_X_WORKSPACE_ID': 'alpha'})
+        self.assertEqual((result['status'], result['raw']), (200, DATA))
+
     def test_inflight_byte_stream_does_not_survive_identity_aba(self):
         stream = self.call(consume=False)['stream']
         with sqlite3.connect(self.path) as db:

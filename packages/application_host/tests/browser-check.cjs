@@ -55,6 +55,15 @@ const readline = require('node:readline');
         '/api/workspaces/alpha/responsibility/source/sample/project/config',
         '/api/workspaces/alpha/assistant/conversations/one/events'];
       const reads=await Promise.all(paths.map(async p=>{const r=await fetch(p);return r.status;}));
+      const matchingHints=await Promise.all(paths.map(async p=>(await fetch(p,{headers:{'X-Workspace-ID':'alpha'}})).status));
+      const conflictingHints=await Promise.all(paths.map(async p=>{
+        const r=await fetch(p,{headers:{'X-Workspace-ID':'beta'}});return [r.status,await r.json()];
+      }));
+      const malformedHints=await Promise.all(['','alpha,beta','alpha,alpha'].map(async hint=>{
+        const r=await fetch(paths[1],{headers:{'X-Workspace-ID':hint}});return [r.status,await r.json()];
+      }));
+      const hiddenHint=await fetch(paths[1].replace('/alpha/','/commons/'),{headers:{'X-Workspace-ID':'alpha'}});
+
       const approved=await (await fetch(paths[0])).json();
       const shared=await fetch(paths[1].replace('/alpha/','/commons/'));
       const raw=await fetch('/api/workspaces/alpha/modules/pipelines/resources/raw');
@@ -63,12 +72,15 @@ const readline = require('node:readline');
       const good=await fetch(path,{method:'PATCH',headers:{'Content-Type':'application/json','If-Match':'"2"','X-CSRF-Token':csrf},body:JSON.stringify({state:'archived'})});
       const revoked=await fetch('/synthetic-revoke',{method:'POST'});
       const revokedReads=await Promise.all(paths.map(async p=>{const r=await fetch(p);return r.status;}));
+      const revokedHints=await Promise.all(paths.map(async p=>(await fetch(p,{headers:{'X-Workspace-ID':'beta'}})).status));
       document.cookie='__Host-ms-collab-csrf=; Path=/; Secure; Max-Age=0; SameSite=Strict';
       const stale=await fetch('/auth/start',{method:'POST',headers:{'Content-Type':'application/json','X-MS-Collab-Login':'1'},body:'{}'});
-      return {reads,approved:approved.data.items.map(x=>x.number),shared:shared.status,raw:raw.status,
+      return {reads,matchingHints,conflictingHints,malformedHints,hiddenHint:hiddenHint.status,revokedHints,approved:approved.data.items.map(x=>x.number),shared:shared.status,raw:raw.status,
         writes:[noCsrf.status,good.status],revoked:revoked.status,revokedReads,stale:stale.status};
     });
-    assert.deepEqual(statuses,{reads:[200,200,200,200,200,200],approved:[1],shared:404,raw:404,
+    assert.deepEqual(statuses,{reads:[200,200,200,200,200,200],matchingHints:[200,200,200,200,200,200],
+      conflictingHints:Array.from({length:6},()=>[400,{error:'invalid_request'}]),
+      malformedHints:Array.from({length:3},()=>[400,{error:'invalid_request'}]),hiddenHint:404,revokedHints:[401,401,401,401,401,401],approved:[1],shared:404,raw:404,
       writes:[401,200],revoked:200,revokedReads:[401,401,401,401,401,401],stale:401});
     assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
     const retry = await page.evaluate(async()=>{
@@ -87,7 +99,7 @@ const readline = require('node:readline');
     });
     assert.deepEqual(logout,[200,401]);
     assert.equal((await context.cookies()).filter(c=>c.name.startsWith('__Host-ms-collab-')).length,0);
-    console.log('Synthetic unified host HTTPS login, six module reads, approval and workspace fences, CSRF write, revocation, recovery and logout passed. Not live GitCode or production acceptance.');
+    console.log('Synthetic unified host HTTPS login, six module reads, conflicting workspace hints, approval and workspace fences, CSRF write, revocation, recovery and logout passed. Not live GitCode or production acceptance.');
   } finally {
     if(browser) await browser.close();
     if(server && server.exitCode===null){server.kill('SIGTERM');await new Promise(resolve=>{server.once('exit',resolve);setTimeout(()=>{if(server.exitCode===null)server.kill('SIGKILL');resolve();},3000);});}

@@ -48,6 +48,22 @@ class SessionDownloadTests(unittest.TestCase):
     def leases(self):
         with sqlite3.connect(Path(self.tmp.name)/'policy.sqlite') as db:return db.execute('SELECT actor,state,offered FROM artifact_download_leases_v1 ORDER BY rowid').fetchall()
     def revoke(self):self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
+    def test_workspace_hint_rejected_by_host_and_direct_binary_adapter_before_admission(self):
+        for app in (self.host, self.host._artifact_downloads):
+            for action in ('availability', 'download'):
+                result = self.call(action, app=app, extra={'HTTP_X_WORKSPACE_ID': 'beta'})
+                self.assertEqual((result['status'], json.loads(result['raw'])), (400, {'error': 'invalid_request'}))
+                self.assertEqual(self.call(action, app=app, extra={'HTTP_X_WORKSPACE_ID': 'beta', 'HTTP_COOKIE': ''})['status'], 401)
+                self.assertEqual(self.call(action, app=app, extra={'HTTP_X_WORKSPACE_ID': 'beta', 'HTTP_X_CSRF_TOKEN': ''})['status'], 401)
+                self.assertEqual(self.call(action, app=app, extra={'PATH_INFO': BASE.replace('/alpha/', '/beta/') + action,
+                                      'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 404)
+        self.assertEqual(self.objects.loads, []); self.assertEqual(self.objects.calls, []); self.assertEqual(self.leases(), [])
+        self.assertEqual(self.call('availability', extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 200)
+        result = self.call(extra={'HTTP_X_WORKSPACE_ID': 'alpha'})
+        self.assertEqual((result['status'], result['raw']), (200, DATA))
+        self.login.logout(self.session.token, self.session.csrf)
+        self.assertEqual(self.call(extra={'HTTP_X_WORKSPACE_ID': 'beta'})['status'], 401)
+
     def test_availability_has_exact_bytes_no_secret_network_or_lease(self):
         r=self.call('availability');self.assertEqual(r['status'],200)
         self.assertEqual(json.loads(r['raw'])['data'],{'scope':SCOPE.as_dict(),'key':KEY,'size':len(DATA),'sha256':BINDING.sha256,'published_revision':1})

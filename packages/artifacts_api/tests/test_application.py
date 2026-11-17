@@ -93,6 +93,16 @@ class ArtifactHTTPTests(unittest.TestCase):
             text = c.execute('SELECT text FROM resources WHERE workspace_id=? AND id=?', ('alpha', ident)).fetchone()[0]
             c.execute('UPDATE resources SET text=? WHERE workspace_id=? AND id=?', (transform(text), 'alpha', ident))
 
+    def test_legacy_catalog_hint_is_checked_without_changing_route_or_member_scope(self):
+        for workspace in ('alpha', 'commons'):
+            base = BASE.replace('/alpha/', '/' + workspace + '/')
+            self.assertEqual(call(self.app, base=base, extra={'HTTP_X_WORKSPACE_ID': workspace})['status'], 200)
+            result = call(self.app, base=base, extra={'HTTP_X_WORKSPACE_ID': 'other'})
+            self.assertEqual((result['status'], result['body']), (400, {'error': 'invalid_request'}))
+        self.assertEqual(call(self.app, base=BASE.replace('/alpha/', '/beta/'),
+                              extra={'HTTP_X_WORKSPACE_ID': 'alpha'})['status'], 404)
+        self.assertEqual(call(self.app, token=None, extra={'HTTP_X_WORKSPACE_ID': 'beta'})['status'], 401)
+
     def test_quarters_scope_revision_and_no_store(self):
         r = call(self.app)
         self.assertEqual(r['status'], 200)

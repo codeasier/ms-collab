@@ -73,7 +73,9 @@ class TaskTests(unittest.TestCase):
         for scope in ('beta','commons'):
             self.assertEqual(self.request(path=fixtures.BASE.replace('/alpha/',f'/{scope}/')+'/runs/run-1/tasks',query='revision=1',token='test-admin')['status'],404)
         self.assertEqual(self.read(token=None,extra={'HTTP_COOKIE':'user=admin','HTTP_X_USER_ID':'admin'})['status'],401)
-        self.assertEqual(self.read(extra={'HTTP_X_WORKSPACE_ID':'beta'})['body']['data']['scope'],fixtures.SCOPE.as_dict())
+        denied=self.read(extra={'HTTP_X_WORKSPACE_ID':'beta'})
+        self.assertEqual((denied['status'],denied['body']),(400,{'error':'invalid_request'}))
+        self.assertEqual(self.read(extra={'HTTP_X_WORKSPACE_ID':'alpha'})['body']['data']['scope'],fixtures.SCOPE.as_dict())
         self.assertEqual(self.read('revision=1&workspace_id=beta')['status'],400)
 
     def test_assertion_expiry_before_transaction_response_is_denied(self):

@@ -74,6 +74,15 @@ on protected routes, with a callback-specific navigation exception. Unknown
 session tokens and malformed, duplicate or oversized cookies fail closed;
 unrelated, well-formed cookies are allowed. No CORS policy is enabled.
 
+The shared [workspace hint contract](../workspace_api/README.md#narrow-http-contract)
+also applies to composed cookie APIs. Capturing a conflicting `X-Workspace-ID`
+does not authenticate the request: the original `SessionRequest` is checked by
+`SessionPolicyStore.transaction` before route membership/operator visibility and
+the value-free rejection. Forged, expired, logged-out or identity-generation-stale
+cookies do not become 400 responses merely because this header disagrees. No
+request header is stored on an application instance or added to identity claims.
+Unscoped `/auth/*` flows continue to use the original session request directly.
+
 ## Cookies and response controls
 
 - `__Host-ms-collab-session`: Secure, HttpOnly, SameSite=Lax, Path=/, no Domain.

@@ -53,6 +53,36 @@ characters). The adapter deliberately has no dynamic method-dispatch endpoint.
 | GET | `/api/workspaces/{workspace}/modules/{module}/resources/{resource}` | One scoped record |
 | PUT | `/api/workspaces/{workspace}/modules/{module}/resources/{resource}` | Exact `text` string field |
 
+`X-Workspace-ID` is an optional consistency hint, never an actor, membership,
+module grant or routing source. On recognized `/api/workspaces/{workspace}/...`
+routes, omission or an exact string match leaves the existing operation unchanged.
+A different value (including empty, whitespace, comma-joined, control-character,
+overlong or non-string WSGI values) is rejected with the value-free
+`400 {"error":"invalid_request"}`. No trimming, case folding, splitting, decoding,
+alias resolution or lookup of the hinted workspace occurs. Current authentication
+and **route** workspace membership are checked first, inside the existing
+transaction: invalid/expired credentials stay 401, unknown/nonmember spaces stay
+404. The separate `/api/control/workspaces/{workspace}` lifecycle route checks
+current operator authority and route target existence instead, not membership.
+A rejection never reaches the business callback, audit/idempotency changes,
+acquisition admission, business-credential loader or business-acquisition provider.
+Bearer identity verification still runs first and may perform authentication-provider
+I/O outside the transaction; this rejection is not a promise of zero authentication
+network calls.
+
+Only this named redundant header is interpreted. Unscoped auth/bootstrap,
+workspace/control collections, initial-admin selections and invitation inbox or
+response routes do not gain workspace semantics. Unknown/unmounted routes retain
+their existing router errors. The existing exact body/query contracts are not
+widened. The cookie boundary and composed module/admin/refresh/binary-download
+adapters share this check; they retain their own module, scope-grant, publication,
+owner and final-authentication guards for accepted requests. Raw duplicate-header
+rejection remains the fronting server's responsibility, not a choice among values.
+The previously ignored conflicting hint was not an authorization bypass; rejecting
+it closes the W05 consistency gap without changing route scope authority. Existing
+clients that omit it need no changes. Clients that sent contradictory hints must
+remove or correct them; current repository frontends do not send it.
+
 Mutations require a quoted positive revision in `If-Match` (for example `"1"`),
 explicit `Content-Length` and JSON content type. The 16 KiB input bound, exact
 field allowlist, duplicate-key rejection and valid UTF-8 check apply before
