@@ -115,3 +115,8 @@ helper as exact-scope status, including write-only refresh and the trusted host'
 refresh gate. It lists no pending state, audience or candidate data. See the
 [shared directory contract](../artifact_sync/DISCOVERY.md) for bounds, current
 policy, pagination and failure semantics. This is not grant/configuration editing.
+
+Directory factories must now explicitly supply `directory_cursors=ReceiptStore(policy)`
+after separately initializing the [factory-only auxiliary schema](../directory_cursors/README.md).
+Omitted configuration returns authorized 503, not a tuple fallback, and does not
+change manual exact-scope routes. This is not a supported service_runtime migration.

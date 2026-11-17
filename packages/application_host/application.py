@@ -20,6 +20,7 @@ from packages.workspace_invitations import WorkspaceInvitationApplication
 from packages.workspace_connections import CommunityConnectionTemplate, WorkspaceConnectionsApplication
 from packages.workspace_connections.records import templates as connection_templates
 from packages.workspaces import PolicyError
+from packages.directory_cursors.directory import configured
 
 _MODULES = frozenset({"community", "pipelines", "artifacts", "research-assets", "responsibility", "assistant", "gui-smoke"})
 
@@ -74,7 +75,7 @@ class ApplicationHost:
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
                  clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
-                 community_refresh=None):
+                 community_refresh=None, directory_cursors=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
         if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
@@ -86,6 +87,7 @@ class ApplicationHost:
         if (config.community_refresh and type(community_refresh) is not CommunityRefreshConfiguration
                 or not config.community_refresh and community_refresh is not None):
             raise ValueError("explicit community refresh switch and trusted configuration required together")
+        self._directory_cursors = configured(directory_cursors)
         self._config = config
         self._boundary = SessionWorkspaceApplication(sessions=sessions, origin=config.origin,
             exchange=exchange, authorization_endpoint=authorization_endpoint,
@@ -99,7 +101,8 @@ class ApplicationHost:
                         "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication,
                         "gui-smoke": GuiSmokeApplication}
         self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
-                         **({"connections": config.gui_smoke_connections} if key == "gui-smoke" else
+                         **({"directory_cursors": self._directory_cursors} if key in {"pipelines", "artifacts"} else
+                            {"connections": config.gui_smoke_connections} if key == "gui-smoke" else
                             {"credential_loader": community_refresh.credential_loader} if key == "community" and config.community_refresh else {}))
                          for key in config.modules}
         if config.community_refresh:
@@ -113,7 +116,7 @@ class ApplicationHost:
             sync = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,
                                         credential_loader=artifact_refresh.credential_loader if config.artifact_refresh else unavailable_provider)
             refresher = ConfiguredArtifactRefresh(service=sync, transport=artifact_refresh.transport) if config.artifact_refresh else None
-            self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=config.artifact_refresh, refresher=refresher)
+            self._artifact_admin = ArtifactAdministrationAPI(service=sync, allow_refresh=config.artifact_refresh, refresher=refresher, directory_cursors=self._directory_cursors)
         self._artifact_downloads = None
         if config.artifact_downloads:
             download_service = ArtifactSynchronizer(session_boundary=self._boundary, clock=clock,

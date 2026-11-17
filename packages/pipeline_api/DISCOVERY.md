@@ -1,13 +1,13 @@
 # Current-authority stored pipeline scope discovery
 
 This is a read-only directory of **already stored local snapshot resources**, not
-upstream pipeline discovery or production migration. It adds no configuration,
-grant, schema, provider, credential, refresh, trigger, retry, cancel, log, ACP or
+upstream pipeline discovery or production migration. It adds no business configuration,
+grant, provider, credential, refresh, trigger, retry, cancel, log, ACP or
 execution path. It does not enable real login, identity changes or deployment.
 
 ## Contract and authority
 
-`GET /api/workspaces/{workspace}/pipelines/scopes[?after=connection~pipeline]`
+`GET /api/workspaces/{workspace}/pipelines/scopes[?after=dcr1_…]`
 returns `{workspace_id, items: [{scope, snapshot_revision}], next_after}`.
 `scope` is exactly `{workspace_id, connection_id, pipeline_id}`. There are no
 counts, observations, names, origins, connection configuration or credentials.
@@ -86,13 +86,29 @@ Neither path returns a partial list or bypasses current authentication.
 An authorization error is not translated into an empty successful directory.
 A valid empty directory says only that no namespaced stored scopes exist here.
 
-Items sort by `(connection_id,pipeline_id)`. `next_after` is only the last returned
-visible tuple, and exists only if another page exists. It never contains a hash,
-scan offset or hidden count. Every next-page request reauthorizes and revalidates
-all records. A removed/absent cursor gives `409 scope_directory_changed`; loss of
-workspace/module access preserves its normal denial. A newly corrupt record
-fails with 503 rather than masquerading as a cursor or empty-list success. Pages
-are not a stable multi-request snapshot. Restart explicitly; there are no retries.
+Items sort by `(connection_id,pipeline_id)`. `next_after` is null or an opaque
+48-character `dcr1_` receipt, never the last tuple/hash/scan offset. The explicit
+same-policy-DB receipt handle binds current principal, workspace, action,
+membership/module/workspace revisions and protocol. No snapshot revision, data
+digest or key-set revision is misrepresented as authority. Ordinary snapshot
+updates and key insertions can continue; a missing anchor returns uniform
+`409 scope_directory_changed`. Old tuple, expired, unknown and misbound tokens
+have the same error, after current identity/scope/module gates. No automatic
+retry or fallback exists. Pages are not a stable multi-request snapshot.
+
+This protocol requires explicit auxiliary schema initialization and a same-DB
+`directory_cursors=ReceiptStore(...)` trusted factory argument. Constructors and
+HTTP perform no DDL. Unconfigured factories now return authorized 503, even if
+tables exist; exact hand-entered APIs are unchanged. The [shared receipt contract
+and support matrix](../directory_cursors/README.md) specifies TTL, quota, clocks,
+error ordering and the explicitly unsupported strict runtime integration.
+
+The former business-read-only route now writes only receipt/clock metadata using
+the separate receipt-only transaction; it never calls business `_persist` or
+requires CSRF for GET. Each successful request applies the original 256 scopes /
+10,000 UTF-8 bytes per record / 1 MiB aggregate bounds to each of at most two
+projection passes. The pre-existing global policy loader is still not bounded
+by these additional directory budgets.
 
 ## Product path and acceptance
 

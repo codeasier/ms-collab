@@ -12,6 +12,7 @@ from packages.community_api import ConnectionPolicy, initialize as initialize_co
 from packages.community_api.records import encode, snapshot_data, fingerprint, read as community_state, approval_text, capture_approval
 from packages.community_board.model import Scope, Snapshot, BoardItem
 from packages.community_sync import Connection
+from packages.directory_cursors import ReceiptStore, initialize_directory_cursors
 from packages.identity import AuthenticationError, VerifiedIdentity
 from packages.login_state import LoginBinding, LoginCoordinator, SQLiteLoginStore, s256_challenge
 from packages.pipeline_api import encode_snapshots, resource_id
@@ -88,14 +89,18 @@ def initialize(path):
     return store
 
 
-def setup(directory,*,origin=ORIGIN,clock=lambda:NOW,enabled=True,modules=MODULES,authorization_endpoint=None):
+def setup(directory,*,origin=ORIGIN,clock=lambda:NOW,enabled=True,modules=MODULES,authorization_endpoint=None,directory_cursors=True):
     policy=initialize(Path(directory)/'policy.sqlite')
+    receipts=None
+    if directory_cursors:
+        initialize_directory_cursors(policy,layout='explicit-factory-v1')
+        receipts=ReceiptStore(policy,clock=clock)
     binding=LoginBinding(ISSUER,'synthetic-host-client',origin+'/auth/callback')
     login=SQLiteLoginStore.initialize(Path(directory)/'login.sqlite',binding=binding,clock=clock)
     sessions=SessionPolicyStore(policy=policy,login=login)
     exchange=SyntheticExchange(binding,clock)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or ISSUER+'/authorize',authorization_scopes=('synthetic_user',)) if enabled else {}
-    app=ApplicationHost(config=HostConfig(origin,modules,tuple(ModuleTemplate('research_assets' if k=='research-assets' else k,('read','write')) for k in modules)),sessions=sessions,clock=clock,**args)
+    app=ApplicationHost(config=HostConfig(origin,modules,tuple(ModuleTemplate('research_assets' if k=='research-assets' else k,('read','write')) for k in modules)),sessions=sessions,clock=clock,directory_cursors=receipts,**args)
     return app,policy,login,exchange
 
 

@@ -225,3 +225,16 @@ published scopes (including empty catalogs); approval lists only currently usabl
 management capabilities. Neither listing grants access, contacts a provider nor
 selects credentials. Selecting or changing scope clears earlier catalog/review/
 download state. See the [bounded directory contract](../artifact_sync/DISCOVERY.md).
+
+### Explicit scope-directory receipt configuration
+
+The Pipeline and two Artifact scope pickers require the host's explicit
+same-policy-DB `directory_cursors` handle and initialized auxiliary schema.
+Unconfigured factories now return authorized 503 for these three directories;
+existing exact/manual-ID paths remain available. The opaque protocol has no
+old-tuple fallback or automatic retry. Current identity and scoped permissions
+are checked on every page; tokens are only transient in-page pagination state.
+Selecting/Open within the same loaded directory preserves its Next position
+while clearing old exact results. Directory resets clear both token and local
+last-tuple state. See the [support matrix and authority/data distinction](../directory_cursors/README.md).
+Strict service_runtime is not integrated or migrated by this increment.

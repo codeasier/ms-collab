@@ -43,6 +43,6 @@ def setup_download(directory,*,origin='https://app.example.invalid',clock=lambda
     objects=SyntheticObjects()
     config=replace(original._config,artifact_downloads=enabled)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or 'https://identity.example.invalid/authorize',authorization_scopes=('synthetic_user',))
-    host=ApplicationHost(config=config,sessions=original._boundary._sessions,clock=clock,
+    host=ApplicationHost(config=config,sessions=original._boundary._sessions,clock=clock,directory_cursors=original._directory_cursors,
         artifact_downloads=ArtifactDownloadConfiguration(objects.loader,objects) if enabled else None,**args)
     return host,policy,login,exchange,objects

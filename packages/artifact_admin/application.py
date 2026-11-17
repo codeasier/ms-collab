@@ -8,7 +8,8 @@ import re
 from packages.artifacts import Scope
 from packages.artifact_sync import ArtifactSynchronizer, ProviderError
 from packages.artifact_sync.records import authorized, publication_current
-from packages.artifact_sync.discovery import directory, directory_request
+from packages.artifact_sync.discovery import directory, directory_request, grant_fence
+from packages.directory_cursors.directory import configured, serve
 from packages.artifact_refresh import ConfiguredArtifactRefresh
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
@@ -20,7 +21,7 @@ _CONFIRM = 'approve_complete_candidate_to_reviewed_readers'
 
 class ArtifactAdministrationAPI(WorkspaceApplication):
     """Trusted factory only; reuse the SAME verifier, store and sync dependencies."""
-    def __init__(self, *, service, allow_refresh=True, refresher=None):
+    def __init__(self, *, service, allow_refresh=True, refresher=None, directory_cursors=None):
         if type(service) is not ArtifactSynchronizer:
             raise ValueError('configured artifact synchronizer required')
         if type(allow_refresh) is not bool:
@@ -28,13 +29,17 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
         if refresher is not None and (type(refresher) is not ConfiguredArtifactRefresh or refresher.service is not service or not allow_refresh):
             raise ValueError('same-authority refresh configuration required')
         self._service, self._allow_refresh, self._refresher = service, allow_refresh, refresher
+        self._directory_cursors = configured(directory_cursors)
 
     def _dispatch(self, environ):
         assertion = self._service._verify_request(environ)
         listing = directory_request(environ, 'artifact-admin')
         if listing is not None:
-            return self._service._authenticated_transaction(assertion,
-                lambda policy, actor, db: directory(policy, actor, db, *listing, status=self._status), with_connection=True)
+            workspace, query = listing
+            return serve(self._service, assertion, workspace=workspace, query=query,
+                         action='artifact.scopes.admin', store=self._directory_cursors,
+                         allow_refresh=self._allow_refresh,
+                         projection=lambda policy, actor, db: directory(policy, actor, db, workspace, status=self._evaluate_status))
         scope, action = self._route(environ)
         if action == 'status':
             return self._service._authenticated_transaction(assertion,
@@ -71,6 +76,10 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
         return {'scope': scope.as_dict(), **result}
 
     def _status(self, policy, actor, connection, scope, *, budget=None):
+        """Public exact status: no authority fields are added to its response."""
+        return self._evaluate_status(policy, actor, connection, scope, budget=budget)[0]
+
+    def _evaluate_status(self, policy, actor, connection, scope, *, budget=None):
         """The directory and exact-scope status share the SAME capabilities."""
         grants, current = {}, None
         for name in ('refresh', 'review', 'approve'):
@@ -89,9 +98,10 @@ class ArtifactAdministrationAPI(WorkspaceApplication):
         grants['refresh'] = grants['refresh'] and self._allow_refresh
         if not any(grants.values()):
             raise PolicyError(404, 'not_found')
-        return {'scope': scope.as_dict(), 'revision': current.revision,
+        public = {'scope': scope.as_dict(), 'revision': current.revision,
                 'published_revision': current.published_revision if publication_current(policy, current) else None,
                 'pending': current.candidate is not None, 'capabilities': grants}
+        return public, [grant_fence(current, actor), grants]
 
     @staticmethod
     def _route(environ):

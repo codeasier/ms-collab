@@ -147,11 +147,11 @@ The [unified host](../application_host/README.md) supplies its cookie response
 envelope and fixed module routing; it does not enable a real provider or change
 this package's existing explicitly configured bearer API.
 
-## Unmounted directory receipt foundation
+## Private directory receipt transaction
 
 The private authenticated seam has an explicit, default-unused `receipt_only`
-mode. Existing HTTP routes do not select it. It uses writer reservation without
+mode. The configured directory adapters select it, using writer reservation without
 business `_persist`, keeps real current Bearer authentication (including on
-callback failure), and rejects extra commit hooks. See the [foundation contract
-and limits](../directory_cursors/README.md); this is not W07 directory integration
-or a change to the current tuple protocol.
+callback failure), and rejects extra commit hooks. See the [receipt contract
+and limits](../directory_cursors/README.md). Only the three explicitly configured
+Pipeline/Artifact directories select it; other routes retain their old protocols.

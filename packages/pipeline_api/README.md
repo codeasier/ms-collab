@@ -136,3 +136,8 @@ snapshot tuples and revisions, including valid empty snapshots. It uses module
 read authority, not Artifact publication/grant semantics. See [the directory
 contract](DISCOVERY.md) for namespace binding, pagination, UTF-8 budgets, the
 existing global-loader limitation and the unified cookie picker acceptance path.
+
+Directory factories must now explicitly supply `directory_cursors=ReceiptStore(policy)`
+after separately initializing the [factory-only auxiliary schema](../directory_cursors/README.md).
+Omitted configuration returns authorized 503, not a tuple fallback, and does not
+change manual exact-scope routes. This is not a supported service_runtime migration.

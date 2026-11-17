@@ -185,7 +185,7 @@ class PipelineDiscoveryTests(unittest.TestCase):
             self.assertEqual(self.call(**kwargs)['status'], 401)
         original = module.directory
         def expire(*args, **kwargs):
-            result = original(*args, **kwargs); self.assertTrue(result['items'])
+            result = original(*args, **kwargs); self.assertTrue(result.value)
             self.now = self.session.expires_at; return result
         with patch.object(module, 'directory', side_effect=expire):
             self.assertEqual(self.call()['body'], {'error': 'authentication_required'})
@@ -194,12 +194,13 @@ class PipelineDiscoveryTests(unittest.TestCase):
     def test_selection_is_not_authority_and_cursor_absence_is_not_empty_success(self):
         seed_directory(self.policy); seed_pages(self.policy)
         data = self.call()['body']['data']; self.assertEqual(len(data['items']), 25)
-        after = data['next_after']; self.assertEqual(after, 'example-ci~p022')
+        after = data['next_after']; self.assertRegex(after, r'^dcr1_[A-Za-z0-9_-]{43}$')
+        self.assertEqual(data['items'][-1]['scope']['pipeline_id'], 'p022')
         last = self.call(suffix='?after=' + after)['body']['data']
         self.assertEqual(len(last['items']), 3); self.assertIsNone(last['next_after'])
         for invalid in ('example-ci~absent', 'hidden~scope'):
             self.assertEqual(self.call(suffix='?after=' + invalid)['body'], {'error': 'scope_directory_changed'})
-        scope = PipelineScope('alpha', *after.split('~'))
+        scope = PipelineScope(**data['items'][-1]['scope'])
         self.sql("DELETE FROM resources WHERE workspace_id='alpha' AND id=?", (resource_id(scope),))
         self.assertEqual(self.call(suffix='?after=' + after)['status'], 409)
         self.policy.set_membership('second', 'alpha', 'admin', role='admin', state='revoked', expected_revision=1)
@@ -243,6 +244,6 @@ class PipelineDiscoveryTests(unittest.TestCase):
         self.sql("DELETE FROM resources WHERE workspace_id='alpha' AND module_key='pipelines'")
         self.assertEqual(self.call()['body']['data'], {'workspace_id': 'alpha', 'items': [], 'next_after': None})
         for suffix in ('?after=', '?after=a', '?after=a~b~c', '?after=a~b&after=c~d', '?limit=25', '?after=a%0A~b'):
-            self.assertEqual(self.call(suffix=suffix)['status'], 400)
+            self.assertEqual(self.call(suffix=suffix)['status'], 400 if suffix.startswith('?limit=') else 409)
         self.assertEqual(self.call(method='POST', body={}, origin=fixtures.ORIGIN, csrf=self.session.csrf.value)['status'], 404)
         self.assertEqual(self.call(workspace='x' * 1001)['status'], 400)

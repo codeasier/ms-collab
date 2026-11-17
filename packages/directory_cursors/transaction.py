@@ -1,6 +1,6 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
-"""Private receipt-only S0-S7 transaction controller. Not selected by HTTP."""
+"""Private receipt-only S0-S7 controller for the three configured directories."""
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -18,7 +18,7 @@ from .store import (ReceiptStore, Row, ACTIONS, PARTITIONS, RECEIPTS, WHERE, TTL
 
 @dataclass(frozen=True)
 class Projection:
-    """Trusted action-specific projection. The foundation implements no such view."""
+    """Trusted action-specific authority/visibility view; no client-supplied fence."""
     authority: bytes = field(repr=False)
     visibility: bytes = field(repr=False)
     value: object = field(default=None, repr=False, compare=False)
@@ -67,6 +67,23 @@ class ReceiptOnly:
                  [member.role, member.state, member.revision, policy._membership_authority[(self.workspace, actor)]],
                  [module.key, module.state, module.capabilities, module.revision], self.allow_refresh]
         return sha256(json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(',', ':')).encode('ascii')).digest()
+
+
+@dataclass(frozen=True)
+class _DirectoryUnavailable:
+    """Fixed-action denial plan, never a store/projection or receipt capability.
+
+    Unconfigured directories still need the same final current-authentication
+    path on gate/W05 rejection. This plan cannot construct/arm a receipt context.
+    It is private to the three directory adapters, not an ordinary read mode.
+    """
+    workspace: str
+    action: str
+
+    def __post_init__(self):
+        identifier(self.workspace)
+        if self.action not in ACTIONS:
+            raise ValueError('fixed directory action required')
 
 
 # SQLite PRAGMAs with no argument are NOT necessarily read-only. Only the
@@ -290,7 +307,7 @@ class _ReceiptContext:
 
 
 def validate_mode(plan, *, write, with_connection, before_commit):
-    if type(plan) is not ReceiptOnly or write is not False or with_connection is not True or before_commit is not None:
+    if type(plan) not in (ReceiptOnly, _DirectoryUnavailable) or write is not False or with_connection is not True or before_commit is not None:
         raise ValueError('receipt-only requires read connection and no extra commit hook')
 
 
@@ -323,12 +340,23 @@ def run(db, service, plan, callback, current, *, security_clock=None):
         try:
             if security_clock is not None:
                 security_clock.begin(db)
-            policy = service._load(db)
+            try:
+                policy = service._load(db)
+            except sqlite3.Error:
+                # Preserve the existing boundary's pre-authentication loader
+                # failure code. This does not certify a current identity.
+                if security_clock is not None:
+                    raise AuthenticationUnavailable() from None
+                raise StorageError('invalid_storage') from None
             actor = current(policy, db)
             pin = principal_pin(policy, actor)
-            ctx = _ReceiptContext(db, sql, service, plan, policy, actor)
+            if type(plan) is ReceiptOnly:
+                ctx = _ReceiptContext(db, sql, service, plan, policy, actor)
+            # The unavailable-directory plan has no receipt context, storage
+            # handle or dedicated receipt schema access. Even a returning callback
+            # cannot succeed; the original global policy loader remains unchanged.
             result = callback(policy, actor, db, ctx)
-            if not ctx.armed:
+            if ctx is None or not ctx.armed:
                 raise unavailable()
         except BaseException as error:
             pending = error

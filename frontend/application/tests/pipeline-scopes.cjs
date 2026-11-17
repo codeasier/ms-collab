@@ -10,6 +10,70 @@ async function readable(page,selectors){
  const ratios=await page.evaluate(selectors=>{const rgb=v=>{const n=v.match(/[\d.]+/g).map(Number);return {rgb:n.slice(0,3),alpha:n[3]??1}},lum=a=>a.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);return selectors.map(selector=>{const e=document.querySelector(selector);if(!e?.checkVisibility()||e.disabled)throw Error('Invalid contrast probe '+selector);const fg=rgb(getComputedStyle(e).color);let n=e,bg;while(n){const b=rgb(getComputedStyle(n).backgroundColor);if(b.alpha===1){bg=b.rgb;break}if(b.alpha!==0)throw Error('Translucent background');n=n.parentElement}if(!bg||fg.alpha!==1)throw Error('Missing opaque contrast');const v=[lum(fg.rgb),lum(bg)].sort((a,b)=>a-b);return [selector,(v[1]+.05)/(v[0]+.05)]})},selectors)
  for(const [selector,ratio]of ratios)assert.ok(ratio>=4.5,`${selector}: ${ratio}<4.5`)
 }
+// Receipts below are obtained from real HTTPS/Cookie/SQLite responses. They are
+// exchanged between currently authorized workspace/action contexts, not mocked.
+async function receiptContexts(page,paths,key){
+ const read=target=>page.evaluate(async target=>{const response=await fetch(target,{credentials:'same-origin',cache:'no-store',redirect:'error'});return {status:response.status,body:await response.json()}},target)
+ const first=[]
+ for(const target of paths){
+  const result=await read(target);assert.equal(result.status,200);assert.equal(result.body.data.items.length,25)
+  const token=result.body.data.next_after;assert.equal(token.length,48);assert.match(token,/^dcr1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/)
+  assert.equal(Buffer.from(token.slice(5),'base64url').toString('base64url'),token.slice(5));first.push(result.body.data)
+ }
+ assert.equal(new Set(first.map(d=>d.next_after)).size,paths.length)
+ for(const [i,target]of paths.entries()){
+  for(const [j,other]of first.entries())if(i!==j){
+   const refused=await read(target+'?after='+encodeURIComponent(other.next_after));assert.equal(refused.status,409);assert.deepEqual(refused.body,{error:'scope_directory_changed'})
+  }
+  const after=first[i].next_after,next=await read(target+'?after='+after)
+  assert.equal(next.status,200);assert.ok(next.body.data.items.length>0);assert.equal(next.body.data.next_after,null)
+  let prior=first[i].items.at(-1).scope
+  for(const {scope}of next.body.data.items){assert.ok(scope.connection_id>prior.connection_id||scope.connection_id===prior.connection_id&&scope[key]>prior[key]);prior=scope}
+  // A receipt can be reread in its original context; it is not an authority or
+  // a one-time capability. Wrong-context attempts do not consume the receipt.
+  assert.deepEqual(await read(target+'?after='+after),next)
+ }
+ return first
+}
+// A substituted cross-context request is rejected by the real server. Other
+// cases deliberately corrupt a real response AFTER HTTPS/SQLite work; they are
+// browser protocol-fault tests, not evidence of a server data defect.
+async function receiptProtocolFaults({page,router,path,prefix,key,load,count,first,foreign,loaded}){
+ // Successful UI pagination must also work for both artifact projections.
+ await load();const continued=page.waitForResponse(r=>new URL(r.url()).pathname===path&&new URL(r.url()).searchParams.has('after'))
+ await page.locator('#'+prefix+'-next').click();const response=await continued;assert.equal(response.status(),200);const payload=await response.json();await loaded()
+ assert.equal(await page.locator('#'+prefix+'-scope option').count(),payload.data.items.length);assert.equal(await page.locator('#'+prefix+'-next').isDisabled(),true)
+ const labels=await page.locator('#'+prefix+'-scope option').allTextContents()
+ for(const [i,item]of payload.data.items.entries())assert.ok(labels[i].startsWith(item.scope.connection_id+' / '+item.scope[key]+' ·'))
+ for(const fault of ['context','canonical','repeat','overlap','unavailable']){
+  await load();const before=count(path)
+  router.set(path,async route=>{
+   if(fault==='context'){
+    const target=new URL(route.request().url());target.searchParams.set('after',foreign)
+    const refused=await route.fetch({url:target.href});assert.equal(refused.status(),409);assert.deepEqual(await refused.json(),{error:'scope_directory_changed'});await route.fulfill({response:refused});return
+   }
+   const response=await route.fetch();assert.equal(response.status(),200)
+   const after=new URL(route.request().url()).searchParams.get('after');assert.ok(after)
+   if(fault==='unavailable'){await route.fulfill({response,status:503,json:{error:'scope_directory_unavailable'}});return}
+   const data=structuredClone(first)
+   if(fault==='overlap')data.next_after=null
+   else{
+    for(const [i,item]of data.items.entries())item.scope[key]='z'+String(i).padStart(3,'0')
+    data.next_after=fault==='repeat'?after:after.slice(0,-1)+'B'
+   }
+   await route.fulfill({response,json:{data}})
+  })
+  await page.locator('#'+prefix+'-next').click();await page.waitForFunction(prefix=>document.getElementById(prefix+'-status').textContent.includes('Reload the directory explicitly; no request was retried'),prefix);await frames(page)
+  assert.equal(count(path),before+1);assert.equal(await page.locator('#'+prefix+'-scope option').count(),0)
+  assert.equal(await page.locator('#'+prefix+'-next').isDisabled(),true);assert.equal(await page.locator('#'+prefix+'-use').isDisabled(),true)
+  for(const id of ['workspace','connection',key==='pipeline_id'?'pipeline':'bucket'])assert.equal(await page.locator('#'+id).inputValue(),'')
+  assert.equal(new URL(page.url()).search,'');assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0])
+  router.remove(path)
+  const fresh=page.waitForResponse(r=>new URL(r.url()).pathname===path)
+  await page.locator('#'+prefix+'-load').click();const response=await fresh;assert.equal(response.status(),200);assert.equal(new URL(response.url()).search,'');await loaded()
+  assert.equal(await page.locator('#'+prefix+'-scope option').count(),25)
+ }
+}
 // W10's supported picker boundary only: two pages share a real session cookie,
 // never a selected scope. This does not add scoped HTML/deep-link support.
 async function twoTabAcceptance({page:a,context,info,router,releases,watch}){
@@ -180,7 +244,10 @@ async function main(){
   await load();await open();const taskPath=base+'/runs/run-1/tasks',betaTask=beta+'/runs/run-1/tasks';hold=held(taskPath);await page.getByRole('button',{name:'View run-1',exact:true}).click();await within(hold.started);await page.keyboard.press('Escape');await load('beta');await blank();await open();const newTask=held(betaTask);await page.getByRole('button',{name:'View run-1',exact:true}).click();await within(newTask.started)
   hold.release();await within(hold.done);await frames(page);assert.equal(await page.locator('#tasks article').count(),0);assert.equal(await page.locator('#task-status-filter').isDisabled(),true);before=count(betaTask);await page.evaluate(()=>document.querySelector('#task-status-filter').dispatchEvent(new Event('change',{bubbles:true})));await frames(page);assert.equal(count(betaTask),before);newTask.release();await within(newTask.done);await taskReady();assert.match(await page.locator('#tasks').textContent(),/beta <img/);await page.keyboard.press('Escape');router.remove(taskPath);router.remove(betaTask)
   // Both valid pagination and invalidated visible cursor clear old evidence.
-  assert.equal((await ctrl('seed-pages')).ci_calls,0);await load();assert.equal(await page.locator('#pipeline-picker-scope option').count(),25);await open();await page.locator('#pipeline-picker-next').click();await blank();await loaded();assert.equal(await page.locator('#pipeline-picker-scope option').count(),3);assert.equal(await page.locator('#pipeline-picker-next').isDisabled(),true)
+  assert.equal((await ctrl('seed-pages')).ci_calls,0)
+  const receiptPages=await receiptContexts(page,[listPath,betaPath],'pipeline_id')
+  await receiptProtocolFaults({page,router,path:listPath,prefix:'pipeline-picker',key:'pipeline_id',load,count,first:receiptPages[0],foreign:receiptPages[1].next_after,loaded})
+  await load();assert.equal(await page.locator('#pipeline-picker-scope option').count(),25);await open();await page.locator('#pipeline-picker-next').click();await blank();await loaded();assert.equal(await page.locator('#pipeline-picker-scope option').count(),3);assert.equal(await page.locator('#pipeline-picker-next').isDisabled(),true)
   await load();await ctrl('invalidate-cursor');before=count(listPath);const conflict=page.waitForResponse(r=>new URL(r.url()).pathname===listPath&&new URL(r.url()).search);await page.locator('#pipeline-picker-next').click();assert.equal((await conflict).status(),409);await page.waitForFunction(()=>document.querySelector('#pipeline-picker-status').textContent.includes('no request was retried'));await frames(page);assert.equal(count(listPath),before+1);assert.equal(await page.locator('#pipeline-picker-scope option').count(),0)
   // pagehide and logout both invalidate directories even when abort is ignored.
   hold=held(listPath);await page.locator('#pipeline-picker-load').click();await within(hold.started);await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));hold.release();await within(hold.done);await frames(page);router.remove(listPath);await blank();assert.equal(await page.locator('#pipeline-picker').isVisible(),false);assert.equal(await page.locator('#pipeline-picker-workspace option').count(),0)
@@ -203,7 +270,7 @@ async function main(){
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Pipeline discovery scenario or cleanup failed')
  }
- console.log('Pipeline discovery: real HTTPS Cookie/SQLite, 3 isolated workspaces with identical run/task IDs, empty snapshot, explicit picker to runs/details/tasks/durations, cursor failure, ignored abort, repeated operations, manual/pagehide/logout/Back, concurrent two-tab picker scopes with reload/Back/Forward and cross-tab logout, unsupported HTML deep-link 404, revocation, XSS/contrast/mobile and 3 allowlisted screenshots. Zero CI provider calls; synthetic only.')
+ console.log('Pipeline discovery: real HTTPS Cookie/SQLite, 3 isolated workspaces with identical run/task IDs, empty snapshot, explicit picker to runs/details/tasks/durations, opaque workspace-bound receipts, explicit reload after receipt/canonical/repeat/order/503 faults, cursor failure, ignored abort, repeated operations, manual/pagehide/logout/Back, concurrent two-tab picker scopes with reload/Back/Forward and cross-tab logout, unsupported HTML deep-link 404, revocation, XSS/contrast/mobile and 3 allowlisted screenshots. Zero CI provider calls; synthetic only.')
 }
 function reportFailure(error){
  console.error(error?.stack||String(error))

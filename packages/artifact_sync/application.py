@@ -7,15 +7,22 @@ from packages.artifacts_api.records import load_view, record_id
 from packages.workspaces import PolicyError
 from .records import authorized, decode_snapshot
 from .discovery import directory, directory_request
+from packages.directory_cursors.directory import configured, serve
 
 
 class IndexedArtifactApplication(ArtifactApplication):
+    def __init__(self, *, directory_cursors=None, **kwargs):
+        super().__init__(**kwargs)
+        self._directory_cursors = configured(directory_cursors)
+
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
         listing = directory_request(environ, 'artifacts')
         if listing is not None:
-            return self._authenticated_transaction(assertion,
-                lambda policy, actor, db: directory(policy, actor, db, *listing), with_connection=True)
+            workspace, query = listing
+            return serve(self, assertion, workspace=workspace, query=query,
+                         action='artifact.scopes.read', store=self._directory_cursors,
+                         projection=lambda policy, actor, db: directory(policy, actor, db, workspace))
         scope, kind, selected, definition, view_id, pagination = self._request(environ)
         def operation(policy, actor, connection):
             record = authorized(policy, actor, connection, scope, 'read')

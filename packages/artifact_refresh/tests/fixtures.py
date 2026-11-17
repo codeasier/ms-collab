@@ -23,7 +23,7 @@ def setup(directory,*,origin=host.ORIGIN,clock=lambda:host.NOW,enabled=True,sche
     if schema:initialize_refresh(policy)
     pages=Pages()
     app=ApplicationHost(config=HostConfig(origin,('artifacts',),artifact_administration=True,artifact_refresh=enabled),
-        sessions=base._boundary._sessions,clock=clock,exchange=exchange,
+        sessions=base._boundary._sessions,clock=clock,directory_cursors=base._directory_cursors,exchange=exchange,
         authorization_endpoint=authorization_endpoint or host.ISSUER+'/authorize',authorization_scopes=('synthetic_user',),
         artifact_refresh=ArtifactRefreshConfiguration(pages.load,pages) if enabled else None)
     return app,policy,login,exchange,pages

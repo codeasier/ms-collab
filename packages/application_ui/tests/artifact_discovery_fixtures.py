@@ -32,7 +32,7 @@ def seed_directory(store):
 
 
 def seed_pages(store):
-    scopes = [Scope('alpha', 'source', f'p{i:03d}') for i in range(26)]
+    scopes = [Scope(w, 'source', f'p{i:03d}') for w in ('alpha', 'beta') for i in range(26)]
     initialize_indexes(store, [IndexPolicy(Connection(s, 'synthetic-bucket', 'eu-west-101'),
         'synthetic-reference', ('admin',), ('admin',), ('admin',)) for s in scopes])
     for s in scopes:
