@@ -162,3 +162,12 @@ production prerequisites.
 
 [Persistent grants and regrant](GRANTS.md) · [Tests](tests/README.md) · [Provider contract](../community_sync/README.md) ·
 [Workspace API](../workspace_api/README.md) · [Documentation](../../docs/README.md)
+
+## Unified Cookie host refresh
+
+The optional [Community refresh lifecycle](../community_refresh/README.md) adds
+same-DB cross-process admission, whole-operation deadline, bounded fixed-origin
+GET transport and atomic completion/readback around this existing two-phase
+flow. The host requires a strict explicit switch/configuration pair and uses its
+own session authority. The original standalone explicitly configured adapter
+remains separate; it does not acquire this host's cookies or turn itself on.

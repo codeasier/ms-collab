@@ -75,8 +75,9 @@ are **not mounted**. `HostConfig.artifact_administration=True` optionally mounts
 existing artifact status/review/approve routes, requiring the artifacts module.
 It uses the same session transaction boundary; refresh stays disabled by default. Current complete candidate,
 reader set, permission and revision are rechecked on approval; configuration is
-not a grant. Community refresh has no credential loader and returns 503;
-its capability reports false. Community acquisition and background scheduling remain unconfigured.
+not a grant. By default, Community refresh has no credential loader and returns
+503; its capability reports false. Community acquisition requires the explicit
+opt-in described below. Background scheduling remains unconfigured.
 
 `HostConfig.artifact_downloads=True` is a separate opt-in requiring artifacts and
 an exact `ArtifactDownloadConfiguration` with a trusted scoped credential loader.
@@ -152,3 +153,21 @@ until a separate full-set digest/readers/CAS approval. Resource-uncertain worker
 retain capacity even after expiry. See [refresh contract](../artifact_refresh/DESIGN.md)
 for timer, DNS/loader/storage, recovery and rate/cost boundaries. This is not a
 production startup command or proof of real OBS compatibility.
+
+## Optional scoped Community refresh
+
+`HostConfig.community_refresh=True` requires the hosted Community module and an
+exact `CommunityRefreshConfiguration(credential_loader, transport=None)` passed
+as `ApplicationHost(..., community_refresh=...)`. Trusted provisioning must call
+`packages.community_refresh.initialize_refresh(sessions.policy)` separately.
+Neither the flag nor host creates schemas, grants, credentials or provider login.
+The host constructs its own same-session Community service and bounded controller.
+Default capability remains false and POST remains 503 without network.
+
+Connections grant edits discard prior observations/approvals. Explicit refresh
+then produces private review candidates, followed by the existing complete-set
+exact-content approval and ordinary reader board. Current authority, 2 global /
+1 actor / 1 scope admission, a 30-second budget, uncertain-resource retention and
+post-persistence readback protect the entire flow. See the
+[Community refresh contract](../community_refresh/DESIGN.md). No real GitCode,
+production startup/runtime enablement, periodic refresh or deployment is claimed.

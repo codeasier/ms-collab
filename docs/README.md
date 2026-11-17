@@ -46,7 +46,7 @@
 - [Unified cookie-only frontend](../packages/application_ui/README.md): workspace, responsibility and configured artifact catalog/whole-candidate approval pages on one current session; artifact refresh requires separate explicit configuration and current permissions; downloads require separate explicit host configuration and grants, and real provider remains unverified.
 - [GUI smoke session UI](../packages/gui_smoke_ui/README.md)：统一 HTTPS Cookie/session 下的已发布任务、状态摘要与详情；无 Token 输入、外部面板、执行或下载，真实登录仍 fail-closed。
 
-- [Community sharing in the unified session entry](../packages/application_ui/README.md#community-sharing-boundary)：同一 Cookie/session 下的授权共享、完整候选集精确审批与版本冲突处理；无 Bearer 转换或上游刷新。
+- [Community sharing in the unified session entry](../packages/application_ui/README.md#community-sharing-boundary)：同一 Cookie/session 下的授权共享、完整候选集精确审批与版本冲突处理；无 Bearer 转换，刷新默认关闭，须单独显式配置。
 - [Cookie-only pipeline entry](../packages/application_ui/README.md#pipeline-lifecycle)：同一 session 下读取准确作用域的运行、详情和耗时；取消/版本一致性，不含日志、执行或上游刷新。
 
 - [Research asset cookie UI](../frontend/research-assets/README.md)：同一会话中的类型/实体筛选、固定版本分页和纯文本详情；未发布与空结果分开，不含真实provider或执行。
@@ -59,6 +59,7 @@
 - [Unified entry capability map](unified-entry.md): fixed navigation, implemented module pages and remaining provider/execution/deployment gates.
 
 - [Workspace connection self-service](../packages/workspace_connections/README.md)：平台固定绑定及能力上限内的社区授权自维护、同事务清快照/审批和当前作用域发现；不创建连接、读取凭据或启用真实 provider。
+- [Configured session Community refresh](../packages/community_refresh/README.md)：显式可信配置、同库跨进程有界租约与持续当前授权；Connections 授权变更清旧内容，再显式刷新为私有候选、完整精确审批和普通读者展示；未知资源不自动释放，真实 GitCode 与生产部署未验收。
 - [Configured session artifact refresh](../packages/artifact_refresh/README.md)：显式可信 provider、同会话持续授权、共享并发租约、有界采集到私有候选，再完整审批与展示；仅合成 HTTPS 验证，真实云/部署另行验收。
 - [Configured service runtime](../packages/service_runtime/README.md): strict installation/configuration, cold backup/new-directory restore and fixed loopback TLS; real login remains disabled and no production deployment is asserted.
 - [Principal authority and durable workspace grants](principal-authority.md)：realm/代次、v3 成员/操作员持久授权侧表、显式离线 v1/v2 升级与旧授权 NULL 墓碑；普通编辑/转移/邀请不重绑，身份变更和真实登录仍关闭，恢复与历史备份回滚另行设门。

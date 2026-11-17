@@ -69,3 +69,10 @@ real login and identity transitions remain unavailable.
   labels each barrier; bounded fixture stderr tails remain available on failure.
   Its success marker is printed only after cleanup succeeds. Cleanup cannot leave
   an ignored-SIGTERM child keeping the CI process alive.
+
+- `community-refresh.cjs`: same actual Connections/Community pages and cookie
+  host, real grant invalidation → explicit bounded refresh → private 101-row
+  candidates → complete approval across filters → ordinary reader board. Includes
+  changed-content reapproval, Cancel/Escape, repeat submit, missing CSRF, CAS,
+  accepted-but-lost response without retries, true concurrent logout/revocation
+  and five additional responsive screenshots in the existing Connection CI.

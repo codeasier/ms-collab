@@ -48,10 +48,13 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-collab-browser-binaries
         run: |
           python3 -m unittest discover -s packages/workspace_connections/tests -v
+          python3 -m unittest discover -s packages/community_refresh/tests -v
+          python3 -m unittest discover -s packages/community_api/tests -v
           python3 -m unittest discover -s packages/application_ui/tests -v
           python3 -m unittest discover -s packages/application_host/tests -v
           node --test frontend/application/tests/*.test.mjs
           node frontend/application/tests/connections.cjs
+          node frontend/application/tests/community-refresh.cjs
       - name: Upload only the synthetic acceptance screenshots
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -61,6 +64,11 @@ jobs:
             ${{ runner.temp }}/ms-collab-connections/confirmation.png
             ${{ runner.temp }}/ms-collab-connections/mobile.png
             ${{ runner.temp }}/ms-collab-connections/discovery.png
+            ${{ runner.temp }}/ms-collab-community-refresh/confirmation.png
+            ${{ runner.temp }}/ms-collab-community-refresh/private-desktop.png
+            ${{ runner.temp }}/ms-collab-community-refresh/private-mobile.png
+            ${{ runner.temp }}/ms-collab-community-refresh/reader-desktop.png
+            ${{ runner.temp }}/ms-collab-community-refresh/reader-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3
