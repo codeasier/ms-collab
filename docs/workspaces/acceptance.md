@@ -59,3 +59,9 @@ and explicit credentials, never implicit production access.
 
 Until all relevant gates pass, the release description must enumerate which
 boundaries are implemented, simulated, unsupported or unverified.
+
+## Evidence snapshots
+
+[2026-11-17 fixed-version migration evidence](migration-evidence-2026-11-17.md)
+maps executable evidence and remaining gaps to this specification. A snapshot
+does not change the requirements or mark any acceptance row as passed.
