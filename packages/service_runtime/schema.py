@@ -1,24 +1,15 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
-"""Exact reviewed schema layout. No implicit adoption or migration of old stores."""
+"""Two exact reviewed layouts; never adopt schema or migrate during an open."""
 from contextlib import closing
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import sqlite3
-from packages.workspaces.sqlite import _SCHEMA as WORKSPACE, _APPLICATION_ID, _SCHEMA_VERSION
-from packages.login_state.core import _SCHEMA as LOGIN, _APP, _VERSION
-from packages.workspace_admin_api.requests import _CREATE as ADMIN
-from packages.workspace_invitations.store import _CREATE as INVITES
-from packages.community_api.records import _SCHEMA as COMMUNITY
-from packages.artifact_sync.records import _CREATE as ARTIFACTS, _EVENT_CREATE as ARTIFACT_EVENTS
-from packages.assistant_history.store import _TABLES as HISTORY
-from packages.responsibility_api.records import _SCHEMA as RESPONSIBILITY
-from packages.gui_smoke.store import _SCHEMA as GUI
-from packages.gui_smoke.grants import _SCHEMA as GUI_GRANTS
-from packages.research_assets.store import _SCHEMA as ASSETS
 
-MODULE_SCHEMA = (ADMIN, INVITES, COMMUNITY, ARTIFACTS, ARTIFACT_EVENTS, *HISTORY.values(), RESPONSIBILITY, GUI, GUI_GRANTS, *ASSETS)
-POLICY_SCHEMA = (*WORKSPACE, *MODULE_SCHEMA)
+from ._layout_v1 import (WORKSPACE, LOGIN, MODULE_SCHEMA, POLICY_SCHEMA,
+                         _APPLICATION_ID, _SCHEMA_VERSION, _APP, _VERSION)
+from packages.workspace_admin_api.transfer_records import SCHEMA as TRANSFERS
 
 
 def schema_digest(db, name='main'):
@@ -36,5 +27,29 @@ def expected(statements):
         return schema_digest(db)
 
 
+# Compatibility names keep the frozen I1 meaning, not "the latest layout".
 POLICY_DIGEST = expected(POLICY_SCHEMA)
 LOGIN_DIGEST = expected(LOGIN)
+
+
+@dataclass(frozen=True)
+class _LayoutProfile:
+    format: int
+    module_schema: tuple[str, ...]
+    policy_schema: tuple[str, ...]
+    policy_digest: str
+    login_digest: str
+
+
+_PROFILES = (
+    _LayoutProfile(1, MODULE_SCHEMA, POLICY_SCHEMA, POLICY_DIGEST, LOGIN_DIGEST),
+    _LayoutProfile(2, (*MODULE_SCHEMA, *TRANSFERS), (*POLICY_SCHEMA, *TRANSFERS),
+                   expected((*POLICY_SCHEMA, *TRANSFERS)), LOGIN_DIGEST),
+)
+
+
+def layout_profile(value):
+    """Private configuration lookup, never an HTTP-selected capability."""
+    if type(value) is not int or value not in (1, 2):
+        raise ValueError('unsupported_layout')
+    return _PROFILES[value - 1]
