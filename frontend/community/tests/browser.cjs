@@ -15,10 +15,42 @@ async function main(){
   const connect=async token=>{await page.locator('#credential').fill(token);await page.locator('#connect button').click()}
   const open=async(workspace='alpha')=>{await page.locator('#workspace').fill(workspace);await page.locator('#connection').fill('source');await page.locator('#repository').fill('sample/project');await page.locator('#scope-form button').click();await ready()}
   const settled=()=>page.waitForFunction(()=>!document.querySelector('#reload').disabled&&!document.querySelector('#panel').hidden)
+  // Count all browser requests, not just the writes the original journey observes.
+  let requestCount=0;page.on('request',()=>{requestCount++})
+  const labelPanel=page.locator('#shared-labels'),labelInput=page.locator('#label-input'),options=page.locator('#label-options button')
+  const expectNoLabelState=async()=>{
+   assert.equal(await labelPanel.isVisible(),false);assert.equal(await options.count(),0)
+   assert.equal(await labelInput.inputValue(),'');assert.equal(await page.locator('#label-status').textContent(),'')
+  }
+  const sharedReply=page.waitForResponse(r=>r.url()===origin+base+'/items?limit=100&offset=0'&&r.request().method()==='GET',{timeout:15000})
   await page.goto(origin+'/community/');await connect('synthetic-reader');await open()
   assert.equal(await page.locator('#credential').inputValue(),'');assert.equal(await page.locator('#review-view').isVisible(),false);assert.equal(await page.locator('#refresh').isVisible(),false)
   assert.match(await page.locator('#summary').textContent(),/2 matching items/);assert.equal(await page.locator('#items img,#items b').count(),0);assert.match(await page.locator('#items').textContent(),/<img src=x/)
-  await page.locator('#disconnect').click();await connect('synthetic-admin');await open();await page.locator('#review-view').click();await ready()
+  const response=await sharedReply;assert.equal(response.status(),200)
+  const {data:shared}=await response.json(),label='<b>plain label</b>'
+  assert.equal(shared.view,'items');assert.equal(shared.available,true);assert.equal(shared.total,2)
+  assert.deepEqual(shared.scope,{workspace_id:'alpha',connection_id:'source',repository:'sample/project'})
+  assert.deepEqual(shared.items.map(i=>i.number).sort((a,b)=>a-b),[1,101])
+  assert.ok(shared.items.every(i=>i.kind==='issue'&&!Object.hasOwn(i,'approved')&&!Object.hasOwn(i,'fingerprint')&&i.labels.length===1&&i.labels[0]===label))
+  const rendered=page.locator('#items .record'),beforeLabels=requestCount
+  assert.equal(await labelPanel.isVisible(),true);assert.equal(await options.count(),1)
+  assert.equal(await options.locator('.label-name').textContent(),'"'+label+'"')
+  assert.match(await options.textContent(),/\b2 items\b/);assert.equal(await options.locator('b,img').count(),0)
+  assert.equal(await options.getAttribute('aria-pressed'),'false');await options.click()
+  assert.equal(await options.getAttribute('aria-pressed'),'true');assert.equal(await rendered.count(),2)
+  // A title-only exact input and a case variant both miss; counts still describe the full base.
+  for(const miss of ['Synthetic issue 1','<B>plain label</B>']){
+   await labelInput.fill(miss);await page.locator('#label-apply').click()
+   assert.equal(await rendered.count(),0);assert.match(await page.locator('#summary').textContent(),/0 matching items of 2 loaded/)
+   assert.match(await options.textContent(),/\b2 items\b/);assert.equal(await options.getAttribute('aria-pressed'),'false')
+  }
+  await labelInput.fill(label);await labelInput.press('Enter');assert.equal(await rendered.count(),2);assert.equal(await options.getAttribute('aria-pressed'),'true')
+  await page.locator('#label-clear').click();assert.equal(await options.getAttribute('aria-pressed'),'false');assert.equal(await labelInput.inputValue(),'')
+  assert.equal(await rendered.count(),2);await page.waitForLoadState('networkidle');assert.equal(requestCount,beforeLabels);assert.equal(writes.length,0)
+  await page.locator('#disconnect').click();await expectNoLabelState();await connect('synthetic-admin');await open()
+  // Leave the shared view with a real selection; none of that state may survive into private review.
+  await options.click();assert.equal(await options.getAttribute('aria-pressed'),'true')
+  await page.locator('#review-view').click();await ready();await expectNoLabelState()
   assert.match(await page.locator('#summary').textContent(),/101 loaded/);assert.match(await page.locator('#approval-summary').textContent(),/2 approved/)
   await page.getByRole('checkbox',{name:'Approve issue 100',exact:true}).check();await page.locator('#save').click();assert.match(await page.locator('#confirm-note').textContent(),/Add 1, remove 0; 3 total/)
   await page.locator('#cancel').click();assert.equal(writes.length,0);await page.locator('#save').click();await page.keyboard.press('Escape');assert.equal(writes.length,0)
@@ -54,7 +86,9 @@ async function main(){
   assert.equal(await page.locator('#confirmation').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'');assert.equal(await page.locator('#confirm-note').textContent(),'');assert.equal(await page.locator('#workspace').inputValue(),'')
   // Non-reader approver and refresher still get only their explicit capabilities.
   await connect('synthetic-reviewer');await open();assert.equal(await page.locator('#items-view').isVisible(),false);assert.equal(await page.locator('#refresh').isVisible(),false);assert.equal(await page.locator('#approval-panel').isVisible(),true)
+  await expectNoLabelState()
   await page.locator('#disconnect').click();await connect('synthetic-refresh');await open();assert.equal(await page.locator('#items-view').isVisible(),false);assert.equal(await page.locator('#review-view').isVisible(),false);assert.equal(await page.locator('#refresh').isVisible(),true);assert.equal(await page.locator('#items').textContent(),'')
+  await expectNoLabelState()
   await page.locator('#disconnect').click();await connect('synthetic-admin');await open()
   // An accepted mutation may finish after disconnect; its late reply must not restore data.
   let writeSeen,writeRelease,writeDone;const writeStarted=new Promise(r=>writeSeen=r),writeGate=new Promise(r=>writeRelease=r),writeHandled=new Promise(r=>writeDone=r)
@@ -68,4 +102,4 @@ async function main(){
   console.log('Authorized community browser acceptance passed; synthetic desktop/mobile screenshots written.')
  }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
 }
-main().catch(error=>{console.error(error.stack);process.exitCode=1})
+main().then(()=>console.log('COMMUNITY_LABELS_STANDALONE_PASS: 2 real approved shared rows, exact label controls made no browser request; review and refresh-only contained no retained label state. Synthetic loopback only.')).catch(error=>{console.error(error.stack);process.exitCode=1})
