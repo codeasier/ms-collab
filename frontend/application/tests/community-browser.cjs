@@ -5,6 +5,157 @@ const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('pla
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
+async function assertFacetCleared(page){
+ for(const name of ['shared-labels','label-pages'])assert.ok(await page.locator('#'+name).evaluate(el=>el.hidden))
+ assert.equal(await page.locator('#label-options button').count(),0);assert.equal(await page.locator('#label-input').inputValue(),'')
+ for(const name of ['label-options','label-status','label-page'])assert.equal(await page.locator('#'+name).textContent(),'')
+}
+// A separate, pre-approved synthetic connection. Positive values are read from the real
+// Cookie GETs issued by Open, never manufactured by the page, a route, or another API call.
+async function approvedLabelJourney({page,origin,folder,login,logout,ready,settled,control,renderTick}){
+ const base='/api/workspaces/beta/community/labels/sample/project',scope={workspace_id:'beta',connection_id:'labels',repository:'sample/project'}
+ const long='integration-contract-for-candidate-compatibility-with-platform-toolchains',rare='z-rare-exact',privateLabel='unshared-review-label'
+ const id=name=>page.locator('#'+name),buttons=id('label-options').getByRole('button'),option=name=>buttons.filter({has:page.getByText(JSON.stringify(name),{exact:true})})
+ const open=async()=>{await id('workspace').fill('beta');await id('connection').fill('labels');await id('repository').fill('sample/project');await page.locator('#scope-form button').click()}
+ const filters=async(query='',kind='',state='')=>{await id('query').fill(query);await id('kind').selectOption(kind);await id('state').selectOption(state);await page.locator('#filters button').click()}
+ const response=suffix=>page.waitForResponse(r=>r.url()===origin+base+suffix&&r.request().method()==='GET')
+ const count=async(name,n)=>assert.equal(await option(name).locator('.label-count').innerText(),n+' '+(n===1?'item':'items'))
+ const matching=async n=>assert.match(await id('summary').innerText(),new RegExp('^'+n+' matching items of 103 loaded[.]'))
+ const noFacet=()=>assertFacetCleared(page)
+ const footprint=()=>page.evaluate(()=>[location.href,history.length,localStorage.length,sessionStorage.length])
+ const requests=[],onRequest=r=>{
+  const u=new URL(r.url())
+  // Count every request, but retain a query only for this fixture's fixed paging tuple;
+  // in particular never keep login callback codes, Cookie headers or CSRF values.
+  const paging=[base+'/items',base+'/review'].includes(u.pathname)
+  requests.push([r.method(),u.origin+u.pathname+(paging&&['?limit=100&offset=0','?limit=100&offset=100'].includes(u.search)?u.search:u.search?'?<other>':'')])
+ }
+ const paths=action=>['/capabilities','/'+action+'?limit=100&offset=0','/'+action+'?limit=100&offset=100']
+ const expectRead=(start,action)=>assert.deepEqual(requests.slice(start),paths(action).map(path=>['GET',origin+base+path]))
+ const stages=name=>console.log('Community approved-label acceptance: '+name)
+ async function screenshot(name,width,height,selected){
+  assert.equal(await option(selected).getAttribute('aria-pressed'),'true')
+  await id('shared-labels').evaluate(node=>node.scrollIntoView({block:'start',behavior:'instant'}));await renderTick()
+  const layout=await page.evaluate(long=>{
+   const form=document.querySelector('#shared-labels'),all=[...form.querySelectorAll('#label-options button')]
+   const metric=el=>{const b=el.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom,b.width,b.height]}
+   const label=all.map(b=>b.querySelector('.label-name')).find(b=>b.textContent===JSON.stringify(long))
+   const range=document.createRange();range.selectNodeContents(label)
+   const top=Math.max(0,Math.floor(scrollY+form.getBoundingClientRect().top)-12)
+   const bottom=Math.min(document.documentElement.scrollHeight,Math.ceil(scrollY+form.getBoundingClientRect().bottom)+12)
+   return {width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,scrollY,
+    mobileClip:{x:0,y:top,width:innerWidth,height:bottom-top},
+    selected:all.filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.querySelector('.label-name').textContent),
+    lines:new Set([...range.getClientRects()].map(b=>Math.round(b.top))).size,
+    controls:['label-input','label-apply','label-clear','label-status'].map(id=>metric(document.getElementById(id))),
+    buttons:all.map(metric),long:metric(label),clipped:form.scrollWidth>form.clientWidth}
+  },long)
+  assert.deepEqual([layout.width,layout.height,layout.scrollWidth,layout.clipped],[width,height,width,false]);assert.deepEqual(layout.selected,[JSON.stringify(selected)])
+  // At phone width the natural block can exceed a viewport. Capture the whole
+  // form in document coordinates at its actual 390px width, without resizing.
+  const mobile=width===390,clip=layout.mobileClip,pixelHeight=mobile?clip.height:height
+  if(mobile)assert.ok(clip.height>=400&&clip.height<=1800)
+  const frameTop=mobile?clip.y-layout.scrollY:0
+  const inFrame=([left,top,right,bottom])=>left>=-.5&&top>=frameTop-.5&&right<=width+.5&&bottom<=frameTop+pixelHeight+.5
+  assert.ok([...layout.controls,...layout.buttons,layout.long].every(inFrame),'All filtered label controls and status must fit this screenshot')
+  for(const b of layout.buttons)assert.ok(b[4]>=44&&b[5]>=44,'Label choices must have usable hit targets')
+  if(width===390)assert.ok(layout.lines>=2,'Long mobile label must visibly wrap')
+  const png=await page.screenshot({path:path.join(folder,name),animations:'disabled',...(mobile?{fullPage:true,clip}:{})})
+  assert.deepEqual([png.readUInt32BE(16),png.readUInt32BE(20)],[width,pixelHeight]);assert.ok(png.length>12000)
+  const sha=require('node:crypto').createHash('sha256').update(png).digest('hex')
+  console.log('COMMUNITY_APPROVED_LABELS_SCREEN '+name+' '+width+'x'+pixelHeight+' viewport='+width+'x'+height+' bytes='+png.length+' sha256='+sha+' longLines='+layout.lines+' minOptionHeight='+Math.min(...layout.buttons.map(b=>b[5])))
+ }
+
+ await login('reader');await noFacet();page.on('request',onRequest)
+ const baseline=await footprint();assert.equal(baseline[0],origin+'/community/');assert.deepEqual(baseline.slice(2),[0,0])
+ const [responses]=await Promise.all([Promise.all(paths('items').map(response)),open()])
+ await settled();expectRead(0,'items')
+ const [caps,first,last]=await Promise.all(responses.map(async r=>{
+  assert.equal(r.status(),200);assert.ok((await r.request().headerValue('cookie')||'').includes('__Host-ms-collab-session='))
+  const {data}=await r.json();assert.deepEqual(data.scope,scope);assert.equal(data.revision,1);return data
+ }))
+ assert.equal(caps.capabilities.items,true);assert.equal(caps.capabilities.review,false)
+ for(const [p,offset,n] of [[first,0,100],[last,100,3]]){
+  assert.deepEqual([p.available,p.sharing,p.view,p.total,p.offset,p.limit,p.items.length],
+   [true,'explicit_content_approval','items',103,offset,100,n])
+  assert.deepEqual(p.sources,[{...scope,observed_at:'2026-01-02T00:00:00Z'}])
+ }
+ const records=[...first.items,...last.items],keys=records.map(r=>r.kind+':'+r.number)
+ assert.equal(new Set(keys).size,103);assert.deepEqual(last.items.map(r=>r.kind+':'+r.number),['issue:1','pull:101','pull:1'])
+ assert.ok(records.every(r=>r.workspace_id==='beta'&&r.connection_id==='labels'&&r.repository==='sample/project'&&!Object.hasOwn(r,'approved')&&!Object.hasOwn(r,'fingerprint')&&!r.labels.includes(privateLabel)))
+ assert.equal(records.filter(r=>r.labels.includes('build')).length,28);assert.equal(records.flatMap(r=>r.labels.filter(s=>s==='build')).length,29)
+ assert.equal(await id('review-view').isVisible(),false);assert.ok(await id('shared-labels').isVisible())
+ stages('current reader Cookie and real 100+3 approved GETs verified; starting local-only interaction budget')
+ const localStart=requests.length
+ assert.equal(await buttons.count(),10);await count('build-tools',33);await count('build',28);await count(long,22)
+ assert.equal(await option(rare).count(),0);assert.match(await id('label-status').innerText(),/^103 of 103 approved loaded items.*14 distinct labels/s)
+ await id('next').click();assert.equal(await id('page').innerText(),'Page 2 of 6');await count('build',28)
+ await option('build').click();await matching(28);assert.equal(await id('page').innerText(),'Page 1 of 2')
+ await id('next').click();assert.deepEqual((await page.locator('#items .badge').allInnerTexts()).slice(-2),['Issue #1 · closed','Pull request #1 · closed']);await count('build-tools',33)
+ // A genuine second API page contributes both same-number identities. Ordinal 11 and
+ // raw multi-line options remain keyboard-selectable, independently of row paging.
+ await id('label-next').click()
+ assert.deepEqual(await page.locator('#label-options .label-name').allInnerTexts(),['area-2','docs','z-line\r\nbreak',rare].map(s=>JSON.stringify(s)))
+ const multiline=option('z-line\r\nbreak');await multiline.focus();await page.keyboard.press('Enter');await matching(1)
+ assert.equal(await multiline.getAttribute('aria-pressed'),'true');assert.equal(await id('label-input').inputValue(),'')
+ assert.ok((await id('label-status').innerText()).includes(JSON.stringify('z-line\r\nbreak')))
+ assert.equal(await page.locator('#items .badge').innerText(),'Pull request #101 · merged')
+ await id('label-previous').click();await id('label-input').fill(rare);await id('label-input').press('Enter');await matching(1)
+ assert.equal(await option(rare).count(),0);assert.ok((await id('label-status').innerText()).includes(JSON.stringify(rare)))
+ await id('label-input').fill('Build');await id('label-apply').click();await matching(0)
+ await id('label-input').fill('');await id('label-input').press('Enter');await matching(103)
+ await option('build').click();await filters('release TRAIN','issue','closed')
+ await matching(2);assert.match(await id('label-status').innerText(),/^4 of 103 approved loaded items/)
+ await count('build',2);await count('build-tools',1);await count('docs',1);await count(long,2)
+ assert.deepEqual(await page.locator('#items .badge').allInnerTexts(),['Issue #101 · closed','Issue #1 · closed'])
+ await screenshot('approved-labels-desktop.png',1440,1050,'build')
+ await page.setViewportSize({width:390,height:844})
+ await id('label-input').fill(long);await id('label-input').focus();await page.keyboard.press('Tab')
+ assert.ok(await id('label-apply').evaluate(el=>el===document.activeElement));await page.keyboard.press('Enter');await matching(2)
+ await screenshot('approved-labels-mobile.png',390,844,long)
+ await id('label-clear').click();await matching(4);assert.equal(await id('query').inputValue(),'release TRAIN')
+ assert.equal(await id('kind').inputValue(),'issue');assert.equal(await id('state').inputValue(),'closed')
+ await option('build').click();await filters('unlabeled');await matching(0);assert.match(await id('label-status').innerText(),/No labels on these items/)
+ await id('label-clear').click();await matching(1);assert.equal(await buttons.count(),0)
+ await filters('no such maintenance item');await matching(0);assert.match(await id('label-status').innerText(),/No items match the current filters[.]/)
+ await filters();await option('build').click();await page.setViewportSize({width:1440,height:1050});await renderTick()
+ assert.equal(requests.length,localStart,'Local filters, ranking, paging and screenshots must generate zero requests')
+ assert.deepEqual(await footprint(),baseline);stages('reader: real 100+3 rows at revision 1; local counts, exact filters and screenshots validated')
+
+ // No old-scope labels during or after a delayed genuine second page. Hold before
+ // dispatch; do not block the single-threaded HTTPS service or alter a response.
+ async function heldLast(action){
+  const endpoint=origin+base+paths('items')[2],seen=deferred(),release=deferred()
+  const match=url=>url.href===endpoint,handler=async route=>{seen.resolve();await release.promise;await route.continue()}
+  await page.route(match,handler)
+  try{
+   const [lastResponse]=await Promise.all([response(paths('items')[2]),(async()=>{
+    await id('reload').click();await within(seen.promise);try{await noFacet();await action()}finally{release.resolve()}
+   })()])
+   assert.equal(lastResponse.status(),200);const data=(await lastResponse.json()).data;await renderTick();return data
+  }finally{release.resolve();await page.unroute(match,handler)}
+ }
+ const stale=await heldLast(()=>ready('beta'));assert.equal(stale.revision,1)
+ assert.equal(await id('scope-title').innerText(),'beta / source / sample/project');assert.equal(await buttons.count(),1)
+ assert.equal(await option('<b>plain label</b>').count(),1);assert.equal(await id('label-input').inputValue(),'');assert.equal(await option('build').count(),0)
+ await open();await settled();await option('build').click()
+ const drift=await heldLast(()=>control('labels-conflict'));assert.equal(drift.revision,2);assert.equal(drift.offset,100)
+ await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('valid, consistent'))
+ assert.ok(await id('panel').isHidden());assert.equal(await id('items').textContent(),'');await noFacet()
+ await ready('empty');assert.match(await id('summary').innerText(),/No snapshot/);await noFacet()
+ await logout();await noFacet();await login('admin');await open();await settled();await option('build').click()
+ const dual=requests.length;await id('review-view').click();await settled();expectRead(dual,'review');await noFacet()
+ assert.ok((await id('items').innerText()).includes(privateLabel));assert.equal(await id('approval-panel').isVisible(),true)
+ await id('items-view').click();await settled();await matching(103);assert.equal(await id('label-input').inputValue(),'');assert.ok(!(await id('shared-labels').innerText()).includes(privateLabel))
+ await option('build').click();await logout();await noFacet();await login('reviewer')
+ // An Open requesting shared items falls back to the user's real review-only grant.
+ const fallback=requests.length;await open();await settled();expectRead(fallback,'review');await noFacet()
+ assert.ok(await id('items-view').isHidden());assert.ok((await id('items').innerText()).includes(privateLabel))
+ await logout();await noFacet();page.off('request',onRequest)
+ assert.ok(requests.filter(([,url])=>new URL(url).pathname.includes('/community/labels/')).every(([method])=>method==='GET'))
+ stages('real drift 1→2, stale scope, private review and reviewer fallback verified')
+}
+
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-community-session-'));let browser,child
  try{
@@ -69,10 +220,23 @@ async function main(){
   assert.equal(writes.length,before+1);assert.equal(await page.locator('#session').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'');assert.equal(await page.locator('#workspace').inputValue(),'');router.remove(base+'/approve');await router.drain()
   await login('admin');await ready();const after=await page.evaluate(async base=>(await(await fetch(base+'/items?limit=100')).json()).data.items.map(x=>x.number),base);assert.ok(after.includes(98))
   await control('revoke-membership');await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#panel').hidden&&document.querySelector('#status').textContent.includes('unavailable'));assert.equal(await page.locator('#items').textContent(),'')
-  await ready('beta');await control('revoke-session');await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'')
+  await ready('beta');assert.equal(await page.locator('#scope-title').innerText(),'beta / source / sample/project')
+  const revocationLabel='<b>plain label</b>',choice=page.locator('#label-options button')
+  assert.equal(await choice.count(),1);assert.equal(await choice.locator('.label-name').innerText(),JSON.stringify(revocationLabel))
+  assert.equal(await choice.locator('.label-count').innerText(),'2 items');await choice.click()
+  assert.equal(await choice.getAttribute('aria-pressed'),'true');assert.equal(await page.locator('#label-input').inputValue(),revocationLabel)
+  assert.ok((await page.locator('#label-status').innerText()).includes('Exact label '+JSON.stringify(revocationLabel)+': 2 matching items.'))
+  await control('revoke-session')
+  const [revokedRead]=await Promise.all([page.waitForResponse(r=>r.url()===origin+'/api/workspaces/beta/community/source/sample/project/capabilities'&&r.request().method()==='GET'),page.locator('#reload').click()])
+  assert.equal(revokedRead.status(),401)
+  await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false);assert.equal(await page.locator('#items').textContent(),'')
+  await assertFacetCleared(page) // Immediately after the genuine 401, before navigating or logging in again.
   await router.drain();await context.unrouteAll({behavior:'wait'});await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
+  await approvedLabelJourney({page,origin,folder,login,logout,ready,settled,control,renderTick})
+  assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
   console.log('Community session acceptance: real S256 cookies; reader/reviewer/admin; 101-row full approval preservation; CSRF/CAS; hostile text; late reads and accepted writes after logout; current membership/session revocation; history; four responsive screenshots. Synthetic HTTPS only.')
  }finally{await browser?.close();await stopSyntheticFixture(child);fs.rmSync(temp,{recursive:true,force:true})}
+ console.log('COMMUNITY_APPROVED_LABELS_PASS real synthetic Cookie GETs, 103 approved rows in two pages, local exact-label counts with zero requests, scope/revision/review isolation, two responsive screenshots and clean shutdown. No provider access.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

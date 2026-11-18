@@ -25,6 +25,45 @@ from packages.workspace_invitations import initialize_invitations
 from packages.workspaces import Principal, Workspace, Membership, ModuleInstance, SQLiteWorkspaceService
 
 
+# A separate browser-only connection, not an enlargement of the legacy boards.
+_LABEL_SCOPE = Scope('beta', 'labels', 'sample/project')
+_LONG_LABEL = 'integration-contract-for-candidate-compatibility-with-platform-toolchains'
+
+
+def seed_label_connection(policy, path):
+    scope = _LABEL_SCOPE
+    updated = '2026-01-01T00:00:00Z'
+
+    def row(kind, number, title, state, *labels):
+        return BoardItem(kind, number, title, state, updated, labels)
+
+    approved = [
+        row('issue', 1, 'Release train: packaging checks', 'closed', 'build', _LONG_LABEL),
+        row('issue', 2, 'Unlabeled maintenance note', 'open'),
+        row('issue', 98, 'Release train: lint follow-up', 'open', 'build'),
+        row('issue', 99, 'Release train: adjacent tooling', 'closed', 'build-tools'),
+        row('issue', 100, 'Release train: build in title only', 'closed', 'docs'),
+        row('issue', 101, 'Release train: wheel stability', 'closed', 'build', 'build', _LONG_LABEL),
+        row('pull', 1, 'Release train: packaging follow-up', 'closed', 'build', _LONG_LABEL),
+        row('pull', 101, 'Rare documentation update', 'merged', 'z-rare-exact', 'z-line\r\nbreak'),
+    ]
+    for number in range(3, 98):
+        labels = [f'area-{number % 8}']
+        if number % 4 == 0: labels.append('build')
+        if number % 5 == 0: labels.append(_LONG_LABEL)
+        if number % 3 == 0: labels.append('build-tools')
+        approved.append(row('issue', number, f'Maintenance card {number}', 'open', *labels))
+    private = row('issue', 204, 'Private review candidate', 'open', 'unshared-review-label')
+    snapshot = Snapshot(scope, '2026-01-02T00:00:00Z', tuple([*approved, private]))
+    with sqlite3.connect(path) as db:
+        proof = capture_approval(policy._load(db), community_state(db, scope), 'admin')
+        digests = [fingerprint(scope, item) for item in approved]
+        db.execute('UPDATE community_connections SET snapshot=?, approvals=? '
+                   'WHERE workspace_id=? AND connection_id=? AND repository=?',
+                   (encode(snapshot_data(snapshot)), approval_text(digests, proof),
+                    scope.workspace_id, scope.connection_id, scope.repository))
+
+
 def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_COMMUNITY_SESSION_UI') != '1' or len(sys.argv) != 3:
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
@@ -47,7 +86,8 @@ def main():
             modules=tuple(ModuleInstance(w,'community',('read','write')) for w in spaces))
         initialize_administration(policy); initialize_invitations(policy)
         scopes=tuple(Scope(w,'source','sample/project') for w in spaces)
-        initialize(policy,tuple(ConnectionPolicy(Connection(s),'synthetic-unused',('admin','reader'),('admin',),('admin','reviewer')) for s in scopes))
+        initialize(policy,tuple(ConnectionPolicy(Connection(s),'synthetic-unused',('admin','reader'),('admin',),('admin','reviewer')) for s in scopes) + (
+            ConnectionPolicy(Connection(_LABEL_SCOPE), 'synthetic-unused', ('admin', 'reader'), (), ('admin', 'reviewer')),))
         with sqlite3.connect(path) as db:
             current_policy=policy._load(db)
             for scope in scopes:
@@ -55,7 +95,8 @@ def main():
                 items=tuple(BoardItem('issue',n,('<img src=x onerror=alert(1)>' if n==101 else f'Synthetic issue {n}') + (' beta' if scope.workspace_id=='beta' else ''), 'open','2026-01-01T00:00:00Z',('<b>plain label</b>',)) for n in range(1,102))
                 snapshot=Snapshot(scope,'2026-01-02T00:00:00Z',items)
                 approvals=[fingerprint(scope,item) for item in items if item.number in (1,101)]
-                db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=?',(encode(snapshot_data(snapshot)),approval_text(approvals,capture_approval(current_policy,community_state(db,scope),"admin")) if scope.workspace_id!="commons" else approval_text([],None),scope.workspace_id))
+                db.execute('UPDATE community_connections SET snapshot=?,approvals=? WHERE workspace_id=? AND connection_id=? AND repository=?',(encode(snapshot_data(snapshot)),approval_text(approvals,capture_approval(current_policy,community_state(db,scope),"admin")) if scope.workspace_id!="commons" else approval_text([],None),scope.workspace_id,scope.connection_id,scope.repository))
+        seed_label_connection(policy, path)
         clock=lambda:datetime.now(timezone.utc)
         binding=LoginBinding(ISSUER,'synthetic-community-client',origin+'/auth/callback')
         login=SQLiteLoginStore.initialize(Path(directory)/'login.sqlite',binding=binding,clock=clock)
@@ -76,6 +117,12 @@ def main():
                     selected['subject']=subject+'-sub'
                 elif route=='/synthetic-community/conflict':
                     with sqlite3.connect(path) as db:db.execute("UPDATE community_connections SET revision=revision+1 WHERE workspace_id='alpha'")
+                elif route=='/synthetic-community/labels-conflict':
+                    # Negative race only: advance this real synthetic connection between its pages.
+                    with sqlite3.connect(path) as db:
+                        db.execute('UPDATE community_connections SET revision=revision+1 '
+                                   'WHERE workspace_id=? AND connection_id=? AND repository=?',
+                                   (_LABEL_SCOPE.workspace_id, _LABEL_SCOPE.connection_id, _LABEL_SCOPE.repository))
                 elif route=='/synthetic-community/revoke-session':login.revoke_subject(selected['subject'])
                 elif route=='/synthetic-community/revoke-membership':policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
                 else:return finish(start,'404 Not Found')

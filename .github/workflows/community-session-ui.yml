@@ -63,6 +63,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-community-session/desktop-confirm.png
             ${{ runner.temp }}/ms-collab-community-session/mobile-list.png
             ${{ runner.temp }}/ms-collab-community-session/mobile-confirm.png
+            ${{ runner.temp }}/ms-collab-community-session/approved-labels-desktop.png
+            ${{ runner.temp }}/ms-collab-community-session/approved-labels-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

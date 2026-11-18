@@ -10,6 +10,15 @@
 <div class="toolbar" id="actions"><button id="items-view" type="button" hidden>Shared items</button><button id="review-view" type="button" hidden>Review candidates</button><button id="refresh" type="button" hidden>Refresh from provider</button></div>
 <p class="boundary" id="boundary"></p>
 <form id="filters"><label>Title or label<input id="query" maxlength="200" autocomplete="off"></label><label>Kind<select id="kind"><option value="">All kinds</option><option value="issue">Issues</option><option value="pull">Pull requests</option></select></label><label>State<select id="state"><option value="">All states</option><option value="open">Open</option><option value="closed">Closed</option><option value="merged">Merged</option></select></label><button type="submit">Apply filters</button></form>
+<form id="shared-labels" aria-labelledby="label-heading" autocomplete="off" hidden>
+  <h3 id="label-heading">Explore approved labels</h3>
+  <p>Counts cover the loaded, approved observed subset, not repository totals. Each matching item counts once per label. The most frequent labels appear first.</p>
+  <div id="label-options" class="toolbar" role="group" aria-label="Ranked labels"></div>
+  <div id="label-pages" class="toolbar" hidden><button id="label-previous" type="button">Previous labels</button><span id="label-page"></span><button id="label-next" type="button">Next labels</button></div>
+  <div class="label-entry"><label for="label-input">Exact label<input id="label-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-describedby="label-help"></label><button id="label-apply" type="submit">Apply exact label</button><button id="label-clear" type="button">Clear exact label</button></div>
+  <p id="label-help">Type the original label, including spaces and case, or choose a ranked label. Quotation marks and escapes in the display are not part of the label.</p>
+  <p id="label-status" role="status" aria-live="polite"></p>
+</form>
 <p id="summary" role="status" aria-live="polite"></p><ul id="items"></ul><div class="toolbar"><button id="previous" type="button">Previous</button><span id="page"></span><button id="next" type="button">Next</button></div>
 <div id="approval-panel" hidden><p id="approval-summary"></p><button id="save" type="button" disabled>Review approval changes</button><p>Approvals apply to exact content versions and the configured reader audience. A changed item needs a new approval. The current filter does not remove approvals elsewhere.</p></div></section></section>
 <dialog id="confirmation"><form id="confirm-form"><h2 id="confirm-title"></h2><p id="confirm-detail"></p><p id="confirm-note"></p><div class="toolbar"><button id="confirm" type="submit">Confirm</button><button id="cancel" type="button">Cancel</button></div></form></dialog>
