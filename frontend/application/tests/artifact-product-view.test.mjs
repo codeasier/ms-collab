@@ -1,0 +1,408 @@
+// Handwritten metadata only. The Cookie/client tests below exercise the real session client;
+// their delayed responses model scheduling, not server publication or authorization.
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import vm from 'node:vm'
+import {createSessionClient, validateBootstrap} from '../client.mjs'
+import {makeProductRequest, validateProductResult, productInstantMicros, lastSevenUtcDates} from '../artifact-product-codec.mjs'
+
+const scope = {workspace_id:'alpha', connection_id:'source', bucket_id:'bucket'}
+const route = '/api/workspaces/alpha/artifacts/source/bucket/product-views/kit'
+const body = {format:1, quarter:'2026Q2', path:'pkg/', mode:'tree', page:1, page_size:10}
+const obs = 'b'.repeat(64)
+const t = '2026-04-02T00:00:00.000000Z'
+const seen = '2026-04-12T10:00:00Z'
+const request = (changes={}) => makeProductRequest(scope, 'kit', {...body,...changes})
+const file = (key, modified_at=t) => ({key, name:key.slice(key.lastIndexOf('/')+1),
+  parent:key.slice(0,key.lastIndexOf('/')+1), modified_at, size:7, is_dir:false, virtual:false})
+function folder(key) {
+  const stem=key.slice(0,-1)
+  return {key,name:stem.slice(stem.lastIndexOf('/')+1),parent:stem.slice(0,stem.lastIndexOf('/')+1),
+    modified_at:null,size:0,is_dir:true,virtual:true}
+}
+function rows(req=request(), items=[]) {
+  const {quarter,path='',mode='tree',page=1,page_size=50}=req.body
+  return {format:1, kind:'product-view', match:'relative-key-ascii-substring-v1',scope:{...req.scope},
+    view_id:req.viewId,quarter,path,mode,page,page_size,observed_at:seen,quarter_available:true,
+    catalog_revision:3,observation:obs,total:items.length,items,
+    source:{kind:'stored_index',full_history_complete:false,live_provider_verified:false,download_available:false}}
+}
+
+test('product factory capability is unique, depends on artifacts, and reveals no per-view authority',()=>{
+  const origin='https://app.example.invalid', base={service:'ms-collab',login_configured:false,authorization_endpoint:null}
+  const validate=mod=>validateBootstrap({...base,ui_modules:mod},origin)
+  assert.deepEqual(validate(['workspaces','artifacts','artifact-product-views']).ui_modules,
+    ['workspaces','artifacts','artifact-product-views'])
+  for(const modules of [['workspaces','artifact-product-views'],['workspaces','artifacts','artifact-product-views','artifact-product-views'],
+    ['workspaces','artifacts','artifact-product-views/kit']])assert.throws(()=>validate(modules))
+  assert.throws(()=>validateBootstrap({...base,ui_modules:['workspaces','artifacts'],product_views:['kit']},origin))
+})
+
+test('product request is an exact detached immutable selection; path and keyword stay literal body values',()=>{
+  const s={...scope}, relative="pkg/图/%2F/%_'/a//", keyword=' \uFEFF测 '
+  const b={...body,path:relative,mode:'files',keyword,recursive:false}
+  const r=makeProductRequest(s,'kit',b)
+  assert.deepEqual(Object.keys(r).sort(),['body','path','scope','viewId'])
+  assert.equal(r.path,route)
+  assert.ok([r,r.scope,r.body].every(Object.isFrozen))
+  b.path='another/';b.keyword='changed';s.bucket_id='second'
+  assert.deepEqual(r.scope,scope);assert.equal(r.body.path,relative);assert.equal(r.body.keyword,keyword)
+  for(const path of ['a/'.repeat(31), 'x'+'é'.repeat(511)+'/'])assert.equal(request({path}).body.path,path)
+  for(const keyword of ['😀'.repeat(256),'\uFEFF',' x '])assert.equal(request({mode:'files',keyword}).body.keyword,keyword)
+  assert.equal(makeProductRequest(scope,'v'.repeat(128),{format:1,quarter:'2026Q2'}).body.path,undefined)
+  assert.equal(request({page:1_000_000,page_size:50,if_observation:obs}).body.page,1_000_000)
+  for(const bad of [{...scope,bucket_id:'a'.repeat(129)},{...scope,bucket_id:'桶'},{...scope,x:true},{workspace_id:'alpha'}])
+    assert.throws(()=>makeProductRequest(bad,'kit',body))
+  for(const id of ['a/b','','id\n','a'.repeat(129),'Ω'])assert.throws(()=>makeProductRequest(scope,id,body))
+})
+
+test('product request rejects unavailable modes, implicit authority, invalid scalars and malformed paths',()=>{
+  for(const override of [{format:true},{format:2},{quarter:'0200Q1'},{quarter:'2026Q5'},{quarter:'2026Q2\n'},
+    {mode:'all'},{mode:null},{page:true},{page:0},{page:1_000_001},{page:2},{page_size:15},{page_size:100},
+    {if_observation:null},{if_observation:'B'.repeat(64)},{path:null},{path:'/a/'},{path:'a'},
+    {path:'a/../'},{path:'a/./'},{path:'a\\b/'},{path:'scheme://x/'},{path:'a/\n/'},
+    {path:'a/\udfff/'},{path:'a/'.repeat(32)},{path:'é'.repeat(512)+'/'},{recursive:false},{keyword:null},{end_time:t},
+    {mode:'files',keyword:''},{mode:'files',keyword:'\u0085\u2003'},{mode:'files',keyword:'😀'.repeat(257)},
+    {mode:'files',keyword:'\ud800'},{mode:'files',recursive:'true'},{mode:'files',start_time:null},
+    {mode:'files',start_time:'2026-04-02T00:00:00.000001Z',end_time:t},
+    {scope},{product_token:'kit_'},{workspace_id:'other'},{order:'asc'},{conditions:[]},{files_only:true}])
+    assert.throws(()=>request(override))
+})
+
+test('Gregorian instants retain six digits, offsets and years 0001 through 0099 without local timezone coercion',()=>{
+  assert.equal(productInstantMicros('1970-01-01T00:00:00Z'),0n)
+  assert.equal(productInstantMicros('1969-12-31T23:59:59.999999Z'),-1n)
+  assert.equal(productInstantMicros('0001-01-01T00:00:00Z'),-62135596800000000n)
+  assert.equal(productInstantMicros('9999-12-31T23:59:59.999999Z'),253402300799999999n)
+  assert.equal(productInstantMicros('0100-01-01T00:00:00+01:00'),productInstantMicros('0099-12-31T23:00:00Z'))
+  assert.equal(productInstantMicros('2026-04-02T08:00:00.000001+08:00'),productInstantMicros(t)+1n)
+  assert.equal(productInstantMicros('2000-02-28T23:30:00-01:00'),productInstantMicros('2000-02-29T00:30:00Z'))
+  assert.equal(productInstantMicros('2026-04-02T00:00:00.1Z')-productInstantMicros(t),100000n)
+  for(const invalid of ['0000-01-01T00:00:00Z','0001-01-01T00:00:00+00:01','9999-12-31T23:59:59-00:01',
+    '1900-02-29T00:00:00Z','2026-04-31T00:00:00Z','2026-04-02T24:00:00Z','2026-04-02T15:60:00Z',
+    '2026-04-02T00:00:60Z','2026-04-02T00:00:00+00:60','2026-04-02T00:00:00+24:00',
+    '2026-04-02T00:00:00.1234567Z','2026-04-02T00:00:00','2026-04-02 00:00:00Z',t+'\n'])
+    assert.throws(()=>productInstantMicros(invalid))
+  const date=new Date('2026-04-03T00:00:01Z'), copy=date.getTime()
+  assert.deepEqual(lastSevenUtcDates(date),{start_time:'2026-03-28T00:00:00Z',end_time:'2026-04-03T23:59:59.999999Z'})
+  assert.deepEqual(lastSevenUtcDates(new Date('2024-01-02T23:59:59Z')),
+    {start_time:'2023-12-27T00:00:00Z',end_time:'2024-01-02T23:59:59.999999Z'})
+  assert.equal(date.getTime(),copy)
+})
+
+test('exact 17-field result, four source fields and every echoed coordinate match the request',()=>{
+  const req=request({if_observation:obs}), result=rows(req,[folder('pkg/a/'),file('pkg/a')])
+  assert.deepEqual(validateProductResult(result,req),result)
+  assert.equal(Object.keys(result).length,17)
+  for(const name of Object.keys(result)) {
+    const missing={...result};delete missing[name];assert.throws(()=>validateProductResult(missing,req))
+  }
+  for(const name of Object.keys(result.source)) {
+    const source={...result.source};delete source[name];assert.throws(()=>validateProductResult({...result,source},req))
+  }
+  for(const patch of [{format:true},{kind:'saved-view'},{match:'full-uri'},{scope:{...scope,bucket_id:'second'}},
+    {scope:{...scope,extra:1}},{view_id:'sensor'},{quarter:'2026Q3'},{path:'other/'},{mode:'files'},{page:2},{page_size:20},
+    {quarter_available:false},{quarter_available:0},{catalog_revision:0},{catalog_revision:Number.MAX_SAFE_INTEGER+1},
+    {observation:'a'.repeat(64)},{observation:'B'.repeat(64)},{total:501},{total:-1},{total:0},{total:3},
+    {items:[result.items[1],result.items[0]]},{extra:true},{observed_at:'not an ISO instant'},
+    {source:{...result.source,kind:'provider'}},{source:{...result.source,download_available:true}},
+    {source:{...result.source,full_history_complete:true}},{source:{...result.source,live_provider_verified:true}},
+    {source:{...result.source,url:'https://never.invalid'}}])assert.throws(()=>validateProductResult({...result,...patch},req))
+  const pastPage=request({page:3,if_observation:obs})
+  const empty={...rows(pastPage),total:11}
+  assert.deepEqual(validateProductResult(empty,pastPage),empty)
+  const absent={...rows(req),quarter_available:false}
+  assert.deepEqual(validateProductResult(absent,req),absent)
+})
+
+test('row shape, scalar order, true empty segments and exact files constraints reject misleading success',()=>{
+  const req=request(), good=file('pkg/a')
+  for(const field of Object.keys(good)) {
+    const row={...good};delete row[field];assert.throws(()=>validateProductResult(rows(req,[row]),req))
+  }
+  const positives=[folder('pkg/a/'),file('pkg/a'),file('pkg/\uE000'),file('pkg/𐀀')]
+  assert.deepEqual(validateProductResult(rows(req,positives),req).items,positives)
+  const deep=request({path:'pkg/a/'})
+  assert.equal(validateProductResult(rows(deep,[folder('pkg/a//')]),deep).items[0].name,'')
+  for(const items of [[good,good],[good,folder('pkg/a/')],[file('pkg/𐀀'),file('pkg/\uE000')],
+    [file('pkg/deep/a')],[file('pkgwide/a')],[file('pkg/../a')],[file('pkg/a.SHa256')],[file('pkg/\ud800')],
+    [file('pkg/a','2026-04-13T00:00:00Z')],[file('pkg/a','2026-04-02 00:00:00+00:00')],
+    [{...good,url:'download'}],[{...good,name:'b'}],[{...good,parent:''}],[{...good,virtual:true}],
+    [{...good,size:true}],[{...good,size:Number.MAX_SAFE_INTEGER+1}],[{...folder('pkg/a/'),size:7}],
+    [{...folder('pkg/a/'),modified_at:t}],[{...folder('pkg/a/'),virtual:false}]])
+    assert.throws(()=>validateProductResult(rows(req,items),req))
+  const filters={mode:'files',keyword:'KIT_',start_time:t,end_time:t}
+  const direct=request(filters), recursive=request({...filters,recursive:true})
+  const nested=file('pkg/a//KIT_hit'), directHit=file('pkg/KIT_hit'), sidecarName=file('pkg/KIT_hit.sha256.txt')
+  for(const [r,item] of [[direct,directHit],[direct,sidecarName],[recursive,nested]])assert.deepEqual(validateProductResult(rows(r,[item]),r).items,[item])
+  for(const [r,item] of [[direct,nested],[recursive,file('pkg/kit_hit')],[recursive,folder('pkg/KIT_dir/')],
+    [recursive,file('pkg2/KIT_other')],[recursive,file('pkg/KIT_hit','2026-04-02T00:00:00.000001Z')],
+    [recursive,file('pkg/KIT_hit','2026-04-01T23:59:59.999999Z')]])assert.throws(()=>validateProductResult(rows(r,[item]),r))
+  // Bucket offset and mandatory token are server facts, absent from the DTO.
+  assert.doesNotThrow(()=>validateProductResult(rows(req,[file('pkg/plain','2026-03-31T23:59:59Z')]),req))
+})
+
+const response=(data,status=200)=>({status,ok:status>=200&&status<300,text:async()=>JSON.stringify({data})})
+function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
+function harness(){
+  const calls=[], effects=[], queue=[]
+  let csrf='A'.repeat(43)
+  const session=createSessionClient({cookie:()=>'__Host-ms-collab-csrf='+csrf,onInvalid:message=>effects.push(message),
+    fetcher:(path,options)=>{
+      calls.push({path,options})
+      if(path==='/auth/session')return Promise.resolve(response({principal_id:'reader'}))
+      if(path==='/api/workspaces'&&!queue.length)return Promise.resolve(response([]))
+      const next=queue.shift()
+      if(!next)throw Error('Unexpected test fetch')
+      return next(path,options)
+    }})
+  return {session,calls,effects,queue,setCookie:value=>{csrf=value},read:(opts={isCurrent:()=>true},s=scope,b=body)=>session.readArtifactProductView(s,'kit',b,opts)}
+}
+
+test('typed product transport sends only a frozen exact POST with fresh CSRF and non-exporting fetch options',async()=>{
+  const h=harness();await h.session.inspect()
+  const s={...scope}, b={...body}
+  h.queue.push(()=>response(rows(request())))
+  const pending=h.read({isCurrent:()=>true},s,b)
+  b.path='changed/';s.workspace_id='another';await pending
+  h.setCookie('B'.repeat(43));h.queue.push(()=>response(rows(request())))
+  await h.read()
+  assert.deepEqual(h.calls.map(c=>c.path),['/auth/session',route,route])
+  for(const [i,letter] of [[1,'A'],[2,'B']]){
+    const o=h.calls[i].options
+    assert.deepEqual(JSON.parse(o.body),body)
+    assert.equal(o.method,'POST');assert.equal(o.credentials,'same-origin')
+    assert.equal(o.cache,'no-store');assert.equal(o.redirect,'error');assert.equal(o.referrerPolicy,'no-referrer')
+    const hdr=new Headers(o.headers)
+    assert.equal(hdr.get('Content-Type'),'application/json');assert.equal(hdr.get('X-CSRF-Token'),letter.repeat(43))
+    assert.equal(hdr.has('Authorization'),false)
+  }
+  h.setCookie('not-a-proof');await assert.rejects(h.read());assert.equal(h.calls.length,3)
+})
+
+const aborted=e=>e?.name==='AbortError'
+test('product owner is strict true and remains current across the first asynchronous codec load',async()=>{
+  const h=harness();await h.session.inspect()
+  for(const opts of [undefined,{}, {isCurrent:()=>0},{isCurrent:()=>1},{isCurrent:()=>{throw Error('private diagnostic')}},
+    {isCurrent:()=>true,signal:AbortSignal.abort()}]){
+    await assert.rejects(h.session.readArtifactProductView(scope,'kit',body,opts),aborted)
+  }
+  let current=true
+  const pending=h.read({isCurrent:()=>current});current=false
+  await assert.rejects(pending,aborted)
+  assert.equal(h.calls.length,1);assert.equal(h.effects.length,0)
+  assert.deepEqual(await h.session.request('/api/workspaces'),[])
+})
+
+test('stale product headers or fetch rejection cannot globally invalidate a newer ABA selection',async()=>{
+  for(const outcome of [200,401,412,'reject']){
+    const h=harness();await h.session.inspect()
+    const headers=deferred(), started=deferred();let sequence=1
+    h.queue.push(()=>{started.resolve();return headers.promise})
+    const pending=h.read({isCurrent:()=>sequence===1});await started.promise
+    sequence=2;sequence=3 // Same visible coordinates, different owner; abort deliberately ignored.
+    h.queue.push(()=>response(rows(request())));await h.read({isCurrent:()=>sequence===3})
+    const rejected=assert.rejects(pending,aborted)
+    if(outcome==='reject')headers.reject(Error('private diagnostic'))
+    else headers.resolve(response(rows(request()),outcome))
+    await rejected
+    assert.deepEqual(h.effects,[]);assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    assert.deepEqual(h.calls.map(c=>c.path),['/auth/session',route,route,'/api/workspaces'])
+  }
+})
+
+test('retiring a product owner after headers discards late valid body, malformed JSON and body read rejection',async()=>{
+  for(const end of ['valid','invalid','reject']){
+    const h=harness();await h.session.inspect()
+    const held=deferred(), reading=deferred();let current=true
+    h.queue.push(()=>({ok:true,status:200,text(){reading.resolve();return held.promise}}))
+    const pending=h.read({isCurrent:()=>current});await reading.promise
+    current=false
+    const rejected=assert.rejects(pending,aborted)
+    if(end==='reject')held.reject(Error('private diagnostic'))
+    else held.resolve(end==='valid'?JSON.stringify({data:rows(request())}):'private invalid JSON')
+    await rejected;assert.deepEqual(h.effects,[]);assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    assert.equal(h.calls.length,3)
+  }
+})
+
+test('clear and reinspection protect both ordinary-to-product and product-to-ordinary late 401',async()=>{
+  for(const from of ['product','ordinary']){
+    const h=harness();await h.session.inspect()
+    const started=deferred(), held=deferred()
+    h.queue.push(()=>{started.resolve();return held.promise})
+    const ordinary='/api/workspaces/alpha/artifacts/source/bucket/quarters'
+    const pending=from==='product'?h.read():h.session.request(ordinary)
+    await started.promise;h.session.clear();await h.session.inspect()
+    if(from==='product')assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    else {h.queue.push(()=>response(rows(request())));await h.read()}
+    const rejected=assert.rejects(pending,from==='product'?aborted:/stale/i)
+    held.resolve(response({},401));await rejected
+    assert.deepEqual(h.effects,[]);assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    assert.equal(h.calls.length,5)
+  }
+})
+
+test('current product 401 and ordinary 401 each invalidate once; generic requests cannot install a product owner',async()=>{
+  for(const kind of ['product','ordinary']){
+    const h=harness();await h.session.inspect();h.queue.push(()=>response({},401))
+    const pending=kind==='product'?h.read():h.session.request('/api/workspaces',{isCurrent:()=>false})
+    await assert.rejects(pending,e=>e.status===401)
+    assert.equal(h.effects.length,1)
+    await assert.rejects(h.session.request('/api/workspaces'));assert.equal(h.calls.length,2)
+  }
+})
+
+test('no retries or raw diagnostics for denied, stale, malformed and non-200 success responses',async()=>{
+  for(const status of [400,403,404,409,412,503,201,204,206]){
+    const h=harness();await h.session.inspect();h.queue.push(()=>response({private:'PRIVATE-STRING'},status))
+    await assert.rejects(h.read(),e=>!e.message.includes('PRIVATE-STRING')&&(status<400||e.status===status))
+    assert.deepEqual(h.effects,[]);assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    assert.equal(h.calls.length,3)
+  }
+  for(const raw of ['PRIVATE-STRING',JSON.stringify({data:rows(request()),private:'PRIVATE-STRING'}),
+    JSON.stringify({data:{...rows(request()),path:'elsewhere/'}}),' '.repeat(2097153)]){
+    const h=harness();await h.session.inspect();h.queue.push(()=>({ok:true,status:200,text:async()=>raw}))
+    await assert.rejects(h.read(),e=>!e.message.includes('PRIVATE-STRING'));assert.equal(h.effects.length,0)
+    assert.equal(h.calls.length,2)
+  }
+})
+
+class Element {
+  constructor(tag,doc){
+    this.tagName=tag.toUpperCase();this.doc=doc;this.attributes={};this.handlers={};this.children=[]
+    this.textContent='';this.value='';this.hidden=false;this.disabled=false;this.checked=false
+  }
+  addEventListener(type,fn){(this.handlers[type]??=[]).push(fn)}
+  append(...nodes){this.children.push(...nodes)}
+  replaceChildren(...nodes){this.children=[...nodes];this.textContent=''}
+  setAttribute(k,v){this.attributes[k]=String(v);if(k==='hidden')this.hidden=true}
+  focus(){this.doc.activeElement=this}
+  async fire(type,extra={}){
+    const e={type,button:0,defaultPrevented:false,preventDefault(){this.defaultPrevented=true},...extra}
+    await Promise.all((this.handlers[type]??[]).map(fn=>fn(e)))
+  }
+  text(){return [this.textContent,...this.children.map(n=>n.text())].join(' ')}
+  all(tag){return [...(this.tagName===tag?[this]:[]),...this.children.flatMap(n=>n.all(tag))]}
+}
+function tinyDocument(){
+  const els=new Map()
+  const doc={createElement(tag){return new Element(tag,doc)},getElementById(id){return els.get(id)??null}}
+  doc.body=doc.createElement('body');doc.activeElement=doc.body
+  function install(id){els.set(id,doc.createElement('div'));return els.get(id)}
+  return {doc,install}
+}
+const flush=()=>new Promise(resolve=>setImmediate(resolve))
+
+// This harness uses the shipped controller plus shipped typed client/codec, but
+// an intentionally tiny event/DOM surface. Real navigation and painting are in HTTPS acceptance.
+async function controllerHarness(){
+  const {mountArtifactProductView}=await import('../artifact-product-view.mjs')
+  const {doc,install}=tinyDocument()
+  const page=fs.readFileSync(new URL('../artifact-product-view.html',import.meta.url),'utf8')
+  for(const [,id] of page.matchAll(/\bid="([^"]+)"/g))install(id)
+  const client=harness();await client.session.inspect()
+  const ctrl=mountArtifactProductView({doc,session:client.session,now:()=>new Date('2026-04-03T00:00:01Z')})
+  const el=id=>doc.getElementById('pv-'+id)
+  const edit=async(id,value)=>{el(id).value=value;await el(id).fire('input')}
+  async function select(view='kit'){
+    for(const [id,v] of Object.entries({workspace:'alpha',connection:'source',bucket:'bucket',view,quarter:'2026Q2'}))await edit(id,v)
+  }
+  function plan(items,updates={},status=200){
+    client.queue.push((path,options)=>{
+      const b=JSON.parse(options.body), view=path.split('/').at(-1)
+      return response({...rows(makeProductRequest(scope,view,b),items),...updates},status)
+    })
+  }
+  return {ctrl,client,doc,el,edit,select,plan}
+}
+
+test('controller replaces edits immediately, preserves paths and submits the UTC shortcut exactly once',async()=>{
+  const h=await controllerHarness(), {ctrl,client,el}=h
+  ctrl.activate();await h.select();assert.equal(client.calls.length,1)
+  h.plan([folder('pkg/')]);await el('setup').fire('submit')
+  const child=el('results').all('BUTTON')[0]
+  assert.ok(child)
+  h.plan([folder('pkg/a/'),file('pkg/a')]);await child.fire('click')
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...body,if_observation:obs})
+  const oldButton=el('results').all('BUTTON')[0]
+  await h.edit('keyword','KIT_')
+  assert.equal(el('results').children.length,0);assert.equal(el('evidence').textContent,'');assert.ok(el('next').disabled)
+  await oldButton.fire('click')
+  assert.equal(client.calls.length,3)
+  el('recursive').checked=true;await el('recursive').fire('input')
+  h.plan([file('pkg/deep/KIT_result')])
+  await el('range7').fire('click')
+  const query=JSON.parse(client.calls.at(-1).options.body)
+  assert.deepEqual(query,{...body,mode:'files',recursive:true,keyword:'KIT_',if_observation:obs,
+    start_time:'2026-03-28T00:00:00Z',end_time:'2026-04-03T23:59:59.999999Z'})
+  assert.equal(client.calls.length,4);assert.match(el('results').text(),/KIT_result/)
+  assert.equal(el('results').all('BUTTON').length,0)
+  await h.edit('start','2026-04-03T00:00:00.000002Z');await h.edit('end','2026-04-03T00:00:00.000001Z')
+  await el('filters').fire('submit');assert.equal(client.calls.length,4);assert.ok(el('page-size').disabled)
+  assert.equal(el('range7').attributes['aria-pressed'],'false')
+  h.plan([]);await el('tree').fire('click')
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...body,if_observation:obs})
+  ctrl.clear();assert.ok(el('controls').hidden)
+  for(const id of ['workspace','connection','bucket','view','quarter','keyword','start','end'])assert.equal(el(id).value,'')
+})
+
+test('controller treats inconsistent revision or observation time under an unchanged pin as failure, never empty',async()=>{
+  for(const changed of [{catalog_revision:4},{observed_at:'2026-04-13T00:00:00Z'}]){
+    const h=await controllerHarness(), {ctrl,client,el}=h
+    ctrl.activate();await h.select()
+    h.plan([folder('pkg/')]);await el('setup').fire('submit')
+    const child=el('results').all('BUTTON')[0]
+    h.plan([],changed);await child.fire('click')
+    assert.ok(!el('reopen').hidden);assert.equal(el('results').children.length,0)
+    assert.equal(el('page').textContent,'');assert.equal(el('evidence').textContent,'');assert.equal(client.calls.length,3)
+    h.plan([],{quarter_available:false});await el('reopen').fire('click')
+    const retry=JSON.parse(client.calls.at(-1).options.body)
+    assert.equal(retry.page,1);assert.equal(retry.path,'');assert.ok(!Object.hasOwn(retry,'if_observation'))
+    assert.match(el('status').textContent,/absent/i);assert.ok(el('reopen').hidden)
+  }
+})
+
+test('controller ignores an old selection after edits, ABA and explicit re-open without relying on fetch abort',async()=>{
+  const h=await controllerHarness(), {ctrl,client,el}=h;ctrl.activate();await h.select()
+  const started=deferred(), held=deferred()
+  client.queue.push(()=>{started.resolve();return held.promise})
+  const pending=el('setup').fire('submit');await started.promise
+  assert.ok(el('open').disabled)
+  await h.edit('view','sensor');await h.edit('view','kit')
+  assert.ok(!el('open').disabled)
+  h.plan([file('KIT_new')]);await el('setup').fire('submit')
+  held.resolve(response({},401));await pending
+  assert.deepEqual(client.effects,[]);assert.match(el('results').text(),/KIT_new/)
+  assert.deepEqual(client.calls.map(c=>c.path),['/auth/session',route,route])
+  ctrl.clear();assert.equal(el('results').children.length,0)
+})
+
+test('shell awaiting the optional product module cannot revive inspection after document departure',async()=>{
+  // Keep shell.start/clear/inspect and event handlers intact. Only substitute the
+  // module loader with a controllable barrier, like a slow optional script load.
+  const raw=fs.readFileSync(new URL('../shell.mjs',import.meta.url),'utf8')
+  const load=/import\(\s*(['"])(?:\.\/|\/app\/)artifact-product-view\.mjs\1\s*\)/g
+  assert.equal([...raw.matchAll(load)].length,1)
+  const source=raw.replace(/^import .+\n/gm,'').replace(load,'loadProductPage()')
+  for(const retire of [false,true]){
+    const {doc,install}=tinyDocument()
+    doc.body.dataset={page:'artifact-product-views'}
+    for(const name of ['pv-return','app-artifacts-link','app-sign-in','app-sign-out','app-recheck','app-community-link',
+      'app-principal','app-status','app-login-note','app-responsibility-link'])install(name)
+    const listeners={}, started=deferred(), held=deferred(), seen=[]
+    const bootstrap={service:'ms-collab',ui_modules:['workspaces','artifacts','artifact-product-views'],login_configured:false,authorization_endpoint:null}
+    const session={bootstrap:async()=>bootstrap,clear:()=>seen.push('clear'),
+      inspect:async()=>{seen.push('inspect');return {principal_id:'reader'}}}
+    vm.runInNewContext(source,{document:doc,window:{addEventListener(k,fn){listeners[k]=fn}},
+      location:{protocol:'https:',origin:'https://app.example.invalid'},validateBootstrap,displayPolicyId:x=>x,
+      createSessionClient:()=>session,loadProductPage:()=>{started.resolve();return held.promise}})
+    await started.promise
+    if(retire)listeners.pagehide()
+    held.resolve({mountArtifactProductView(){seen.push('mount');return {clear(){},activate(){seen.push('activate')}}}})
+    await flush()
+    assert.deepEqual(seen.filter(s=>s!=='clear'),retire?[]:['mount','inspect','activate'])
+    assert.equal(doc.getElementById('app-principal').textContent,retire?'Not verified':'reader')
+  }
+})

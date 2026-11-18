@@ -67,6 +67,9 @@ jobs:
             ${{ runner.temp }}/ms-collab-artifact-session/scopes-reader-mobile.png
             ${{ runner.temp }}/ms-collab-artifact-session/scopes-admin-desktop.png
             ${{ runner.temp }}/ms-collab-artifact-session/scopes-admin-mobile.png
+            ${{ runner.temp }}/ms-collab-artifact-session/product-view-tree-desktop.png
+            ${{ runner.temp }}/ms-collab-artifact-session/product-view-range-mobile.png
+            ${{ runner.temp }}/ms-collab-artifact-session/product-view-recovery-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

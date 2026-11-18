@@ -130,7 +130,11 @@ class ApplicationHost:
             self._artifact_downloads = ArtifactSessionDownloadAPI(boundary=self._boundary,
                 downloader=ArtifactDownloader(service=download_service, transport=artifact_downloads.transport))
 
-
+    @property
+    def artifact_product_views_enabled(self):
+        """Host UI support only, never a scope, publication or reader grant."""
+        index = self._modules.get("artifacts")
+        return index is not None and bool(index._product_views)
 
     def __call__(self, environ, start_response):
         # The same HTTPS/Host/Cookie/CSRF and error/response envelope protects all

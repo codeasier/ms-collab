@@ -1,5 +1,5 @@
 """Temporary HTTPS artifact/session acceptance. No fixture routes in production."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -16,6 +16,10 @@ from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_ARTIFACT_SESSION')!='1' or len(sys.argv)!=3:
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
+    discovery = os.environ.get('MS_COLLAB_SYNTHETIC_ARTIFACT_DISCOVERY') == '1'
+    product = os.environ.get('MS_COLLAB_SYNTHETIC_ARTIFACT_PRODUCT_VIEWS') == '1'
+    if product and discovery:
+        raise SystemExit('product and discovery fixtures require separate temporary processes')
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
         def get_environ(self):
@@ -24,8 +28,25 @@ def main():
         server=make_server('127.0.0.1',0,lambda e,s:[],handler_class=QuietHTTPS)
         origin='https://127.0.0.1:'+str(server.server_port)
         provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
-        app,policy,login,exchange=application(directory,origin=origin,clock=lambda:datetime.now(timezone.utc),authorization_endpoint=provider)
-        discovery = os.environ.get('MS_COLLAB_SYNTHETIC_ARTIFACT_DISCOVERY') == '1'
+        product_hooks = {}
+        if product:
+            from packages.application_ui.tests.artifact_product_fixtures import (
+                product_application, republish_product, revoke_product_read)
+            # Security time starts at current UTC, independently of the browser's
+            # date-range clock. Only this dedicated process can advance it.
+            security_time = datetime.now(timezone.utc)
+            def expire_session():
+                nonlocal security_time
+                security_time += timedelta(hours=2)  # exceeds even the maximum LoginBinding TTL
+            app,policy,login,exchange=product_application(directory, origin=origin,
+                clock=lambda:security_time, authorization_endpoint=provider)
+            product_hooks = {
+                '/synthetic/artifact/product-republish': lambda: republish_product(policy),
+                '/synthetic/artifact/product-revoke-read': lambda: revoke_product_read(policy),
+                '/synthetic/artifact/product-expire-session': expire_session,
+            }
+        else:
+            app,policy,login,exchange=application(directory,origin=origin,clock=lambda:datetime.now(timezone.utc),authorization_endpoint=provider)
         subject = ['admin-sub']
         if discovery:
             from packages.application_ui.tests.artifact_discovery_fixtures import seed_directory
@@ -35,7 +56,19 @@ def main():
             if path.startswith('/synthetic/artifact/'):
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
-                if discovery and path.endswith('/as-reader'):subject[0]='reader-sub';result={}
+                if product:
+                    # These three fixed, bodyless loopback controls belong to
+                    # the disposable product process only. No suffix matching.
+                    if path not in product_hooks:
+                        start('404 Not Found',[('Content-Length','0')]);return [b'']
+                    if (env.get('HTTP_HOST') != '127.0.0.1:'+str(server.server_port)
+                            or env.get('HTTP_SEC_FETCH_SITE') not in (None, 'same-origin', 'none')):
+                        start('403 Forbidden',[('Content-Length','0')]);return [b'']
+                    if (env.get('QUERY_STRING') or env.get('CONTENT_LENGTH') not in (None, '', '0')
+                            or 'HTTP_TRANSFER_ENCODING' in env):
+                        start('400 Bad Request',[('Content-Length','0')]);return [b'']
+                    product_hooks[path]();result={'ok':True}
+                elif discovery and path.endswith('/as-reader'):subject[0]='reader-sub';result={}
                 elif discovery and path.endswith('/as-second'):subject[0]='second-sub';result={}
                 elif discovery and path.endswith('/seed-pages'):
                     from packages.application_ui.tests.artifact_discovery_fixtures import seed_pages

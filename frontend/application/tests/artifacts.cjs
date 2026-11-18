@@ -103,4 +103,4 @@ function reportFailure(error){
  if(error instanceof AggregateError)for(const nested of error.errors)reportFailure(nested)
  if(error?.cause)reportFailure(error.cause)
 }
-main().catch(error=>{reportFailure(error);process.exitCode=1})
+main().then(async()=>{ await require('./artifact-product-views.cjs').run() }).catch(error=>{reportFailure(error);process.exitCode=1})
