@@ -141,3 +141,11 @@ integration are still required. No old service, runner or production data change
 - [Protocol evidence and exclusions](MIGRATION.md)
 - [Tests](tests/README.md)
 - [Documentation](../../docs/README.md)
+
+## Review a replacement before publishing it
+
+A trusted integration can choose `reviewed_refresh` instead of `refresh` when a
+named operator must inspect the acquired data before replacing the stored subset.
+See the [private terminal review contract](REVIEW.md). This is opt-in: it neither
+changes the existing trusted method nor adds a button, Cookie route, CLI credential
+loader, installed-runtime configuration or projection visible to ordinary readers.
