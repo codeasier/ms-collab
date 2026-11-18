@@ -66,7 +66,12 @@ read for that revision under current permissions. This opens the run, not a
 specific job or its logs. Expanding the sample list does not read any details.
 
 Run IDs, stage/job names and all provider-origin text are rendered with
-`textContent`, never HTML. The static file allowlist, same-origin checks,
+`textContent`, never HTML. Stage and job names have a limit of 256 Unicode
+code points, not 256 UTF-16 units: an extended CJK character counts once.
+The reader preserves the stored spelling without normalization or truncation.
+The snapshot codec still enforces printable names and the size of the whole
+record; this display check does not replace it or change identifier rules.
+The static file allowlist, same-origin checks,
 no-store/nosniff/no-referrer and strict CSP contain this narrow wrapper. These
 are not a full production security review or secret scrubber. Real provider
 compatibility, safe data publication, secure credentials and deployment remain

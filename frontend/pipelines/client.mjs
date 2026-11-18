@@ -2,7 +2,21 @@ const id = value => typeof value==='string' && value.match(/^[A-Za-z0-9][A-Za-z0
 const states = new Set(['success','failure','cancelled','timed_out','skipped','queued','running','unknown'])
 const integer = (value,max=10000) => Number.isSafeInteger(value)&&value>=0&&value<=max
 const time = value => typeof value==='string'&&/(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value))
-const label = value => typeof value==='string'&&value.length>0&&value.length<=256&&!/[\u0000-\u001f\u007f]/.test(value)
+function label(value){
+ // Bound work in UTF-16 first. In Unicode mode the surrogate range matches
+ // only unpaired code units, not a valid supplementary character.
+ if(typeof value!=='string'||!value.length||value.length>512||/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(value))return false
+ if(value.length<=256)return true // Already within the scalar limit: keep the existing display policy.
+ // For the newly admitted range, exclude known nonprinting characters, but
+ // not all Cn: an older browser may not know a CJK character the server stored.
+ // This display check does not replace the server's printable-label contract.
+ if(value.startsWith(' ')||value.endsWith(' '))return false
+ let count=0
+ for(const point of value){
+  if(++count>256||(point!==' '&&/[\p{Cc}\p{Cf}\p{Co}\p{Z}\p{Noncharacter_Code_Point}]/u.test(point)))return false
+ }
+ return true
+}
 const invalid = () => {throw new Error('Invalid or inconsistent snapshot. Reload the scope.')}
 export function scopeFrom(workspace,connection,pipeline) {
  if(![workspace,connection,pipeline].every(id))throw new Error('Invalid scope.')
