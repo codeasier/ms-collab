@@ -1,15 +1,16 @@
 // A document-local reader. Only the typed Cookie transport knows the network;
 // no links, navigation state or storage are constructed from private values.
-import {lastSevenUtcDates, makeProductRequest, productInstantMicros} from './artifact-product-codec.mjs'
+import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validateProductResult} from './artifact-product-codec.mjs'
 
-export function mountArtifactProductView({session, now=()=>new Date(), doc=document}){
+export function mountArtifactProductView({session, download=null, now=()=>new Date(), doc=document}){
   if(typeof session?.readArtifactProductView!=='function')throw Error('Product view reader required.')
+  if(download&&(typeof download.select!=='function'||typeof download.clear!=='function'))throw Error('A content-bound download panel is required.')
   const el=id=>doc.getElementById('pv-'+id)
   const make=(tag,text)=>{const node=doc.createElement(tag);if(text!==undefined)node.textContent=text;return node}
   const status=text=>{el('status').textContent=text}
   // A pin survives local refinements and quarter changes, never a change of
   // identity. "opened" is a verified location, not the values being edited.
-  let active=false, serial=0, flight=null, pin=null, opened=null, shown=null, recovery=false
+  let active=false, serial=0, flight=null, checking=null, pin=null, opened=null, shown=null, recovery=false
   const identityFields=['workspace','connection','bucket','view']
   const fields=()=>({scope:{workspace_id:el('workspace').value,connection_id:el('connection').value,bucket_id:el('bucket').value},viewId:el('view').value})
   const navigation=(body,path)=>({format:1,quarter:body.quarter,path,mode:'tree',page:1,page_size:body.page_size})
@@ -26,8 +27,13 @@ export function mountArtifactProductView({session, now=()=>new Date(), doc=docum
     el('prev').disabled=!shown||shown.request.body.page<=1
     el('next').disabled=!shown||shown.request.body.page*shown.request.body.page_size>=shown.total
   }
+  function retireCheck(){
+    const old=checking;checking=null;old?.abort()
+    download?.clear() // Also cancels an outstanding byte request and revokes its local URL.
+  }
   function discardRows(){
     shown=null
+    retireCheck()
     el('results').replaceChildren()
     el('evidence').textContent=''
     el('page').textContent=''
@@ -119,10 +125,34 @@ export function mountArtifactProductView({session, now=()=>new Date(), doc=docum
       holder.append(button)
     }
   }
+  async function checkFile(receipt,index,row){
+    if(!download||!active||!receipt||shown!==receipt||flight)return
+    retireCheck()
+    const abort=new AbortController();checking=abort
+    const isCurrent=()=>active&&shown===receipt&&checking===abort&&!abort.signal.aborted
+    const {request,witness,total}=receipt
+    // Same query, including literal filters and current page. First-page
+    // results also need a positive observation precondition on this reread.
+    const query=makeProductRequest(request.scope,request.viewId,{...request.body,if_observation:witness.observation})
+    status('Rechecking the selected file in the same product view. No bytes have been requested.')
+    try{
+      const answer=await session.readArtifactProductView(query.scope,query.viewId,query.body,{signal:abort.signal,isCurrent})
+      if(!isCurrent())return
+      const data=validateProductResult(answer,query),same=data.items[index]
+      if(!data.quarter_available||data.catalog_revision!==witness.catalog_revision||data.observed_at!==witness.observed_at||
+         data.total!==total||!same||!Object.keys(row).every(k=>same[k]===row[k]))throw Error('File no longer matches this result.')
+    }catch(error){if(isCurrent())fail(error?.status);return}
+    if(!isCurrent())return
+    // No view ID, filter, modified time or view proof enters byte authorization.
+    // The two reads are separate. Only the byte service may supply a digest.
+    status('File metadata rechecked. See the separate byte-access check below.')
+    try{await download.select(Object.freeze({scope:request.scope,key:row.key,size:row.size,revision:witness.catalog_revision}))}
+    finally{if(checking===abort)checking=null}
+  }
   function drawRows(data,request,ticket){
     const {body}=request
     const list=make('ul');list.className='pv-list'
-    for(const row of data.items){
+    for(const [index,row] of data.items.entries()){
       const li=make('li'),summary=make('div')
       const name=make(row.is_dir?'button':'bdi',row.is_dir?'Folder: '+(row.name||'(empty segment)'):row.name)
       name.className=row.is_dir?'pv-folder':'pv-file'
@@ -133,6 +163,16 @@ export function mountArtifactProductView({session, now=()=>new Date(), doc=docum
       const key=make('bdi',row.key);key.className='pv-key'
       const meta=make('span',row.is_dir?'Virtual folder · No modification time':row.size+' bytes · '+row.modified_at);meta.className='pv-meta'
       summary.append(name,key,meta)
+      if(download&&!row.is_dir&&!row.virtual){
+        if(row.size<=5*1024*1024){
+          // Detached, immutable primitives from this verified receipt. Never
+          // parse a displayed key, form field, URL or DOM attribute to select.
+          const receipt=shown,file=Object.freeze({...row})
+          const button=make('button','Check byte access');button.type='button';button.className='pv-check-download';button.setAttribute('aria-controls','download-panel')
+          button.addEventListener('click',()=>checkFile(receipt,index,file))
+          summary.append(button)
+        }else summary.append(make('small','Metadata only: this file exceeds the 5 MiB browser transfer limit.'))
+      }
       const kind=make('span',row.is_dir?'FOLDER':'FILE');kind.className='pv-kind'
       li.append(summary,kind);list.append(li)
     }
@@ -171,9 +211,10 @@ export function mountArtifactProductView({session, now=()=>new Date(), doc=docum
       // The typed transport checked all 17 fields against this exact request,
       // including the proof. The first receipt also pins these two witnesses.
       if(expected&&(data.observation!==expected.observation||data.observed_at!==expected.observed_at||data.catalog_revision!==expected.catalog_revision))throw Error('Inconsistent observation.')
+      if(download)validateProductResult(data,request)
       pin=Object.freeze({scope:request.scope,viewId:request.viewId,observation:data.observation,observed_at:data.observed_at,catalog_revision:data.catalog_revision})
       opened=request;recovery=false
-      shown={request,total:data.total}
+      shown=Object.freeze({request,total:data.total,witness:pin})
       drawLocation();drawRows(data,request,ticket)
       if(focusLocation&&doc.activeElement===doc.body)el('location').focus()
     }catch(error){

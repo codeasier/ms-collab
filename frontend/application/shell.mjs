@@ -35,6 +35,27 @@ if(onProductPage){
  el('pv-return').addEventListener('click',onDeparture)
  el('app-artifacts-link').addEventListener('click',onDeparture)
 }
+// Download handoffs must also retire at navigation intent, before pagehide.
+// Snapshot only this page's fixed navigation elements. A temporary Blob save
+// anchor, a link in results, or a changed destination cannot trigger this path.
+function installProductFileDeparture(){
+ const paths=new Set(['/','/manage/','/connections/','/responsibility/','/community/','/pipelines/','/artifacts/','/artifact-admin/','/assistant/','/research-assets/','/gui-smoke/'])
+ const links=new Map()
+ for(const link of document.querySelectorAll('header.app-shell > a.app-brand[href], header.app-shell > nav > a[href], #pv-return')){
+  const path=link.getAttribute('href')
+  if(paths.has(path))links.set(link,path)
+ }
+ // Replace, not supplement, the two legacy direct handlers on this opt-in
+ // document. By window bubbling, earlier canceled clicks are distinguishable.
+ el('pv-return').removeEventListener('click',onDeparture)
+ el('app-artifacts-link').removeEventListener('click',onDeparture)
+ window.addEventListener('click',event=>{
+  const link=event.target?.closest?.('a[href]'),path=links.get(link)
+  if(!path||link.hasAttribute('target')||link.hasAttribute('download')||link.closest('[hidden], [inert]')||
+     link.getAttribute('href')!==path||link.href!==location.origin+path)return
+  onDeparture(event)
+ })
+}
 function controls(){
  el('app-sign-in').disabled=busy||!ready||!bootstrap?.login_configured||Boolean(principal)
  el('app-sign-out').disabled=!principal
@@ -130,7 +151,14 @@ async function start(){
    if(!bootstrap.ui_modules.includes('artifact-product-views'))throw new Error('Product views are not configured on this service.')
    const {mountArtifactProductView}=await import('./artifact-product-view.mjs')
    if(turn!==generation)return
-   page=mountArtifactProductView({session})
+   let download=null
+   if(bootstrap.ui_modules.includes('artifact-product-file-downloads')){
+    const template=el('pv-download-template')
+    template.replaceWith(template.content.cloneNode(true))
+    download=mountArtifactDownload({session,productFile:true})
+   }
+   page=mountArtifactProductView({session,download})
+   if(download)installProductFileDeparture()
   }
   else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
    const module=document.body.dataset.page;if(!bootstrap.ui_modules.includes(module))throw new Error('This artifact page is not configured on this service.')

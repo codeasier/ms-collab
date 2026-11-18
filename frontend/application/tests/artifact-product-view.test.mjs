@@ -297,13 +297,24 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve))
 
 // This harness uses the shipped controller plus shipped typed client/codec, but
 // an intentionally tiny event/DOM surface. Real navigation and painting are in HTTPS acceptance.
-async function controllerHarness(){
+async function controllerHarness(productFile=false){
   const {mountArtifactProductView}=await import('../artifact-product-view.mjs')
   const {doc,install}=tinyDocument()
   const page=fs.readFileSync(new URL('../artifact-product-view.html',import.meta.url),'utf8')
   for(const [,id] of page.matchAll(/\bid="([^"]+)"/g))install(id)
   const client=harness();await client.session.inspect()
-  const ctrl=mountArtifactProductView({doc,session:client.session,now:()=>new Date('2026-04-03T00:00:01Z')})
+  let download
+  if(productFile){
+    const {mountArtifactDownload}=await import('../artifact-download-ui.mjs')
+    // In the browser the shell clones these inert template children only on explicit opt-in.
+    for(const id of ['download-panel','download-key','download-digest','download-cancel','download-confirm'])assert.ok(doc.getElementById(id),id)
+    const saved=Object.getOwnPropertyDescriptor(globalThis,'window')
+    try{
+      globalThis.window={addEventListener(){}}
+      download=mountArtifactDownload({doc,session:client.session,productFile:true})
+    }finally{if(saved)Object.defineProperty(globalThis,'window',saved);else delete globalThis.window}
+  }
+  const ctrl=mountArtifactProductView({doc,session:client.session,download,now:()=>new Date('2026-04-03T00:00:01Z')})
   const el=id=>doc.getElementById('pv-'+id)
   const edit=async(id,value)=>{el(id).value=value;await el(id).fire('input')}
   async function select(view='kit'){
@@ -315,7 +326,7 @@ async function controllerHarness(){
       return response({...rows(makeProductRequest(scope,view,b),items),...updates},status)
     })
   }
-  return {ctrl,client,doc,el,edit,select,plan}
+  return {ctrl,client,doc,el,edit,select,plan,download}
 }
 
 test('controller replaces edits immediately, preserves paths and submits the UTC shortcut exactly once',async()=>{
@@ -404,5 +415,256 @@ test('shell awaiting the optional product module cannot revive inspection after 
     await flush()
     assert.deepEqual(seen.filter(s=>s!=='clear'),retire?[]:['mount','inspect','activate'])
     assert.equal(doc.getElementById('app-principal').textContent,retire?'Not verified':'reader')
+  }
+})
+
+const availableRoute='/api/workspaces/alpha/artifact-download/source/bucket/availability'
+const bytesRoute='/api/workspaces/alpha/artifact-download/source/bucket/download'
+const fileKey='KIT_%2F#测试.bin', sha='a'.repeat(64)
+const bound=(key=fileKey,extra={})=>({scope:{...scope},key,size:7,sha256:sha,published_revision:3,...extra})
+const currentOwner=()=>({isCurrent:()=>true})
+const checks=h=>h.el('results').all('BUTTON').filter(b=>b.className==='pv-check-download')
+const panel=(h,name)=>h.doc.getElementById('download-'+name)
+
+test('product file bootstrap flag requires both separate surfaces and never allows a per-view flag',()=>{
+  const validate=modules=>validateBootstrap({service:'ms-collab',login_configured:false,authorization_endpoint:null,
+    ui_modules:modules},'https://app.example.invalid')
+  const gate='artifact-product-file-downloads', old=['workspaces','artifacts','artifact-product-views','artifact-downloads']
+  assert.deepEqual(validate(old).ui_modules,old);assert.deepEqual(validate([...old,gate]).ui_modules,[...old,gate])
+  for(const modules of [[...old,gate,gate],[...old,gate+'/kit'],...old.slice(1).map(absent=>[...old.filter(k=>k!==absent),gate])])
+    assert.throws(()=>validate(modules))
+})
+
+test('typed product byte availability binds the literal key and exact scope, with fresh CSRF and no caller URL',async()=>{
+  const h=harness(),s={...scope},options=currentOwner(),key='pkg//KIT_%2F#测试.bin'
+  await assert.rejects(h.session.readArtifactDownloadAvailability(s,key,3,options));assert.equal(h.calls.length,0)
+  await h.session.inspect()
+  for(const letter of ['A','B']){
+    h.setCookie(letter.repeat(43));h.queue.push(()=>response(bound(key)))
+    const binding=await h.session.readArtifactDownloadAvailability(s,key,3,options)
+    assert.deepEqual(binding,bound(key));assert.ok(Object.isFrozen(binding)&&Object.isFrozen(binding.scope))
+    const {path,options:o}=h.calls.at(-1),headers=new Headers(o.headers)
+    assert.equal(path,availableRoute);assert.equal(o.method,'POST');assert.deepEqual(JSON.parse(o.body),{key})
+    assert.deepEqual([o.credentials,o.redirect,o.cache],['same-origin','error','no-store'])
+    assert.equal(headers.get('If-Match'),'"3"');assert.equal(headers.get('Content-Type'),'application/json')
+    assert.equal(headers.get('X-CSRF-Token'),letter.repeat(43));assert.equal(headers.has('Authorization'),false)
+  }
+  const before=h.calls.length
+  for(const [candidate,k,revision,owner] of [
+    [{...s,workspace_id:'other/workspace'},key,3,options],[{...s,bucket_id:'bucket',extra:true},key,3,options],
+    [{workspace_id:'alpha',bucket_id:'bucket'},key,3,options],[s,'pkg/',3,options],[s,'',3,options],
+    [s,'pkg/key.sHa256',3,options],[s,key,0,options],[s,key,3.1,options],[s,key,3,{}],
+    [s,key,3,{isCurrent:()=>false}],[s,key,3,{isCurrent:()=>true,signal:AbortSignal.abort()}],
+  ])await assert.rejects(h.session.readArtifactDownloadAvailability(candidate,k,revision,owner))
+  assert.equal(h.calls.length,before)
+})
+
+test('availability rejects substituted success bindings or non-200 status without retrying or authorizing bytes',async()=>{
+  const h=harness();await h.session.inspect()
+  for(const wrong of [{key:'another.bin'},{scope:{...scope,workspace_id:'beta'}},{scope:{...scope,connection_id:'another'}},
+    {scope:{...scope,bucket_id:'second'}},{scope:{...scope,extra:true}},{published_revision:4},
+    {size:5242881},{size:-1},{sha256:'A'.repeat(64)},{source:'metadata'}]){
+    h.queue.push(()=>response(bound(fileKey,wrong)))
+    await assert.rejects(h.session.readArtifactDownloadAvailability(scope,fileKey,3,currentOwner()))
+  }
+  for(const status of [201,206,404,412]){
+    h.queue.push(()=>response(bound(),status))
+    await assert.rejects(h.session.readArtifactDownloadAvailability(scope,fileKey,3,currentOwner()))
+  }
+  assert.deepEqual(h.effects,[]);assert.deepEqual(h.calls.map(x=>x.path),['/auth/session',...Array(14).fill(availableRoute)])
+})
+
+test('typed availability ignores an old owner at headers or body but a current 401 invalidates the session exactly once',async()=>{
+  for(const holdBody of [false,true]){
+    const h=harness();await h.session.inspect()
+    let epoch=1
+    const started=deferred(),late=deferred()
+    h.queue.push(()=>holdBody?{ok:true,status:200,text(){started.resolve();return late.promise}}:(started.resolve(),late.promise))
+    const read=h.session.readArtifactDownloadAvailability(scope,fileKey,3,{isCurrent:()=>epoch===1})
+    await started.promise;epoch=2;h.queue.push(()=>response(bound()))
+    await h.session.readArtifactDownloadAvailability(scope,fileKey,3,{isCurrent:()=>epoch===2})
+    const rejected=assert.rejects(read,e=>e.name==='AbortError')
+    late.resolve(holdBody?JSON.stringify({data:bound()}):response({},401));await rejected
+    assert.deepEqual(h.effects,[]);assert.deepEqual(await h.session.request('/api/workspaces'),[])
+    h.queue.push(()=>response({},401));await assert.rejects(h.session.readArtifactDownloadAvailability(scope,fileKey,3,currentOwner()),e=>e.status===401)
+    assert.equal(h.effects.length,1);const n=h.calls.length;await assert.rejects(h.session.request('/api/workspaces'));assert.equal(h.calls.length,n)
+  }
+})
+
+async function openProductRows(h,items,updates={}){
+  h.ctrl.activate();await h.select();h.plan(items,updates);await h.el('setup').fire('submit')
+}
+
+test('metadata alone never checks bytes; only explicit opt-in adds Check to eligible real rows, never folders or oversized files',async()=>{
+  const items=[folder('KIT_same/'),file('KIT_same'),{...file('KIT_wide'),size:5242881}]
+  for(const on of [false,true]){
+    const h=await controllerHarness(on);await openProductRows(h,items)
+    const li=h.el('results').all('LI');assert.equal(li.length,3)
+    assert.deepEqual(li.map(row=>row.all('BUTTON').map(b=>b.textContent)),[['Folder: KIT_same'],on?['Check byte access']:[],[]])
+    assert.deepEqual(h.client.calls.map(x=>x.path),['/auth/session',route])
+    if(on){
+      const old=checks(h)[0]
+      h.plan([]);await h.el('results').all('BUTTON')[0].fire('click')
+      assert.equal(checks(h).length,0);await old.fire('click');await panel(h,'confirm').fire('click')
+      assert.deepEqual(h.client.calls.map(x=>x.path),['/auth/session',route,route])
+    }
+  }
+})
+
+test('file Check replays the exact filtered product page and observation, then only explicit confirmation requests bound bytes',async()=>{
+  const h=await controllerHarness(true),key='pkg/'+fileKey,row=file(key)
+  await openProductRows(h,[folder('pkg/')])
+  h.plan([row]);await h.el('results').all('BUTTON')[0].fire('click')
+  await h.edit('keyword','KIT_');h.el('recursive').checked=true;await h.el('recursive').fire('input')
+  await h.edit('start',t);await h.edit('end',t)
+  const firstPage=Array.from({length:10},(_,i)=>file('pkg/KIT_!'+i))
+  h.plan(firstPage,{total:11});await h.el('filters').fire('submit')
+  const detached=checks(h)[0];assert.ok(detached)
+  h.plan([row],{total:11});await h.el('next').fire('click')
+  const filtered={...body,mode:'files',page:2,keyword:'KIT_',recursive:true,start_time:t,end_time:t,if_observation:obs}
+  assert.deepEqual(JSON.parse(h.client.calls.at(-1).options.body),filtered)
+  const afterPage=h.client.calls.length;await detached.fire('click');assert.equal(h.client.calls.length,afterPage)
+  // The original result's download_available:false remains unchanged. Only the later independent binding can arm Confirm.
+  assert.equal(panel(h,'confirm').disabled,true);const before=h.client.calls.length
+  h.plan([row],{total:11});h.client.queue.push(()=>response(bound(key)));await checks(h)[0].fire('click')
+  assert.deepEqual(h.client.calls.slice(before).map(x=>x.path),[route,availableRoute])
+  assert.deepEqual(JSON.parse(h.client.calls[before].options.body),filtered)
+  const availability=h.client.calls[before+1].options
+  assert.deepEqual(JSON.parse(availability.body),{key});assert.equal(new Headers(availability.headers).get('If-Match'),'"3"')
+  assert.equal(panel(h,'key').textContent,key);assert.equal(panel(h,'digest').textContent,sha)
+  assert.equal(panel(h,'confirm').disabled,false);assert.equal(h.client.calls.some(c=>c.path===bytesRoute),false)
+  // A real byte request is a separate step; a denied reply must not become a save or a retry.
+  h.client.queue.push(()=>response({},412));await panel(h,'confirm').fire('click')
+  const byte=h.client.calls.at(-1);assert.equal(byte.path,bytesRoute)
+  assert.deepEqual(JSON.parse(byte.options.body),{key,expected_sha256:sha});assert.equal(new Headers(byte.options.headers).get('If-Match'),'"3"')
+  await panel(h,'confirm').fire('click');assert.equal(h.client.calls.length,before+3);assert.equal(panel(h,'confirm').disabled,true)
+})
+
+test('changed product tuple, Named response, changed row or empty result cannot reach an availability check',async()=>{
+  const row=file(fileKey)
+  for(const [items,patch] of [
+    [[row],{view_id:'sensor'}],[[row],{scope:{...scope,bucket_id:'second'}}],[[row],{kind:'saved-view',view_revision:1}],
+    [[row],{catalog_revision:4}],[[row],{observation:'c'.repeat(64)}],[[row],{observed_at:'2026-04-12T10:00:01Z'}],
+    [[file('KIT_other')],{}],[[{...row,size:6}],{}],[[file(fileKey,'2026-04-02T00:00:00.000001Z')],{}],
+    [[folder(fileKey+'/')],{}],[[],{}],
+  ]){
+    const h=await controllerHarness(true);await openProductRows(h,[row]);const old=checks(h)[0]
+    h.plan(items,patch);await old.fire('click')
+    assert.deepEqual(h.client.calls.map(x=>x.path),['/auth/session',route,route])
+    assert.equal(JSON.parse(h.client.calls.at(-1).options.body).if_observation,obs)
+    assert.equal(h.el('reopen').hidden,false);assert.equal(h.el('results').children.length,0)
+    await old.fire('click');await panel(h,'confirm').fire('click')
+    assert.equal(panel(h,'digest').textContent,'');assert.equal(h.client.calls.length,3)
+  }
+})
+
+test('successful product recheck does not arm confirmation on denied byte authority or independent size mismatch',async()=>{
+  const row=file(fileKey)
+  for(const answer of [response({},404),response(bound(fileKey,{size:8}))]){
+    const h=await controllerHarness(true);await openProductRows(h,[row]);h.plan([row]);h.client.queue.push(()=>answer)
+    await checks(h)[0].fire('click');assert.equal(panel(h,'confirm').disabled,true);assert.equal(panel(h,'digest').textContent,'')
+    await panel(h,'confirm').fire('click');assert.deepEqual(h.client.calls.map(x=>x.path),['/auth/session',route,route,availableRoute])
+  }
+})
+
+test('retired product row and late recheck cannot open byte controls after a scope edit, reopen or departure',async()=>{
+  for(const reset of ['scope','departure']){
+    const h=await controllerHarness(true),row=file(fileKey);await openProductRows(h,[row]);const old=checks(h)[0]
+    const started=deferred(),late=deferred();h.client.queue.push(()=>{started.resolve();return late.promise})
+    const pending=old.fire('click');await started.promise
+    if(reset==='scope'){
+      await h.edit('bucket','second');await h.edit('bucket','bucket')
+      h.plan([file('KIT_new')]);await h.el('setup').fire('submit')
+    }else h.ctrl.clear()
+    const n=h.client.calls.length;late.resolve(response({},401));await pending;await old.fire('click')
+    await panel(h,'confirm').fire('click');assert.equal(h.client.calls.length,n);assert.deepEqual(h.client.effects,[])
+    assert.equal(panel(h,'key').textContent,'');assert.equal(h.client.calls.some(c=>c.path===availableRoute||c.path===bytesRoute),false)
+    if(reset==='scope')assert.match(h.el('results').text(),/KIT_new/);else assert.equal(h.el('controls').hidden,true)
+  }
+})
+
+test('cancel or a different file selection wins over a held availability response even when fetch ignores abort',async()=>{
+  const first=file('KIT_a'),second=file('KIT_b')
+  for(const action of ['cancel','select another']){
+    const h=await controllerHarness(true);await openProductRows(h,[first,second])
+    h.plan([first,second]);const started=deferred(),late=deferred()
+    h.client.queue.push(()=>{started.resolve();return late.promise})
+    const old=checks(h)[0].fire('click');await started.promise;assert.equal(panel(h,'confirm').disabled,true)
+    if(action==='cancel')await panel(h,'cancel').fire('click')
+    else {
+      h.plan([first,second]);h.client.queue.push(()=>response(bound(second.key)));await checks(h)[1].fire('click')
+      assert.equal(panel(h,'key').textContent,second.key);assert.equal(panel(h,'confirm').disabled,false)
+    }
+    const n=h.client.calls.length
+    late.resolve(action==='cancel'?response(bound(first.key)):response({},401));await old
+    assert.deepEqual(h.client.effects,[]);assert.equal(h.client.calls.length,n)
+    assert.equal(panel(h,'key').textContent,action==='cancel'?'':second.key)
+    assert.equal(panel(h,'confirm').disabled,action==='cancel');assert.equal(h.client.calls.some(c=>c.path===bytesRoute),false)
+    h.ctrl.clear();await panel(h,'confirm').fire('click');assert.equal(h.client.calls.length,n)
+  }
+})
+
+test('opt-in product shell retires an in-flight byte request on same-tab navigation intent but not an alternate click or save link',async()=>{
+  const h=await controllerHarness(true),doc=h.doc,origin='https://app.example.invalid',listeners={}
+  const html=fs.readFileSync(new URL('../artifact-product-view.html',import.meta.url),'utf8')
+  const shell=fs.readFileSync(new URL('../shell.mjs',import.meta.url),'utf8')
+  doc.body.dataset={page:'artifact-product-views'}
+  // Enumerate actual fixed navigation markup; dispatch target then window as in a bubbling native click.
+  const anchor=(node,href)=>{
+    node.setAttribute('href',href)
+    Object.defineProperty(node,'href',{get(){return new URL(this.attributes.href,origin).href}})
+    node.getAttribute=k=>node.attributes[k]??null;node.hasAttribute=k=>Object.hasOwn(node.attributes,k)
+    node.closest=s=>s==='a[href]'?node:s==='[hidden], [inert]'&&node.hidden?node:null
+    node.removeEventListener=(type,fn)=>{node.handlers[type]=(node.handlers[type]??[]).filter(f=>f!==fn)}
+    return node
+  }
+  const byText=new Map()
+  for(const [,attrs,text] of html.matchAll(/<a\b([^>]*)>([^<]+)<\/a>/g)){
+    const id=attrs.match(/\bid="([^"]+)"/)?.[1],href=attrs.match(/\bhref="([^"]+)"/)?.[1]
+    if(!href)continue
+    const node=anchor(id?doc.getElementById(id):doc.createElement('a'),href)
+    node.hidden=/\shidden\b/.test(attrs);byText.set(text,node)
+  }
+  doc.querySelectorAll=selector=>{
+    assert.equal(selector,'header.app-shell > a.app-brand[href], header.app-shell > nav > a[href], #pv-return')
+    return [...byText.values()]
+  }
+  const win={addEventListener(type,fn){(listeners[type]??=[]).push(fn)}}
+  const template=doc.getElementById('pv-download-template'),fragment={}
+  template.content={cloneNode(deep){assert.equal(deep,true);return fragment}};template.replaceWith=v=>assert.equal(v,fragment)
+  const session={...h.client.session,bootstrap:async()=>({service:'ms-collab',login_configured:false,authorization_endpoint:null,
+    ui_modules:['workspaces','artifacts','artifact-product-views','artifact-downloads','artifact-product-file-downloads']})}
+  const source=shell.replace(/^import .+\n/gm,'').replace("import('./artifact-product-view.mjs')",'loadProductPage()')
+  vm.runInNewContext(source,{document:doc,window:win,location:{origin,protocol:'https:'},createSessionClient:()=>session,
+    validateBootstrap,displayPolicyId:id=>id,mountArtifactDownload:({session:s,productFile})=>{assert.equal(s,session);assert.equal(productFile,true);return h.download},
+    loadProductPage:async()=>({mountArtifactProductView:({download})=>{assert.equal(download,h.download);return h.ctrl}})})
+  await flush()
+  const bubble=(target,extra={})=>{
+    const event={target,button:0,defaultPrevented:false,...extra}
+    for(const fn of [...(target.handlers.click??[]),...(listeners.click??[])])fn(event)
+  }
+  for(const label of ['MS-COLLAB','Overview','Workspaces']){
+    if(doc.getElementById('app-principal').textContent!=='reader')await doc.getElementById('app-recheck').fire('click')
+    assert.equal(doc.getElementById('app-principal').textContent,'reader')
+    await h.select();const row=file(fileKey);h.plan([row]);await h.el('setup').fire('submit')
+    h.plan([row]);h.client.queue.push(()=>response(bound()));await checks(h)[0].fire('click')
+    const started=deferred(),held=deferred();h.client.queue.push((_path,o)=>{started.resolve(o.signal);return held.promise})
+    const pending=panel(h,'confirm').fire('click'),signal=await started.promise
+    assert.equal(h.client.calls.at(-1).path,bytesRoute)
+    try{
+      const link=byText.get(label);assert.ok(link,label)
+      for(const mod of [{ctrlKey:true},{button:1},{defaultPrevented:true}])bubble(link,mod)
+      link.setAttribute('target','_blank');bubble(link);delete link.attributes.target
+      const back=doc.getElementById('pv-return')
+      back.setAttribute('download','test');bubble(back);delete back.attributes.download
+      bubble(anchor(doc.createElement('a'),'blob:'+origin+'/synthetic'))
+      assert.equal(signal.aborted,false);assert.equal(panel(h,'key').textContent,fileKey)
+      assert.equal(doc.getElementById('app-principal').textContent,'reader')
+      bubble(link)
+      // No pagehide, timeout, promise flush or network response has happened here.
+      assert.equal(signal.aborted,true);assert.equal(panel(h,'key').textContent,'');assert.equal(h.el('controls').hidden,true)
+      assert.equal(doc.getElementById('app-principal').textContent,'Not verified')
+    }finally{held.resolve(response({},401));await pending}
+    assert.deepEqual(h.client.effects,[]);assert.equal(panel(h,'confirm').disabled,true)
   }
 })

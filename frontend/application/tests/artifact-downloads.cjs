@@ -143,4 +143,4 @@ async function main(wheelOnly=false){
   }
  }
 }
-main().then(()=>main(true)).then(()=>console.log('ARTIFACT_DOWNLOAD_WHEEL_PASS native suggestedFilename: exact 110-character wheel; neutral truncated HTTP name; 1 availability POST, 1 confirmed POST, 1 provider call; 378 inert bytes independently verified and removed.')).catch(e=>{console.error(e.stack);process.exitCode=1})
+main().then(()=>main(true)).then(()=>console.log('ARTIFACT_DOWNLOAD_WHEEL_PASS native suggestedFilename: exact 110-character wheel; neutral truncated HTTP name; 1 availability POST, 1 confirmed POST, 1 provider call; 378 inert bytes independently verified and removed.')).then(()=>require('./artifact-product-downloads.cjs').run()).catch(e=>{console.error(e.stack);process.exitCode=1})

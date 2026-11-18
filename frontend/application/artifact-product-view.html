@@ -74,8 +74,26 @@
         <button id="pv-next" type="button" disabled>Next</button>
       </nav>
     </section>
+    <template id="pv-download-template">
+      <section id="download-panel" class="pv-surface" aria-labelledby="download-heading" hidden>
+        <p class="pv-kicker">SEPARATE BYTE ACCESS</p>
+        <h2 id="download-heading" tabindex="-1">Download status</h2>
+        <p id="download-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="download-scope"></p>
+        <dl>
+          <dt>Object key</dt><dd id="download-key" dir="auto"></dd>
+          <dt>Size</dt><dd id="download-size"></dd>
+          <dt>Approved SHA-256</dt><dd id="download-digest"></dd>
+        </dl>
+        <p class="pv-note">The product match does not grant byte access. Confirming requests up to 5 MiB from the separate download service, which checks current access again. There is no automatic retry.</p>
+        <div class="pv-actions">
+          <button id="download-confirm" class="pv-primary" type="button" disabled>Confirm download</button>
+          <button id="download-cancel" type="button">Cancel</button>
+        </div>
+      </section>
+    </template>
   </div>
 </main>
-<footer class="app-footer">Stored metadata only · No live provider verification · Not a complete bucket inventory</footer>
+<footer class="app-footer">Product matches use stored metadata · Not a live listing or a complete bucket inventory</footer>
 </body>
 </html>

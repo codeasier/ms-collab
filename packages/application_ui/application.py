@@ -82,10 +82,16 @@ class ApplicationUI:
     synthetic fixtures, cookie copying or session-to-token conversion are used.
     The trusted host's own transport check protects static/bootstrap requests too.
     """
-    def __init__(self, *, host):
+    def __init__(self, *, host, product_file_downloads=False):
         if type(host) is not ApplicationHost:
             raise ValueError('explicit configured ApplicationHost required')
+        if type(product_file_downloads) is not bool:
+            raise ValueError('product_file_downloads must be a Boolean')
+        if product_file_downloads and not (host.artifact_product_views_enabled
+                and host._config.artifact_downloads and host._artifact_downloads is not None):
+            raise ValueError('product file checks require configured product views and byte downloads')
         self._host = host
+        self._product_file_downloads = product_file_downloads
 
     def __call__(self, environ, start_response):
         path = environ.get('PATH_INFO', '')
@@ -126,6 +132,9 @@ class ApplicationUI:
             body = {'data': {'service': 'ms-collab',
                 'ui_modules': ['workspaces'] + [name for name in ('responsibility', 'pipelines', 'community', 'assistant', 'research-assets', 'gui-smoke') if name in self._host._config.modules] + artifact_pages + (['connections'] if self._host._config.community_connections else []) + (['artifact-downloads'] if self._host._config.artifact_downloads else []),
                 'login_configured': endpoint is not None, 'authorization_endpoint': endpoint}}
+            if self._product_file_downloads:
+                # Public UI support only. No file, binding or byte authority.
+                body['data']['ui_modules'].append('artifact-product-file-downloads')
             return respond('200 OK', json.dumps(body, ensure_ascii=True, separators=(',', ':')).encode('ascii'), 'application/json')
         if path == '/connections/' and not self._host._config.community_connections:
             return respond('404 Not Found', b'not_found')
