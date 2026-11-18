@@ -12,6 +12,7 @@ const s1 = '/api/workspaces/alpha/artifacts/source/bucket'
 const s2 = s1.replace('/bucket','/second-bucket'), missing = s1.replace('/bucket','/missing-bucket')
 const kit = s1+'/product-views/kit', sensor = s1+'/product-views/sensor', other = s2+'/product-views/kit'
 const q2 = '2026Q2', q1 = '2026Q1'
+const namedKit = s1+'/views/kit?quarter=2026Q2&page=1&page_size=10'
 const root = ['pkg/'], folder = name => 'pkg/'+name+'/'
 const label = '<svg onload=alert(1)>', directLeaf = 'pkg/Kit_alpha', deepLeaf = 'pkg/Kit_alpha/version.bin'
 const dirs = [label,'Kit_alpha','a','ab'].map(folder)
@@ -37,7 +38,7 @@ const waitNames=new Set([
   'old Chromium response header checks','old Chromium module bytes','restore browser date','injected response delivered',
   'Chromium decoded injected body','time fault delivered','Chromium decoded time fault','ABA began with real response',
   'real response before navigation','real quarters read before navigation','real product module export',
-  'close isolated history context before next cookie journey'
+  'close isolated history context before next cookie journey','complete legacy reference','legacy navigation gate cleanup'
 ])
 class HarnessTimeout extends Error{constructor(label){super('Harness deadline');this.wait=waitNames.has(label)?label:'scenario deadline'}}
 function bounded(p,label,ms=15000){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(new HarnessTimeout(label)),ms)})]).finally(()=>clearTimeout(t))}
@@ -175,7 +176,7 @@ async function surface(env,{clean=false}={}){
     window.__pvShow=[]
     addEventListener('pageshow',e=>window.__pvShow.push({persisted:e.persisted,native:e.isTrusted}))
   })
-  if(!clean)await ctx.addInitScript(({fixtureOrigin,kitPath,quartersPath})=>{
+  if(!clean)await ctx.addInitScript(({fixtureOrigin,kitPath,quartersPath,namedPath})=>{
     // Deterministically lose abort, not TLS/CSRF/authorization. Only collect
     // boolean properties of fetch options. Optional timing barrier on response
     // body uses exactly the bytes actually read from the server.
@@ -186,7 +187,7 @@ async function surface(env,{clean=false}={}){
     // No forwarding, storage, credential reads or extra network requests.
     const tickets=new Map();let next=null,serial=0
     window.__pvNet.arm=kind=>{
-      if(!['kit','quarters'].includes(kind)||location.href!==fixtureOrigin+(kind==='kit'?'/artifacts/product-views/':'/artifacts/')||next||tickets.size)throw Error('Invalid witness')
+      if(!['kit','quarters','named'].includes(kind)||location.href!==fixtureOrigin+(kind==='kit'?'/artifacts/product-views/':'/artifacts/')||next||tickets.size)throw Error('Invalid witness')
       const id=++serial;let finish
       tickets.set(id,new Promise(resolve=>{finish=resolve}))
       next={id,kind,finish};return id
@@ -197,12 +198,12 @@ async function surface(env,{clean=false}={}){
     }
     // Once leaving, do not strand held promises in a cached document. The
     // synchronous navigation/pagehide guards still run before any continuation.
-    addEventListener('pagehide',()=>{window.__pvNet.releaseBody?.();window.__releaseOldNamed?.()})
+    addEventListener('pagehide',()=>{window.__pvNet.releaseBody?.();window.__pvNet.releaseNamed?.()})
     window.fetch=async function(input,options={}){
       const url=new URL(typeof input==='string'?input:input.url,location.origin),requestPath=url.pathname
       const method=options.method||input?.method||'GET'
       let witness=null
-      if(next&&location.origin===fixtureOrigin&&url.href===fixtureOrigin+(next.kind==='kit'?kitPath:quartersPath)&&method===(next.kind==='kit'?'POST':'GET')){
+      if(next&&location.origin===fixtureOrigin&&url.href===fixtureOrigin+(next.kind==='kit'?kitPath:next.kind==='quarters'?quartersPath:namedPath)&&method===(next.kind==='kit'?'POST':'GET')){
         witness=next;next=null
       }
       const {signal,...rest}=options
@@ -230,6 +231,13 @@ async function surface(env,{clean=false}={}){
             sha:Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('')}
         }
         measure().then(witness.finish,()=>witness.finish(null))
+        // The legacy client captures this document-start function on boot.
+        // Only this one explicitly armed real Named GET is held, after the
+        // native response arrives. Other requests and their modes are unchanged.
+        if(witness.kind==='named')await new Promise(resolve=>{
+          window.__pvNet.namedPending=true
+          window.__pvNet.releaseNamed=()=>{window.__pvNet.namedPending=false;delete window.__pvNet.releaseNamed;resolve()}
+        })
       }
       if(pv&&window.__pvNet.holdBody){
         window.__pvNet.holdBody=false
@@ -251,7 +259,7 @@ async function surface(env,{clean=false}={}){
         for(const e of entries)for(const n of e.addedNodes)if(n.textContent==='Not verified')window.__pvNet.invalidations++
       }).observe(node,{childList:true})
     })
-  },{fixtureOrigin:info.origin,kitPath:kit,quartersPath:s1+'/quarters'})
+  },{fixtureOrigin:info.origin,kitPath:kit,quartersPath:s1+'/quarters',namedPath:namedKit})
   const page=await ctx.newPage()
   page.setDefaultTimeout(9000)
   if(!clean)owner.gate=await syntheticGate(ctx,page,info,errors)
@@ -326,14 +334,24 @@ async function ordinary(s,{named=false}={}){
       await p.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Catalog loaded'))
     }
     await p.locator('#view-id').fill('kit')
-    const reply=p.waitForResponse(r=>new URL(r.url()).pathname===s1+'/views/kit')
+    const reply=p.waitForResponse(r=>r.url()===s.info.origin+namedKit&&r.request().method()==='GET')
     await p.locator('#view-form button').first().click()
-    assert.equal((await reply).status(),200)
+    const response=await reply;assert.equal(response.status(),200)
     await p.waitForFunction(()=>document.querySelector('#results').textContent.includes('ordinary-only.bin'))
     assert.match(await p.locator('#path-label').textContent(),/Named view: kit.*navigation disabled/i)
     assert.equal(await p.locator('#up').isDisabled(),true)
     await p.getByRole('button',{name:'Check download',exact:true}).waitFor()
     assert.equal(await p.locator('#results .entry-name').count(),1)
+    // Independent fixture oracle for the reference that was really rendered.
+    // The entire later withheld native response must match it, not just a key.
+    const bytes=await bounded(response.body(),'complete legacy reference')
+    const expected={data:{scope:{workspace_id:'alpha',connection_id:'source',bucket_id:'bucket'},quarter:q2,
+      quarter_available:true,observed_at:'2026-04-11T00:00:00Z',total:1,page:1,page_size:10,
+      items:[{key:'pkg/ordinary-only.bin',name:'ordinary-only.bin',parent:'pkg/',modified_at:'2026-04-10T12:00:00Z',
+        size:Buffer.byteLength('only the separately bound synthetic ordinary file'),is_dir:false,virtual:false}],
+      view_revision:1,catalog_revision:1,source:{kind:'stored_index',full_history_complete:false,live_provider_verified:false,download_available:false}}}
+    assert.ok(isDeepStrictEqual(JSON.parse(bytes),expected),'Unexpected legacy reference DTO')
+    return {length:bytes.length,sha:digest(bytes)}
   }else await p.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('Catalog loaded'))
 }
 async function empty(s,where){
@@ -457,8 +475,8 @@ async function ctrl(s,name){
 }
 const digest=b=>createHash('sha256').update(b).digest('hex')
 async function deliveryWitness(s,target){
-  assert.ok(target===kit||target===s1+'/quarters')
-  const id=await bounded(s.page.evaluate(kind=>__pvNet.arm(kind),target===kit?'kit':'quarters'),'arm page delivery witness')
+  assert.ok(target===kit||target===s1+'/quarters'||target===namedKit)
+  const id=await bounded(s.page.evaluate(kind=>__pvNet.arm(kind),target===kit?'kit':target===namedKit?'named':'quarters'),'arm page delivery witness')
   return async(status,bytes,sha)=>{
     const result=await bounded(s.page.evaluate(id=>__pvNet.take(id),id),'page delivery witness digest')
     assert.ok(result&&result.id===id&&result.status===status&&result.bytes===bytes&&result.sha===sha,
@@ -711,7 +729,7 @@ async function cross(s){
   await fields(s);const generation=await p.evaluate(()=>{__pvNet.holdBody=true;return __pvNet.bodyStarted})
   await enter(p,'pv-open');await p.waitForFunction(previous=>__pvNet.bodyStarted===previous+1,generation)
   await enter(p,'pv-return');await p.waitForURL(s.info.origin+catalog);await visible(p,'session');await empty(s,catalog)
-  await ordinary(s,{named:true})
+  const reference=await ordinary(s,{named:true})
   // Hold a REAL old quarters read and inject a late 401 over it. The old shell
   // remains observable in this separate, prevented-navigation test.
   const quarters=s1+'/quarters',old=await held(s,quarters,401)
@@ -723,18 +741,26 @@ async function cross(s){
   await old.release();await delivered;await frames(p)
   assert.equal(await p.evaluate(()=>__pvNet.invalidations),invalid);assert.equal(await p.locator('#app-principal').textContent(),'admin')
   assert.equal(countApi(s.journal),n);assert.match(await p.locator('#status').textContent(),/^Catalog loaded/)
-  // Native direction in the other sense: the ordinary transport holds a real
-  // Named-view response in memory until after departure (no cookie/route hack).
-  await p.evaluate(path=>{
-    const original=window.fetch;window.fetch=async function(input,...opts){
-      const r=await original.call(window,input,...opts)
-      if(new URL(input,location.href).pathname===path){window.__oldNamedPending=true;await new Promise(res=>{window.__releaseOldNamed=res})}
-      return r
-    }
-  },s1+'/views/kit')
-  await p.locator('#view-id').fill('kit');await p.locator('#view-form button').first().click()
-  await p.waitForFunction(()=>window.__oldNamedPending===true)
-  await entry(s);await fields(s);await read(s,keypress(s,'open'),kit,body(),root,1)
+  // Use the handler captured by this shell's client, not a late replacement
+  // of window.fetch. Only arm it here, while still on the ordinary document.
+  checkpoint('departure: real same-name legacy GET held across native entry')
+  assert.equal(await p.locator('#quarter').inputValue(),q2);assert.equal(await p.locator('#page-size').inputValue(),'10')
+  const before=countApi(s.journal),witness=await deliveryWitness(s,namedKit)
+  const reply=p.waitForResponse(r=>r.url()===s.info.origin+namedKit&&r.request().method()==='GET')
+  reply.catch(()=>{})
+  try{
+    await p.locator('#view-id').fill('kit');await p.locator('#view-form button').first().click()
+    assert.equal((await reply).status(),200)
+    await witness(200,reference.length,reference.sha)
+    assert.equal(await p.evaluate(()=>__pvNet.namedPending===true),true)
+    assert.equal(await p.locator('#results').textContent(),'')
+    assert.equal(await p.locator('#app-principal').textContent(),'admin')
+    assert.equal(countApi(s.journal),before+1)
+    await entry(s) // native departure releases old realm; new page must be empty
+  }finally{
+    if(p.url()===s.info.origin+catalog)await bounded(p.evaluate(()=>__pvNet.releaseNamed?.()),'legacy navigation gate cleanup')
+  }
+  await fields(s);await read(s,keypress(s,'open'),kit,body(),root,1)
 }
 async function bootRace(s){
   const {page:p}=s
