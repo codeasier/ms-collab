@@ -27,6 +27,17 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.call_ui(path)["status"],404)
         self.assertEqual(self.call_ui(QUERY_STRING="token=no")["status"],404)
 
+    def test_transfer_controller_has_one_exact_static_path(self):
+        result = self.call_ui('/manage/admin-transfer.mjs')
+        self.assertEqual(result['status'], 200)
+        self.assertEqual(result['headers']['Content-Type'], 'text/javascript; charset=utf-8')
+        self.assertEqual(result['headers']['Cache-Control'], 'no-store')
+        self.assertIn(b'mountAdminTransfer', result['body'])
+        for path in ('/manage/admin-transfer.mjs/', '/manage/../admin-transfer.mjs',
+                     '/manage/%2e%2e/admin-transfer.mjs', '/manage/tests/admin-transfer.cjs'):
+            self.assertEqual(self.call_ui(path)['status'], 404)
+        self.assertEqual(self.call_ui('/manage/admin-transfer.mjs', QUERY_STRING='x=1')['status'], 404)
+
     def test_explicit_origin_rejects_rebinding_and_cross_origin(self):
         for extra in ({"HTTP_HOST":"evil.invalid"},{"HTTP_ORIGIN":"https://evil.invalid"},
                       {"wsgi.url_scheme":"http"},{"HTTP_SEC_FETCH_SITE":"cross-site"}):

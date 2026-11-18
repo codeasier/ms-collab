@@ -75,7 +75,7 @@ class ApplicationHost:
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
                  clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
-                 community_refresh=None, directory_cursors=None):
+                 community_refresh=None, directory_cursors=None, admin_transfers=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
         if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
@@ -93,7 +93,8 @@ class ApplicationHost:
             exchange=exchange, authorization_endpoint=authorization_endpoint,
             authorization_scopes=authorization_scopes)
         authority = WorkspaceApplication(session_boundary=self._boundary)
-        administration = WorkspaceAdministrationApplication(api=authority, module_catalog=config.module_catalog)
+        administration = WorkspaceAdministrationApplication(api=authority, module_catalog=config.module_catalog,
+            transfers=admin_transfers)
         self._connections = WorkspaceConnectionsApplication(api=authority, connections=config.community_connections) if config.community_connections else None
         self._workspaces = WorkspaceInvitationApplication(api=administration, clock=clock)
         constructors = {"community": CommunityApplication, "pipelines": PipelineApplication,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import {createSessionClient,createResponsibilitySessionClient,validateBootstrap,authorizationTarget} from '../client.mjs'
-import {validateWorkspaces} from '../../workspace-admin/client.mjs'
+import {validateWorkspaces,displayPolicyId} from '../../workspace-admin/client.mjs'
 import {mountModuleStatus} from '../module-status.mjs'
 const source=fs.readFileSync(new URL('../shell.mjs',import.meta.url),'utf8').replace(/^import .*\n/gm,'')
 const bootstrap={service:'ms-collab',ui_modules:['workspaces','responsibility'],login_configured:true,authorization_endpoint:'https://identity.example.invalid/authorize'}
@@ -14,7 +14,7 @@ function harness({fetcher,activate=async()=>{}}){
  const elements=new Map(),calls=[],state={mounted:0,cleared:0,options:null}
  for(const id of ['app-sign-in','app-sign-out','app-recheck','app-principal','app-status','app-login-note','app-responsibility-link','app-community-link','app-pipelines-link','app-assistant-link'])elements.set(id,{textContent:'',hidden:false,disabled:false,handlers:{},addEventListener(name,fn){this.handlers[name]=fn},setAttribute(){},replaceChildren(){}})
  const document={body:{dataset:{page:'manage'}},getElementById:id=>elements.get(id),createElement:()=>({})}
- vm.runInNewContext(source,{document,window:{addEventListener(){}},location:{protocol:'https:',origin:'https://app.example.invalid',assign(){}},createSessionClient:options=>createSessionClient({...options,cookie:()=>'__Host-ms-collab-csrf='+'A'.repeat(43),fetcher:async(path,options)=>{calls.push(path);return fetcher(path,options)}}),createResponsibilitySessionClient,validateBootstrap,authorizationTarget,validateWorkspaces,mountWorkspacePage:options=>{state.mounted++;state.options=options;return {activate,clear(){state.cleared++;options.client.clear()}}},mountResponsibilityPage(){throw new Error('unexpected module')}})
+ vm.runInNewContext(source,{document,window:{addEventListener(){}},location:{protocol:'https:',origin:'https://app.example.invalid',assign(){}},createSessionClient:options=>createSessionClient({...options,cookie:()=>'__Host-ms-collab-csrf='+'A'.repeat(43),fetcher:async(path,options)=>{calls.push(path);return fetcher(path,options)}}),createResponsibilitySessionClient,validateBootstrap,authorizationTarget,validateWorkspaces,displayPolicyId,mountWorkspacePage:options=>{state.mounted++;state.options=options;return {activate,clear(){state.cleared++;options.client.clear()}}},mountResponsibilityPage(){throw new Error('unexpected module')}})
  return {elements,calls,state,click:id=>elements.get(id).handlers.click()}
 }
 test('early recheck cannot cancel bootstrap or inspect an unmounted page',async()=>{
@@ -55,7 +55,7 @@ function overviewHarness({fetcher,activationFailure=false}={}){
   calls.push({path,options});events.push('request:'+path)
   if(fetcher)return fetcher(path,options)
   return response(path==='/app/bootstrap'?bootstrap:path==='/auth/session'?{principal_id:'reader'}:path==='/auth/logout'?{logged_out:true}:path==='/api/workspaces'?overviewSpaces:overviewStatus())
- }}),createResponsibilitySessionClient,validateBootstrap,authorizationTarget,validateWorkspaces,mountModuleStatus:({session})=>{
+ }}),createResponsibilitySessionClient,validateBootstrap,authorizationTarget,validateWorkspaces,displayPolicyId,mountModuleStatus:({session})=>{
   state.mounted++;const controller=mountModuleStatus({session,doc})
   return {activate(spaces){state.activations++;events.push('activate-status');state.listAtActivation.push(elements.get('app-workspaces').children.map(item=>item.textContent));state.dataHiddenAtActivation.push(elements.get('app-data').hidden);controller.activate(spaces);if(activationFailure)throw Error('Synthetic activation failure')},clear(){state.cleared++;events.push('clear-status');controller.clear()}}
  },mountWorkspacePage(){throw Error('Overview must not mount the admin page')},mountResponsibilityPage(){throw Error('Overview must not mount a business module')}})
@@ -139,4 +139,12 @@ test('current status 401 invokes the real shell clear and cannot revive result o
  await flush();h.select('commons','pipelines');await h.submit()
  assert.equal(h.el('app-principal').textContent,'Not verified');assert.equal(h.el('module-status').hidden,true);assert.equal(h.el('module-status-workspace').children.length,0);assert.equal(h.el('module-status-workspace').value,'');assert.equal(h.el('module-status-key').value,'');assert.equal(h.el('module-status-message').textContent,'');assert.equal(h.el('module-status-result').hidden,true)
  assert.equal(h.el('app-recheck').disabled,false);assert.match(h.el('app-status').textContent,/session expired or was rejected/)
+})
+
+test('opaque current-principal label preserves ordinary ASCII and escapes legal control identities, then clears',async()=>{
+ for(const principal_id of ['ordinary:id','opaque\0\u007f\\u{0}\uFEFF','😀'.repeat(200)]){
+  const h=harness({fetcher:path=>response(path==='/app/bootstrap'?bootstrap:path==='/auth/logout'?{logged_out:true}:{principal_id})})
+  await flush();assert.equal(h.elements.get('app-principal').textContent,displayPolicyId(principal_id))
+  await h.click('app-sign-out');assert.equal(h.elements.get('app-principal').textContent,'Not verified')
+ }
 })

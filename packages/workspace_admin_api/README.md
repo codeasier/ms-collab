@@ -240,3 +240,132 @@ requires exact-head existing CI; its documentation is not a passed-test claim,
 and no local UT/build execution is asserted for this increment.
 All [base API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
 still apply.
+
+
+## Atomic administrator handover
+
+An explicitly initialized `TransferReceiptStore` can be supplied as
+`WorkspaceAdministrationApplication(..., transfers=handle)` or
+`ApplicationHost(..., admin_transfers=handle)`. The exact handle must belong to
+that configured policy service. `initialize_transfers(policy,
+layout="explicit-factory-v1")` is a trusted non-runtime initializer, not an HTTP
+operation; it rejects runtime installation/lock markers and never migrates or
+repairs a layout. The transfer-table family is reserved regardless of ASCII case. Ordinary constructors and requests perform no DDL. The runtime
+factory privately opens the existing exact I2 profile; I1 and unconfigured
+factories leave all three routes unmounted (404). This does not enable login.
+
+| Operation | Exact path |
+| --- | --- |
+| Current-admin availability | `GET /api/workspaces/{w}/admin-transfers/capabilities` |
+| Explicit one-target review | `GET /api/workspaces/{w}/admin-transfers/selections/{replacement}` |
+| Atomic handover | `POST /api/workspaces/{w}/admin-transfers` |
+
+No list, receipt lookup, post-demotion recovery endpoint, query, HEAD or alternate
+version prefix is added. Review returns only workspace/actor/replacement IDs,
+both membership revisions and `precondition`. The POST body is exactly
+`{"replacement_id":"reader","replacement_revision":"1"}` with canonical
+positive decimal replacement revision, quoted actor revision in `If-Match`, a
+UUID4 `Idempotency-Key`, and reviewed `If-Admin-Transfer-Match: ats1-<64 hex>`.
+The proof is a non-secret equality precondition, never a credential or grant.
+The two identity/ownership pins and both CAS revisions are checked under the
+same writer lock. The existing core operation alone promotes the replacement,
+demotes the actor to developer and appends its two audit events. Already-admin
+replacements remain eligible. Current authorization is not inferred from a
+button, review value or retained result.
+
+Safe configured storage first checks real current identity, scope/lifecycle and
+admin authority, then the actor/workspace/key namespace. The entire semantic
+intent, including both CAS values, target and proof, is permanent. An existing
+key with different intent or stale identity/ownership returns generic
+`409 idempotency_conflict`; it never becomes a fresh request. Exact replay still
+requires today's admin authority and both original active principal pins and
+ownership sidecars, but not historical membership roles/revisions. Re-promoting
+the original actor through an independently authorized ordinary operation can
+therefore make a historical replay eligible without demoting that actor again.
+This is not a recommended recovery procedure or a grant made by the receipt.
+Immediate retry after successful self-demotion normally returns current 403.
+
+A fresh request needs the proof (428 if absent, 400 if malformed). Stale CAS is
+412 `stale_revision`; a changed review vector is 412
+`admin_transfer_selection_changed`. These errors are no-write rejections of that
+invocation, not evidence about an earlier uncertain invocation. New valid keys
+at the permanent 256-per-local-actor/workspace limit fail 503; old keys are
+resolved first. No expiry, eviction or generation reset is provided. Current
+records and historical audit/proof structure are verified separately. Fresh
+readback checks expected new rows; replay checks unchanged *current* rows, not
+historical post-transfer roles. Commit or response failure can be unknown,
+atomically all-or-none; only confirmed precommit rollback proves no mutation.
+
+### Storage admission and bounded work
+
+The trusted, request-local `storage_admission` hook is separate from the business
+callback and W05 replacement. On Cookie transactions it runs under
+`BEGIN IMMEDIATE`, before clock observation, current authentication and the
+business savepoint's clock-preserving error path. Unsafe main/login/TEMP schema
+returns value-free 503 without writing an untrusted login clock target. Thus this
+structural failure precedes later current-identity/admin diagnostics; ordinary
+pre-DB transport and CSRF-shape rejection remains unchanged. Default-None routes
+have no extra hook. On reads, only expected scope, role, target or workspace-hint
+denials wait for the final current-auth check. A storage-binding failure in the
+business callback is raised immediately, not deferred as a business denial.
+The hook requires a connection and cannot combine with W07
+`receipt_only`. It is trusted fixed read-only code, not a sandbox for Python.
+
+I2 uses the factory-prepared exact registry, object-count+1 and complete BLOB
+field sentinels. Explicit factories permit at most 256 total `sqlite_schema`
+objects; the 257th fails closed. Core and transfer objects are mandatory.
+Optional policy tables are matched to the reviewed module DDL and their exact
+indexes, including implicit ones. This covers the current runtime modules and
+the explicit directory-cursor, preflight, download, refresh and connection-template
+tables without requiring every module to be installed. A plain ancillary table
+is also permitted only in the form `CREATE TABLE auxiliary_<suffix> (value TEXT)`
+with a nonempty lowercase ASCII letter/digit/underscore suffix. No other custom
+table, index, view, trigger or virtual table is admitted. Unknown foreign keys,
+even without a cascading action, are not reviewed auxiliary storage.
+
+Expected definitions are prepared from trusted source at the factory, not
+learned from installed objects; changing the reviewed module DDL requires an
+explicit update of its pinned definition digest. Each online check scans the
+catalog once per nonempty persistent schema with bounded projections, without
+per-table queries. Comparison folds only ordinary SQLite whitespace outside
+SQL string literals. TEMP objects and extra login objects are refused.
+The actual trusted API composition selects main-only Bearer or main-plus-login Cookie admission for both entry and
+final readback; attachment shape is not adopted from a request or mutable handle
+mode. Factory opening itself is main-only. Expected schema is prepared at the
+trusted factory, never by the first request. The file/realm binding cannot be
+silently replaced. Only one indexed receipt and at most 257 indexed partition
+keys are read online; complete historical validation is a trusted open/check/
+backup operation. Existing global core policy/audit loading and FK validation
+remain, so a whole HTTP request is not constant work or isolated from unrelated
+storage corruption. No provider, credential loader or network acquisition is
+performed by the handover callback; authentication retains its own boundary.
+
+### Client outcome contract and acceptance
+
+Both management pages explicitly Review then Confirm. A validated committed 200
+fixes the outcome before clearing the current workspace's admin data and
+refreshing only the ordinary workspace list. A lost/uncertain response retains
+the original immutable key, proof and body in page memory for manual retry;
+403/404/409/412 on a later retry cannot establish that the earlier write failed.
+There is no automatic retry, new UUID, re-review or low-privilege result lookup.
+Current roles observed by a newly authorized administrator do not prove which
+request committed. Closing/navigating only cancels local state, not server work.
+Logout/current 401 clears private state and warns that an interrupted operation
+may have completed. No reference survives document reload or browser storage.
+
+Response principal IDs preserve the existing policy identifier domain, including
+Unicode code points and legal control characters. Display escapes controls,
+format characters and backslashes; ordinary ASCII remains unchanged. URL targets
+still require the original ASCII route grammar. Non-route IDs are read-only,
+including under programmatic edit/target submission; no member directory or
+identity mapping is added. Only the three new transfer client methods have a
+same-session local guard before 401 invalidation. Older generic requests retain
+their session-epoch semantics; administration-load generations prevent their
+late DOM/finally updates, not every old generic 401 effect.
+
+The new tests are discovered by the original admin/host/runtime roots and Node
+globs. Two awaited synthetic TLS browser journeys extend the old entrypoints,
+including real completed-write/dropped-response behavior and explicit screenshot
+allowlists. Local execution is not claimed: exact-head CI and image review remain
+the acceptance gates. Real identity, old-installation conversion, production
+recovery, anti-rollback and deployment are not completed by this feature.

@@ -276,3 +276,32 @@ restoration. A second tab's prior displayed observation is not promised to clear
 immediately after logout elsewhere; its next authenticated request rechecks the
 shared server session. This is a UI consumer of the W08 HTTP slice, not completion
 of MCP, task cancellation, real identity/provider or production acceptance.
+
+
+### Atomic handover in Management
+
+The shared management controller consumes the explicitly configured
+[administrator handover adapter](../workspace_admin_api/README.md#atomic-administrator-handover).
+Cookie POSTs still require the real same-origin session and CSRF pair. Review is
+an explicit one-target operation, not a member directory or a cached permission.
+A committed handover makes the actor a developer; the UI clears selected-scope
+admin data and invalidates old members/modules/invitations loads before their
+late responses can refill it. It refreshes only the ordinary workspace list.
+
+Network/response uncertainty is not reported as failure. The immutable original
+attempt remains in this document for a deliberate retry, even if that retry
+returns current 403. No automatic retry/key rotation/review or post-demotion
+receipt endpoint is provided. Current 401/logout clears the real session and
+private state; page lifecycle/scope changes discard local references, not server
+operations. Only the three new transfer methods get a same-session local guard
+before 401 side effects; generic prior requests are not given a broader contract.
+Opaque policy identities preserve complete code-point values, escape control/
+format characters for display, and never become non-ASCII route write targets.
+
+I2's verified runtime factory mounts this feature; I1 remains unchanged and
+unmounted. No installed data conversion, real login, provider or production
+recovery is enabled. The new synthetic mode has its own Cookie BrowserContext,
+with intentional sharing only among its own tabs; independent new-admin checks
+use a separate authenticated context. Existing browser gates remain and only two
+exact transfer screenshots are appended. Actual Back and synthetic persisted
+handler evidence are distinguished; deep-link restoration remains unsupported.

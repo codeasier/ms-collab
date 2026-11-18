@@ -1,10 +1,23 @@
 """Operator lifecycle and workspace-admin module control. No default providers."""
 from dataclasses import asdict, dataclass
+import re
 
 from packages.workspace_api import WorkspaceApplication
-from packages.workspace_api.application import _SEGMENT, _invalid
+from packages.workspace_api.application import _SEGMENT, _invalid, _workspace_hint_operation
+from packages.workspaces.model import MAX_REVISION
+from .transfer_store import TransferReceiptStore
+from .transfer_selection import selection
 from packages.workspaces import PolicyError
 from .requests import request_key, remembered, remember
+
+
+# Only these handover-read business refusals may await the final authentication
+# check. Authentication, storage admission (including the in-callback binding
+# recheck) and unknown errors must leave the callback as failures.
+_TRANSFER_READ_DENIALS = frozenset({
+    (400, 'invalid_request'), (403, 'forbidden'), (404, 'not_found'),
+    (409, 'workspace_unavailable'), (409, 'replacement_ineligible'),
+})
 
 
 @dataclass(frozen=True)
@@ -28,7 +41,7 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
     catalog only permits installing a disabled local module. It does not grant
     connector authority, execute jobs, provision secrets, or install software.
     """
-    def __init__(self, *, api, module_catalog=()):
+    def __init__(self, *, api, module_catalog=(), transfers=None):
         if type(api) is not WorkspaceApplication:
             raise ValueError("explicit configured workspace API required")
         catalog = tuple(module_catalog)
@@ -36,13 +49,23 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
             raise ValueError("approved module templates required")
         if len({item.key for item in catalog}) != len(catalog):
             raise ValueError("duplicate module template")
+        if transfers is not None:
+            policy = (api._session_boundary._sessions.policy if api._session_boundary is not None else api._store)
+            if type(transfers) is not TransferReceiptStore or transfers.policy is not policy:
+                raise ValueError("explicit same-policy transfer handle required")
         self._api, self._catalog = api, {item.key: item for item in catalog}
+        self._transfers = transfers
+        self._transfer_admission = (None if transfers is None else
+            transfers._admit_cookie if api._session_boundary is not None else transfers._admit_bearer)
 
     def _dispatch(self, environ):
         path = environ.get("PATH_INFO", "")
         if type(path) is not str or len(path) > 1000:
             raise _invalid()
         parts = path.split("/")
+        if (self._transfers is not None and parts[:3] == ["", "api", "workspaces"]
+                and len(parts) >= 5 and parts[4] == "admin-transfers"):
+            return self._transfer_dispatch(environ, parts)
         is_control = parts[:3] == ["", "api", "control"]
         is_module = (parts[:3] == ["", "api", "workspaces"]
                      and len(parts) in {5, 6} and parts[4] in {"modules", "module-catalog"})
@@ -145,3 +168,79 @@ class WorkspaceAdministrationApplication(WorkspaceApplication):
                               state=body["state"], expected_revision=args[2]))
             raise PolicyError(404, "not_found")
         return self._api._authenticated_transaction(assertion, operation, write=write, with_connection=True)
+
+
+    def _transfer_dispatch(self, environ, parts):
+        """Mounted exact routes only; no receipt lookup after lost authority."""
+        assertion = self._api._verify_request(environ)
+        if environ.get("QUERY_STRING", "") or any(not _SEGMENT.fullmatch(p) for p in parts[3:]):
+            raise _invalid()
+        verb = environ.get("REQUEST_METHOD")
+        command = None
+        if verb == "GET" and len(parts) == 6 and parts[5] == "capabilities":
+            command = "capabilities"
+        elif verb == "GET" and len(parts) == 7 and parts[5] == "selections":
+            command = "selection"
+        elif verb == "POST" and len(parts) == 5:
+            command = "transfer"
+        if command is None:
+            raise PolicyError(404, "not_found")
+        if command != "transfer" and environ.get("CONTENT_LENGTH", "") not in ("", "0"):
+            raise _invalid()
+        workspace = parts[3]
+        guard = None
+        if command == "transfer":
+            body = self._body(environ, {"replacement_id", "replacement_revision"})
+            if (not _SEGMENT.fullmatch(body["replacement_id"])
+                    or re.fullmatch(r"[1-9][0-9]{0,15}", body["replacement_revision"]) is None
+                    or int(body["replacement_revision"]) > MAX_REVISION):
+                raise _invalid()
+            key, actor_revision = request_key(environ), self._revision(environ)
+            # Preserve absent versus malformed-present; old-key comparison is
+            # performed before interpreting this as a fresh selection proof.
+            proof = environ.get("HTTP_IF_ADMIN_TRANSFER_MATCH")
+            if "HTTP_IF_ADMIN_TRANSFER_MATCH" in environ and type(proof) is not str:
+                proof = object()
+
+        def operation(policy, actor, connection):
+            nonlocal guard
+            if command == "transfer":
+                result, guard = self._transfers.transfer(policy, actor, connection,
+                    workspace=workspace, replacement=body["replacement_id"], key=key,
+                    actor_revision=actor_revision, replacement_revision=int(body["replacement_revision"]),
+                    precondition=proof, admission=self._transfer_admission)
+                return result
+            policy._admin(actor, workspace)
+            self._transfers._bound(policy, connection, self._transfer_admission)
+            if command == "capabilities":
+                return {"available": True}
+            return selection(policy, actor, workspace, parts[6])[1]
+
+        def before_commit():
+            if guard is not None:
+                guard()
+
+        if command == "transfer":
+            return self._api._authenticated_transaction(assertion, operation, write=True,
+                with_connection=True, before_commit=before_commit,
+                storage_admission=self._transfer_admission)
+        # Only business PolicyError (including W05) is delayed until the normal
+        # final-current guards. Admission is a separate earlier parameter and
+        # cannot be captured into a clock-preserving successful callback.
+        assertion, operation = _workspace_hint_operation(assertion, operation)
+        pending, denied = None, object()
+        def observed(policy, actor, connection):
+            nonlocal pending, guard
+            guard = lambda: self._transfer_admission(connection)
+            try:
+                return operation(policy, actor, connection)
+            except PolicyError as error:
+                if (error.status, error.code) not in _TRANSFER_READ_DENIALS:
+                    raise
+                pending = error
+                return denied
+        result = self._api._authenticated_transaction(assertion, observed, with_connection=True,
+            before_commit=before_commit, storage_admission=self._transfer_admission)
+        if pending is not None:
+            raise pending
+        return result

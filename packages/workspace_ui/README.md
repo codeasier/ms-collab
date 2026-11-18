@@ -83,8 +83,9 @@ transitions stay closed or separately scoped; this UI does not complete those ga
 
 The base API alone still supports member administration; new controls stay hidden
 when the extension is not configured. No UI flag grants backend authority.
-Member creation, admin transfer, sharing grants and provider enrollment remain
-unimplemented. The module controls only change local policy, not external jobs,
+Member creation, sharing grants and provider enrollment remain
+unimplemented. Administrator handover is an explicitly configured extension,
+not an authority supplied by a page control. The module controls only change local policy, not external jobs,
 providers, credentials or installed software. Client controls are UX, never authorization. Shared spaces
 are not a union of private data. API failures do not display provider/SQL bodies.
 
@@ -101,7 +102,7 @@ administrator protection, stale revisions, scope changes during pending reads,
 malformed cross-scope data, 401 clearing and viewer denial. It also covers operator
 separation, creation with a lost-response retry, product/shared spaces, lifecycle
 conflicts, irreversible archive, module install/disable/enable and wrong-scope
-module response rejection. Only two screenshots
+module response rejection. Only exact allowlisted screenshots
 of synthetic data are uploaded. Real provider login, TLS/reverse-proxy behavior,
 server limits, enrollment/revocation operations and production usability remain
 unverified. All [API deployment requirements](../workspace_api/README.md#required-before-exposing-this-service)
@@ -117,3 +118,31 @@ Compose the [invitation adapter](../workspace_invitations/README.md) to enable
 the signed-in inbox and administrator invite/revoke controls. These call the
 actual configured service; they are not synthetic authentication. The original
 base API without this extension still works and returns no fabricated inbox.
+
+
+## Explicit administrator handover
+
+When the [transfer adapter](../workspace_admin_api/README.md#atomic-administrator-handover)
+is mounted, current admins can Review one existing, route-addressable member and
+Confirm the two-revision handover. Both identity/ownership bindings are reviewed;
+the acting ID is returned by the authorized API, never guessed from list order.
+The original admin becomes developer. A committed response stays successful even
+if a subsequent ordinary workspace-list refresh fails; admin-only rereads are
+not used as a success condition. Unconfigured services hide the controls after
+capability 404 and do not manufacture support.
+
+A dropped response is explicitly unknown. The page keeps the same key/proof/body
+for a manual retry; current 403 after self-demotion is neither success nor proof
+of failure. No automatic retry, key rotation, new review, regrant or receipt
+lookup occurs. Later ordinary authorized role inspection describes current
+state, not request identity. Closing, scope changes and navigation discard local
+reference state with a warning that this does not cancel a possible server write;
+reload has no restoration/deep-link contract. A real current 401 still clears
+credentials and private state. Existing generic requests retain their prior 401
+semantics; the new local-before-401 guard is restricted to transfer methods.
+
+Legal opaque policy IDs are escaped for readable display without normalization.
+Only existing ASCII route IDs are selectable/editable, including programmatic
+submissions. The synthetic transfer journey uses temporary TLS, preserves prior
+browser scenarios, and adds review-desktop and unknown-mobile screenshots.
+Tests and screenshots require exact-head remote CI, not documentation approval.

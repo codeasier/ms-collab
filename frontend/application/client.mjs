@@ -14,6 +14,24 @@ function initialAdminSelectionRequest(path,method,precondition){
  if(precondition!==undefined&&(path!=='/api/control/workspaces'||method!=='POST'||typeof precondition!=='string'||precondition.length!==69||!/^ias1-[a-f0-9]{64}$/.test(precondition)))throw Error('Invalid initial administrator precondition.')
 }
 const validId=value=>typeof value==='string'&&!/[\u0000-\u0020\u007f]/.test(value)&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)
+// Policy response identities are not URL identifiers. Match Python isspace and
+// code-point length exactly; FEFF, NUL and DEL remain legal opaque values.
+export function validPolicyId(value) {
+  if (typeof value !== 'string') return false
+  const points = Array.from(value)
+  return points.length >= 1 && points.length <= 200 && !points.some(c => {
+    const n = c.codePointAt(0)
+    return (n >= 0xd800 && n <= 0xdfff) || (n >= 9 && n <= 13) || (n >= 0x1c && n <= 0x20) || [0x85,0xa0,0x1680,0x2028,0x2029,0x202f,0x205f,0x3000].includes(n) || (n >= 0x2000 && n <= 0x200a)
+  })
+}
+export function displayPolicyId(value) {
+  if (!validPolicyId(value)) throw new Error('Invalid identity response.')
+  return Array.from(value, c => {
+    const n = c.codePointAt(0)
+    if (c === '\\') return '\\\\'
+    return n < 0x20 || (n >= 0x7f && n <= 0x9f) || /\p{Cf}/u.test(c) ? `\\u{${n.toString(16).toUpperCase()}}` : c
+  }).join('')
+}
 // Exact stored-status codec. This projection is not a capability or readiness result.
 export const validModuleStatusId=validId
 export function moduleStatusURL(workspace,key){
@@ -37,6 +55,68 @@ const validateInvitations=(items,workspace)=>{if(items.some(i=>!i||!validId(i.id
 // /app and /manage (not the filesystem names); shared Node contract cases keep
 // the exact wire rules aligned without opening a new static route.
 const exactFields = (value, fields) => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',')
+// Transfer-only codecs are mirrored at the two existing static client roots.
+const transferRevision = n => Number.isSafeInteger(n) && n > 0
+export const validAdminTransferPrecondition = value => typeof value === 'string' && value.length === 69 && /^ats1-[a-f0-9]{64}$/.test(value)
+const transferKey = value => typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+export function adminTransferURL(workspace, replacement) {
+  if (!validId(workspace)) throw new Error('Invalid administrator transfer scope.')
+  const base = `/api/workspaces/${encodeURIComponent(workspace)}/admin-transfers`
+  // Only the one-argument form names the collection. A Review or tuple
+  // validator always supplies its required target, even when it is undefined.
+  if (arguments.length === 1) return base
+  if (!validId(replacement)) throw new Error('Invalid administrator transfer target.')
+  return `${base}/selections/${encodeURIComponent(replacement)}`
+}
+export function validateAdminTransferSelection(data, workspace, replacement) {
+  adminTransferURL(workspace,replacement)
+  if (!exactFields(data,['workspace_id','actor_id','replacement_id','actor_revision','replacement_revision','precondition']) || data.workspace_id !== workspace || data.replacement_id !== replacement || !validPolicyId(data.actor_id) || data.actor_id === replacement || !transferRevision(data.actor_revision) || !transferRevision(data.replacement_revision) || !validAdminTransferPrecondition(data.precondition)) throw new Error('Invalid administrator transfer review.')
+  return data
+}
+function transferAbort() { const error = new Error('Stale administrator transfer discarded.'); error.name = 'AbortError'; return error }
+function assertCurrentTransfer(context) {
+  if (!context) return
+  try { if (context.isCurrent() === true) return } catch {}
+  throw transferAbort()
+}
+function transferOptions(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || ![Object.prototype,null].includes(Object.getPrototypeOf(options)) || Reflect.ownKeys(options).some(key => !['signal','isCurrent'].includes(key)) || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) throw new Error('Invalid administrator transfer options.')
+  assertCurrentTransfer(options)
+  return {signal:options.signal,isCurrent:options.isCurrent}
+}
+function transferAttempt(value) {
+  if (!exactFields(value,['workspace_id','actor_id','replacement_id','actor_revision','replacement_revision','precondition','requestKey']) || Reflect.ownKeys(value).length !== 7 || !transferKey(value.requestKey)) throw new Error('Invalid administrator transfer attempt.')
+  const {requestKey,...selection} = value
+  validateAdminTransferSelection(selection,value.workspace_id,value.replacement_id)
+  return Object.freeze({...selection,requestKey})
+}
+function validateTransferResponse(payload, context) {
+  if (!exactFields(payload,['data'])) throw new Error('Invalid administrator transfer response.')
+  const data = payload.data
+  if (context.kind === 'capabilities') {
+    if (!exactFields(data,['available']) || data.available !== true) throw new Error('Invalid administrator transfer capability.')
+  } else if (context.kind === 'review') validateAdminTransferSelection(data,context.workspace,context.replacement)
+  else {
+    const a = context.attempt
+    if (!exactFields(data,['workspace_id','actor_id','replacement_id','actor_role','replacement_role','actor_revision','replacement_revision','state']) || data.workspace_id !== a.workspace_id || data.actor_id !== a.actor_id || !validPolicyId(data.actor_id) || data.replacement_id !== a.replacement_id || data.actor_role !== 'developer' || data.replacement_role !== 'admin' || data.state !== 'committed' || !transferRevision(data.actor_revision) || !transferRevision(data.replacement_revision) || data.actor_revision !== a.actor_revision + 1 || data.replacement_revision !== a.replacement_revision + 1) throw new Error('Invalid administrator transfer result.')
+  }
+  return data
+}
+async function transferRejection(response) {
+  // A post-read bound is not a streaming memory limit. Never render raw errors.
+  try {
+    const raw = await response.text()
+    if (raw.length > 256) return false
+    const payload = JSON.parse(raw)
+    return exactFields(payload,['error']) && response.status === 412 && ['stale_revision','admin_transfer_selection_changed'].includes(payload.error)
+  } catch { return false }
+}
+function transferContext(kind, workspace, replacement, options, attempt) {
+  const {signal,isCurrent} = transferOptions(options)
+  const base = kind === 'review' ? adminTransferURL(workspace,replacement) : adminTransferURL(workspace)
+  const path = kind === 'capabilities' ? base + '/capabilities' : base
+  return {signal,context:Object.freeze({kind,workspace,replacement,path,isCurrent,attempt})}
+}
 const validInvitationRecipientPrecondition = value => typeof value === 'string' && value.length === 69 && /^irs1-[a-f0-9]{64}$/.test(value)
 function invitationSelectionURL(workspace, principal, role) {
   if (!validId(workspace) || !validId(principal) || !['viewer','developer'].includes(role)) throw new Error('Invalid invitation selection.')
@@ -120,7 +200,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  let active=false,epoch=0
  const transfers=new Set()
  const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
- async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={},moduleStatus){
+ async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={},moduleStatus,transfer){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
   initialAdminSelectionRequest(path,method,initialAdminPrecondition)
@@ -128,6 +208,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   // Only readModuleStatus creates this private third argument. Public request
   // options cannot install a navigation guard or suppress genuine 401 handling.
   if(moduleStatus&&(typeof moduleStatus.isCurrent!=='function'||path!==moduleStatus.path||path!==moduleStatusURL(moduleStatus.workspace,moduleStatus.key)||method!=='GET'||!authenticated||login||[body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent].some(value=>value!==undefined)))throw new Error('Invalid module status request.')
+  if(transfer&&(moduleStatus||path!==transfer.path||!authenticated||login||(transfer.kind==='submit'?method!=='POST':method!=='GET')))throw new Error('Invalid administrator transfer request.')
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
   if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
@@ -135,42 +216,59 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   if(requestKey!==undefined){if(typeof requestKey!=='string'||requestKey.match(/^[A-Za-z0-9_-]{1,200}$/)?.[0]!==requestKey)throw new Error('Invalid retry key.');headers['Idempotency-Key']=requestKey}
   if(initialAdminPrecondition!==undefined)headers['If-Initial-Admin-Match']=initialAdminPrecondition
   if(invitationRecipientPrecondition!==undefined)headers['If-Invitation-Recipient-Match']=invitationRecipientPrecondition
+  if(transfer?.kind==='submit')headers['If-Admin-Transfer-Match']=transfer.attempt.precondition
   if(method!=='GET'){
    // A fresh cookie is read for each mutation. A missing/duplicate token fails locally.
    if(login){headers['X-MS-Collab-Login']='1';const raw=cookie();if(raw.split(';').some(x=>x.trim().startsWith('__Host-ms-collab-csrf=')))headers['X-CSRF-Token']=csrfCookie(raw)}
    else headers['X-CSRF-Token']=csrfCookie(cookie())
   }
-  const current=()=>{assertCurrentModuleStatus(moduleStatus);assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch){if(moduleStatus)throw staleModuleStatus();throw new Error('Stale session response discarded.')}}
-  if(moduleStatus)current()
+  const current=()=>{assertCurrentTransfer(transfer);assertCurrentModuleStatus(moduleStatus);assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch){if(transfer)throw transferAbort();if(moduleStatus)throw staleModuleStatus();throw new Error('Stale session response discarded.')}}
+  if(moduleStatus||transfer)current()
   let response
   try{response=await fetcher(path,{method,headers,body,signal,credentials:'same-origin',cache:'no-store',redirect:'error'})}
-  catch(error){if(moduleStatus)current();throw error}
+  catch(error){if(moduleStatus||transfer)current();if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}
   current() // Before 401 can clear the current session or call onInvalid.
   if(!response.ok){
    const error=new Error(messages[response.status]||'The request could not be verified. Nothing was retried.');error.status=response.status
    if(invitation.creation&&response.status===412)error.invitationSelectionRejected=await invitationSelectionRejected(response)
+   if(transfer)error.adminTransferRejected=await transferRejection(response)
    current()
-   if(response.status===401){clear();onInvalid(error.message)}throw error
+   if(transfer&&response.status===401)error.message='Your session expired. The interrupted administrator change may already have completed.'
+   if(response.status===401){
+    clear() // Ordinary auth invalidation is never gated by page ownership.
+    // An ordinary list refresh can follow a *verified* transfer. Forward
+    // only its local request identity so the page can choose accurate copy.
+    if(path==='/api/workspaces'&&method==='GET'&&signal)onInvalid(error.message,signal)
+    else onInvalid(error.message)
+   }throw error
   }
+  if(transfer&&response.status!==200)throw new Error('Invalid administrator transfer response.')
   if(moduleStatus&&response.status!==200)throw new Error('Invalid module status response. Check again explicitly.')
   if((invitation.review||invitation.creation)&&response.status!==200)throw new Error('Invalid invitation response.')
-  let raw;try{raw=await response.text()}finally{current()}
+  let raw;try{raw=await response.text()}catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{current()}
   try{
    // Existing bound is checked after reading, not a streaming allocation limit.
-   if(raw.length>2097152)throw new Error('Invalid service response.')
+   if(raw.length>(transfer?16384:2097152))throw new Error('Invalid service response.')
    const payload=JSON.parse(raw);if(!own(payload,['data']))throw new Error('Invalid service response.')
    current()
+   if(transfer)return validateTransferResponse(payload,transfer)
    if(moduleStatus)return validateModuleStatus(payload.data,moduleStatus.workspace,moduleStatus.key)
    if(invitation.review||invitation.creation)return validateInvitationResult(payload,invitation)
    return payload.data
-  }finally{if(moduleStatus)current()}
+  }catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{if(moduleStatus||transfer)current()}
  }
  return {
   clear,
   bootstrap:()=>send('/app/bootstrap'),
-  async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||typeof data.principal_id!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(data.principal_id)||/[\u0000-\u0020\u007f]/.test(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
+  async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||!validPolicyId(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},
   logout(){clear();return send('/auth/logout',{method:'POST',body:{}})},
+  async transferCapabilities(workspace,options={}) { const {signal,context}=transferContext('capabilities',workspace,undefined,options);return send(context.path,{signal,authenticated:true},undefined,context) },
+  async reviewAdminTransfer(workspace,replacement,options={}) { const {signal,context}=transferContext('review',workspace,replacement,options);return send(context.path,{signal,authenticated:true},undefined,context) },
+  async submitAdminTransfer(value,options={}) {
+   const attempt=transferAttempt(value),{signal,context}=transferContext('submit',attempt.workspace_id,undefined,options,attempt)
+   return send(context.path,{method:'POST',body:{replacement_id:attempt.replacement_id,replacement_revision:String(attempt.replacement_revision)},revision:attempt.actor_revision,requestKey:attempt.requestKey,signal,authenticated:true},undefined,context)
+  },
   async readModuleStatus(workspace,key,options={}){
    const path=moduleStatusURL(workspace,key)
    if(!options||typeof options!=='object'||Array.isArray(options)||![Object.prototype,null].includes(Object.getPrototypeOf(options))||Reflect.ownKeys(options).some(name=>!['signal','isCurrent'].includes(name))||!Object.hasOwn(options,'isCurrent')||typeof options.isCurrent!=='function'||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new Error('Invalid module status options.')
@@ -183,7 +281,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    guard();return receiveArtifact({binding,fetcher,csrf:()=>csrfCookie(cookie()),guard,signal,pending:transfers,
     onUnauthorized(error){guard();clear();onInvalid(error.message)}})
   },
-  async request(path,options={}){if(!path.startsWith('/api/'))throw new Error('Invalid service path.');return send(path,{...options,authenticated:true,login:false})}
+  async request(path,options={}){if(typeof path!=='string'||!path.startsWith('/api/')||/^\/api\/workspaces\/[^/]+\/admin-transfers(?:[/?#]|$)/.test(path))throw new Error('Invalid service path.');return send(path,{...options,authenticated:true,login:false})}
  }
 }
 export function createResponsibilitySessionClient(session){

@@ -11,7 +11,7 @@ import {createAssistantSessionClient} from '/assistant/client.mjs'
 import {mountCommunityPage} from '../community/board.mjs'
 import {createCommunitySessionClient} from './community-client.mjs'
 import {createSessionClient,createResponsibilitySessionClient,createPipelineSessionClient,validateBootstrap,authorizationTarget} from './client.mjs'
-import {validateWorkspaces} from '/manage/client.mjs'
+import {validateWorkspaces,displayPolicyId} from '/manage/client.mjs'
 import {mountWorkspacePage} from '/manage/admin.mjs'
 import {mountPipelinePage} from '../pipelines/runs.mjs'
 import {mountResponsibilityPage} from '../responsibility/browser.mjs'
@@ -21,14 +21,14 @@ import {mountArtifactCatalogPage} from '/artifacts/browser.mjs'
 import {mountArtifactAdministrationPage} from '/artifact-admin/browser.mjs'
 const el=id=>document.getElementById(id)
 let generation=0,bootstrap,page,overviewStatus,busy=false,principal,ready=false,initializing=false
-const session=createSessionClient({onInvalid:message=>clear(message)})
+const session=createSessionClient({onInvalid:clear})
 function controls(){
  el('app-sign-in').disabled=busy||!ready||!bootstrap?.login_configured||Boolean(principal)
  el('app-sign-out').disabled=!principal
  el('app-recheck').disabled=busy||initializing
 }
-function clear(message='Session needs an explicit recheck. Any interrupted change may already have completed.'){
- generation++;principal=undefined;busy=false;initializing=false;session.clear();page?.clear(message);overviewStatus?.clear()
+function clear(message='Session needs an explicit recheck. Any interrupted change may already have completed.',workspaceListSignal){
+ generation++;principal=undefined;busy=false;initializing=false;session.clear();page?.clear(message,workspaceListSignal);overviewStatus?.clear()
  el('app-principal').textContent='Not verified';el('app-workspaces')?.replaceChildren();el('app-data')?.setAttribute('hidden','')
  el('app-status').textContent=message;controls()
 }
@@ -37,7 +37,7 @@ async function inspect(){
  clear('Checking the current server session…');const turn=generation;busy=true;controls()
  try{
   const identity=await session.inspect();if(turn!==generation)return
-  principal=identity.principal_id;el('app-principal').textContent=principal;controls()
+  principal=identity.principal_id;el('app-principal').textContent=displayPolicyId(principal);controls()
   if(page)await page.activate()
   else{
    const spaces=validateWorkspaces(await session.request('/api/workspaces'));if(turn!==generation)return

@@ -89,8 +89,14 @@ def initialize(path):
     return store
 
 
-def setup(directory,*,origin=ORIGIN,clock=lambda:NOW,enabled=True,modules=MODULES,authorization_endpoint=None,directory_cursors=True):
+def setup(directory,*,origin=ORIGIN,clock=lambda:NOW,enabled=True,modules=MODULES,authorization_endpoint=None,directory_cursors=True,admin_transfers=False):
     policy=initialize(Path(directory)/'policy.sqlite')
+    transfers=None
+    if admin_transfers:
+        from packages.workspace_admin_api.tests.transfer_fixtures import provision_browser
+        from packages.workspace_admin_api.transfer_store import initialize_transfers
+        provision_browser(policy)
+        transfers=initialize_transfers(policy,layout='explicit-factory-v1')
     receipts=None
     if directory_cursors:
         initialize_directory_cursors(policy,layout='explicit-factory-v1')
@@ -100,7 +106,7 @@ def setup(directory,*,origin=ORIGIN,clock=lambda:NOW,enabled=True,modules=MODULE
     sessions=SessionPolicyStore(policy=policy,login=login)
     exchange=SyntheticExchange(binding,clock)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or ISSUER+'/authorize',authorization_scopes=('synthetic_user',)) if enabled else {}
-    app=ApplicationHost(config=HostConfig(origin,modules,tuple(ModuleTemplate('research_assets' if k=='research-assets' else k,('read','write')) for k in modules)),sessions=sessions,clock=clock,directory_cursors=receipts,**args)
+    app=ApplicationHost(config=HostConfig(origin,modules,tuple(ModuleTemplate('research_assets' if k=='research-assets' else k,('read','write')) for k in modules)),sessions=sessions,clock=clock,directory_cursors=receipts,admin_transfers=transfers,**args)
     return app,policy,login,exchange
 
 
