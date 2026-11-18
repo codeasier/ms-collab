@@ -185,4 +185,50 @@ class HostTests(unittest.TestCase):
                 response=self.request(path);self.assertEqual(response['status'],503)
                 self.assertFalse(cookie_values(response));self.assertNotIn('synthetic outage',str(response))
 
+    def test_admin_cookie_reads_stored_pipeline_but_cannot_prepare_view_or_publish_a_replacement(self):
+        from contextlib import ExitStack
+        from packages.pipeline_api import encode_snapshots, resource_id
+        from packages.pipelines import PipelineScope
+
+        scope=PipelineScope('alpha','example-ci','build')
+        base='/api/workspaces/alpha/pipelines/example-ci/build'
+        key=resource_id(scope)
+        def footprint():
+            return (self.policy.read_resource('admin','alpha','pipelines',key),
+                    self.policy.audit_events('admin','alpha'))
+        old=footprint()
+        raw_empty=encode_snapshots(scope,[])
+        self.assertTrue(raw_empty!=old[0].text,'negative PUT must offer a different valid value')
+        # This existing route requires workspace admin. Use the same issued
+        # Cookie pair and same-origin CSRF header for all subsequent mutations.
+        self.assertEqual(self.request('/api/workspaces/alpha/members')['status'],200)
+        selector='not-a-stored-candidate'
+        probes=(('POST',base+'/refresh',{}),
+                ('POST',base+'/prepare',{}),
+                ('GET',base+'/candidates/'+selector,None),
+                ('POST',base+'/publish',{'candidate_id':selector}),
+                ('PUT','/api/workspaces/alpha/modules/pipelines/resources/'+key,{'text':raw_empty}))
+        guards=('packages.pipeline_sync.PipelineSynchronizer.refresh',
+                'packages.pipeline_sync.PipelineSynchronizer.reviewed_refresh',
+                'packages.pipeline_sync.service.collect',
+                'packages.pipeline_sync.HTTPSReadTransport.get',
+                'packages.pipeline_sync.review.confirm_replacement')
+        with ExitStack() as stack:
+            calls=[stack.enter_context(patch(name,side_effect=AssertionError('unexpected pipeline operation')))
+                   for name in guards]
+            read=self.request(base+'/runs')
+            self.assertEqual(read['status'],200)
+            data=read['body']['data']
+            self.assertEqual((data['scope'],data['source']['revision'],data['total']),(scope.as_dict(),old[0].revision,1))
+            self.assertTrue([row['id'] for row in data['items']]==['run-1'],'fixture did not serve the stored run')
+            self.assertEqual(self.mutation(base+'/refresh',csrf=None)['status'],401)
+            for method,path,body in probes:
+                with self.subTest(method=method,path=path):
+                    result=(self.request(path) if method=='GET' else
+                            self.mutation(path,method=method,body=body,revision=f'"{old[0].revision}"'))
+                    self.assertEqual(result['status'],404)
+                    self.assertTrue(result['body']=={'error':'not_found'},'unexpected data in closed response')
+                    self.assertTrue(footprint()==old,'stored resource or workspace audit changed')
+            self.assertEqual({name:m.call_count for name,m in zip(guards,calls)},dict.fromkeys(guards,0))
+
 if __name__=='__main__':unittest.main()
