@@ -10,9 +10,41 @@ async function assertFacetCleared(page){
  assert.equal(await page.locator('#label-options button').count(),0);assert.equal(await page.locator('#label-input').inputValue(),'')
  for(const name of ['label-options','label-status','label-page'])assert.equal(await page.locator('#'+name).textContent(),'')
 }
+// The prior real revocation leaves the unauthenticated Back document with old
+// cookies. /auth/start explicitly rejects and expires them without starting S256.
+// Observe only response kinds/status and public protocol flags, never cookie values,
+// auth codes, challenge/state strings or full provider/callback URLs in evidence.
+async function signInReaderAfterRevocation({page,origin,provider,login}){
+ const expected=['__Host-ms-collab-csrf','__Host-ms-collab-session']
+ const names=async()=>(await page.context().cookies(origin)).map(c=>c.name).filter(n=>expected.includes(n)).sort()
+ const start=origin+'/auth/start',destination=new URL(provider),responses=[]
+ const trace=r=>{
+  const url=new URL(r.url()),method=r.request().method(),status=r.status()
+  if(r.url()===start)responses.push(['start',method,status])
+  else if(url.origin===destination.origin&&url.pathname===destination.pathname){
+   responses.push(['provider',method,status,url.searchParams.getAll('code_challenge_method').length===1&&url.searchParams.get('code_challenge_method')==='S256',url.searchParams.get('redirect_uri')===origin+'/auth/callback'])
+  }else if(url.origin===origin&&url.pathname==='/auth/callback')responses.push(['callback',method,status])
+ }
+ await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified'&&!document.querySelector('#app-sign-in').disabled&&!document.querySelector('#app-recheck').disabled)
+ assert.equal(page.url(),origin+'/community/');await assertFacetCleared(page);assert.deepEqual(await names(),expected)
+ const historyBefore=await page.evaluate(()=>history.length);page.on('response',trace)
+ try{
+  const [denial]=await Promise.all([page.waitForResponse(r=>r.url()===start&&r.request().method()==='POST'),page.locator('#app-sign-in').click()])
+  assert.equal(denial.status(),401)
+  await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('session expired or was rejected')&&!document.querySelector('#app-sign-in').disabled)
+  assert.deepEqual(responses,[['start','POST',401]]);assert.deepEqual(await names(),[])
+  assert.equal(page.url(),origin+'/community/');assert.equal(await page.evaluate(()=>history.length),historyBefore)
+  assert.equal(await page.locator('#app-principal').innerText(),'Not verified');assert.ok(await page.locator('#session').isHidden());await assertFacetCleared(page)
+  // Only after that verified denial: an explicit new login from the cleared browser.
+  await login('reader')
+  assert.deepEqual(responses,[['start','POST',401],['start','POST',200],['provider','GET',303,true,true],['callback','GET',303]])
+  assert.deepEqual(await names(),expected);assert.equal(await page.locator('#app-principal').innerText(),'reader')
+  console.log('Community approved-label acceptance: stale start 401 cleared old cookies; explicit fresh reader start 200, S256 provider and callback 303.')
+ }finally{page.off('response',trace)}
+}
 // A separate, pre-approved synthetic connection. Positive values are read from the real
 // Cookie GETs issued by Open, never manufactured by the page, a route, or another API call.
-async function approvedLabelJourney({page,origin,folder,login,logout,ready,settled,control,renderTick}){
+async function approvedLabelJourney({page,origin,provider,folder,login,logout,ready,settled,control,renderTick}){
  const base='/api/workspaces/beta/community/labels/sample/project',scope={workspace_id:'beta',connection_id:'labels',repository:'sample/project'}
  const long='integration-contract-for-candidate-compatibility-with-platform-toolchains',rare='z-rare-exact',privateLabel='unshared-review-label'
  const id=name=>page.locator('#'+name),buttons=id('label-options').getByRole('button'),option=name=>buttons.filter({has:page.getByText(JSON.stringify(name),{exact:true})})
@@ -66,7 +98,7 @@ async function approvedLabelJourney({page,origin,folder,login,logout,ready,settl
   console.log('COMMUNITY_APPROVED_LABELS_SCREEN '+name+' '+width+'x'+pixelHeight+' viewport='+width+'x'+height+' bytes='+png.length+' sha256='+sha+' longLines='+layout.lines+' minOptionHeight='+Math.min(...layout.buttons.map(b=>b[5])))
  }
 
- await login('reader');await noFacet();page.on('request',onRequest)
+ await signInReaderAfterRevocation({page,origin,provider,login});await noFacet();page.on('request',onRequest)
  const baseline=await footprint();assert.equal(baseline[0],origin+'/community/');assert.deepEqual(baseline.slice(2),[0,0])
  const [responses]=await Promise.all([Promise.all(paths('items').map(response)),open()])
  await settled();expectRead(0,'items')
@@ -233,7 +265,7 @@ async function main(){
   await assertFacetCleared(page) // Immediately after the genuine 401, before navigating or logging in again.
   await router.drain();await context.unrouteAll({behavior:'wait'});await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#session').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
-  await approvedLabelJourney({page,origin,folder,login,logout,ready,settled,control,renderTick})
+  await approvedLabelJourney({page,origin,provider,folder,login,logout,ready,settled,control,renderTick})
   assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
   console.log('Community session acceptance: real S256 cookies; reader/reviewer/admin; 101-row full approval preservation; CSRF/CAS; hostile text; late reads and accepted writes after logout; current membership/session revocation; history; four responsive screenshots. Synthetic HTTPS only.')
  }finally{await browser?.close();await stopSyntheticFixture(child);fs.rmSync(temp,{recursive:true,force:true})}
