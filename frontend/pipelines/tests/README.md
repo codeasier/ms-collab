@@ -27,7 +27,8 @@ Human review of those screenshots remains required in addition to a green job.
   real cookie-session pages, stale task responses/revisions, scope and membership
   invalidation, empty/missing observations and XSS. A separate keyboard journey
   opens a run from a duration sample while the run list has no matching rows.
-  The task archive retains desktop, mobile and detail screenshots and adds
-  `duration-sample-mobile.png` showing the focused sample button.
+  The task archive includes desktop, mobile and detail screenshots,
+  `duration-sample-mobile.png` showing the focused sample button, and
+  `task-elapsed-mobile.png` showing the selected task's recorded interval.
 - `controller.test.mjs`: the actual mounted controller reaches detail→task reads;
   close/clear cancel chained or late replies and inconsistent pages clear data.

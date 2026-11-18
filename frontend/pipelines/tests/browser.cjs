@@ -35,6 +35,14 @@ async function checkSampleRun(page,origin,base,report){
   await page.locator('#detail[open] #tasks article').first().waitFor()
   assert.equal(await page.locator('#detail-title').textContent(),'run-18');assert.match(await page.locator('#detail-status').textContent(),/failure · snapshot version 2/)
   assert.match(await page.locator('#tasks').textContent(),/Stage 1, task 1 · unit · success/);assert.equal(await page.locator('#tasks img,#tasks b').count(),0)
+  const lint={id:'lint',name:'Lint',status:'failure',started_at:null,finished_at:null}
+  assert.deepEqual(detail.run.stages[0].jobs[1],lint)
+  assert.deepEqual(tasks.items[1],{...lint,stage_index:0,job_index:1,id_occurrences:1})
+  const rows=page.locator('#tasks article.job');assert.equal(await rows.count(),2)
+  assert.deepEqual(await rows.nth(0).locator(':scope > .task-elapsed').allTextContents(),['Recorded elapsed: 12s'])
+  assert.equal(await rows.nth(1).locator('h4').textContent(),'Lint')
+  assert.deepEqual(await rows.nth(1).locator('p').allTextContents(),['Stage 1, task 2 · lint · failure','Started: unavailable','Finished: unavailable'])
+  assert.deepEqual(await rows.nth(1).locator(':scope > .task-elapsed').allTextContents(),['Recorded elapsed: unavailable'])
   assert.equal(page.url(),origin+'/pipelines/');await page.keyboard.press('Escape');assert.equal(await page.locator('#detail-body').textContent(),'')
   await card.locator('summary').click();assert.deepEqual(journal,urls.map(u=>[true,'GET',u,true]))
  }finally{page.off('request',observe)}
@@ -89,5 +97,6 @@ async function main(){
   console.log('Pipeline provider-to-UI synthetic acceptance passed; three screenshots written.')
  }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
  console.log('PIPELINE_DURATION_SAMPLE_STANDALONE_PASS: filtered-out historical run-18 from its valid 12-second sample; scoped detail and revision-2 task GETs only, successful job inside failed run. Synthetic only.')
+ console.log('PIPELINE_TASK_ELAPSED_STANDALONE_PASS: scoped run-18, valid 12s successful job and failed Lint with missing times marked unavailable, not zero; original detail and pinned tasks GETs only.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})
