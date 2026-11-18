@@ -48,6 +48,29 @@ async function checkFractionalRuns(page,origin,base){
  await page.keyboard.press('Escape')
  return {selected,sample,latest:g.samples.at(-1).run_id,detail,taskPage}
 }
+// Evidence is the actual 390px viewport, not a full-page or element crop. Keep
+// the existing keyboard-owned dialog open; only scroll the verified record.
+async function captureElapsedCard(page,folder){
+ const job=page.locator('#detail[open] #tasks article.job')
+ assert.deepEqual(page.viewportSize(),{width:390,height:844});assert.equal(await job.count(),1)
+ await job.evaluate(n=>n.scrollIntoView({block:'center',behavior:'instant'}));await frame(page)
+ const geometry=await job.evaluate(row=>{
+  const dialog=row.closest('dialog').getBoundingClientRect(),measured=[]
+  const pieces=row.querySelectorAll(':scope > h4,:scope > p,:scope > div.task-elapsed')
+  if(pieces.length!==5||document.documentElement.scrollWidth>innerWidth)throw Error('Unexpected mobile card layout')
+  for(const el of pieces){
+   const r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2
+   if(!el.checkVisibility()||r.width<=0||r.height<=0||r.left<Math.max(0,dialog.left)||r.right>Math.min(innerWidth,dialog.right)+0.5||
+      r.top<Math.max(0,dialog.top)||r.bottom>Math.min(innerHeight,dialog.bottom)+0.5||!el.contains(document.elementFromPoint(x,y)))throw Error('Task evidence not fully visible')
+   measured.push([Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)])
+  }
+  return measured
+ })
+ const name='task-elapsed-mobile.png',image=await page.screenshot({path:path.join(folder,name),animations:'disabled'})
+ assert.equal(image.subarray(0,8).toString('hex'),'89504e470d0a1a0a');assert.equal(image.toString('ascii',12,16),'IHDR')
+ assert.equal(image.readUInt32BE(16),390);assert.equal(image.readUInt32BE(20),844);assert.ok(image.length>4096)
+ console.log('PIPELINE_TASK_ELAPSED_SCREEN '+JSON.stringify({name,width:390,height:844,bytes:image.length,sha256:createHash('sha256').update(image).digest('hex'),rectangles:geometry}))
+}
 // A second, independent activation with no run-list button available. Only
 // browser response observers are attached; no extra service read or mock DTO.
 async function fromDurationSample(page,origin,base,folder,known){
@@ -96,6 +119,11 @@ async function fromDurationSample(page,origin,base,folder,known){
   assert.match(await page.locator('#detail-status').textContent(),/success · snapshot version 2/)
   assert.deepEqual(await page.locator('#tasks article p').allTextContents(),['Stage 1, task 1 · '+sample.job_id+' · success','Started: '+sample.started_at,'Finished: '+sample.finished_at])
   assert.equal(await page.locator('#tasks article h4').textContent(),'Probe')
+  const timed=selectedTasks.data.items[0]
+  assert.deepEqual([timed.status,timed.started_at,timed.finished_at,selectedTasks.data.run.observed_at],
+   ['success','2026-01-01T10:00:00+00:00','2026-01-01T10:00:00.100000+00:00','2026-01-02T00:00:00+00:00'])
+  assert.deepEqual(await page.locator('#tasks article.job > .task-elapsed').allTextContents(),['Recorded elapsed: 0.1s'])
+  await captureElapsedCard(page,folder)
   assert.equal(page.url(),origin+'/pipelines/');assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0])
   await page.keyboard.press('Escape');assert.equal(await page.locator('#detail').isVisible(),false)
   assert.equal(await page.locator('#detail-body').textContent(),'');assert.equal(await page.locator('#runs button').count(),0)
@@ -158,12 +186,24 @@ async function checkUnicodeLabels(page,origin,base){
   for(const jobs of [detail.run.stages[0].jobs,taskPage.items]){
    assert.deepEqual(jobs.map(j=>[j.id,j.status]),[['sample','success'],['detail-only','failure']])
    exact(jobs[0].name,grouped,256,512);exact(jobs[1].name,detailOnly,256,258)
+   assert.deepEqual(jobs.map(j=>[j.started_at,j.finished_at]),[
+    ['2026-01-01T10:00:00+00:00','2026-01-01T10:00:02+00:00'],['2026-01-01T10:00:00+00:00','2026-01-01T10:00:03+00:00']])
   }
+  assert.equal(taskPage.run.observed_at,'2026-01-02T00:00:00+00:00')
   await page.locator('#detail[open] #tasks article').first().waitFor()
   assert.equal(await page.locator('#detail-title').textContent(),runID);assert.match(await page.locator('#detail-status').textContent(),/failure · snapshot version 3/)
   assert.ok((await page.locator('#task-stages p').allTextContents()).includes('1. '+stage+' · 2 recorded tasks · success: 1 · failure: 1'))
   const headings=await page.locator('#tasks article h4').allTextContents();assert.equal(headings.length,2)
   exact(headings[0],grouped,256,512);exact(headings[1],detailOnly,256,258)
+  // The failed job is excluded from the real trend above, yet its own
+  // revision-pinned task item carries both times. Preserve status and order.
+  const rows=page.locator('#tasks article.job')
+  for(const [i,j] of taskPage.items.entries()){
+   const card=rows.nth(i)
+   assert.deepEqual(await card.locator('p').allTextContents(),[
+    'Stage 1, task '+(i+1)+' · '+j.id+' · '+j.status,'Started: '+j.started_at,'Finished: '+j.finished_at])
+   assert.deepEqual(await card.locator(':scope > .task-elapsed').allTextContents(),['Recorded elapsed: '+(i===0?'2s':'3s')])
+  }
   assert.equal(page.url(),origin+'/pipelines/');await page.keyboard.press('Escape')
   assert.equal(await page.locator('#detail-body').textContent(),'');assert.deepEqual(journal,urls.map(u=>['GET',true,u,true]))
  }finally{page.off('request',collect)}
@@ -234,9 +274,10 @@ async function main(){
   try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
   if(failures.length)throw new AggregateError(failures,'Synthetic pipeline cleanup failed')
  }
-  console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three regression screenshots, plus a separate duration-sample mobile screenshot. No raw logs or live provider.')
+  console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three regression screenshots, plus separate duration-sample and task-elapsed mobile screenshots. No raw logs or live provider.')
   console.log('PIPELINE_FRACTIONAL_MEAN_PASS revision 2: 3 distinct successful runs, 3 x 100 ms; exact minimum/mean/maximum 0.1 s; real Cookie GETs and visible trend, run detail and task. No live CI or execution.')
   console.log('PIPELINE_DURATION_SAMPLE_COOKIE_PASS: Timing / Probe, non-latest timing-02, 390px focused sample and keyboard drilldown, zero matching list rows; only authorized run detail and revision-2 task GETs. Synthetic only.')
   console.log('PIPELINE_UNICODE_LABEL_COOKIE_PASS: revision 3, 9493 canonical ASCII bytes, four scoped GETs; exact stage 129 and successful job 256 supplementary CJK scalars, distinct 256-scalar failed job detail only; verified response and DOM, not glyph appearance; current membership 404 and session 401.')
+  console.log('PIPELINE_TASK_ELAPSED_COOKIE_PASS: real Cookie task page, revision 2 successful Probe 0.1s mobile screenshot; revision 3 successful 2s and ungrouped failed 3s on distinct rows, raw status and timestamps unchanged. Synthetic observations only.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

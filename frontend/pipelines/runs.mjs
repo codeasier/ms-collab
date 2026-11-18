@@ -1,4 +1,28 @@
 import {scopeFrom,loadSnapshot,validateDetail,validateTasks} from './client.mjs'
+const terminalTaskStates=new Set(['success','failure','cancelled','timed_out','skipped'])
+const taskTimestamp=/^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,6}))?(?:Z|([+-])([0-9]{2}):([0-9]{2}))$/
+function recordedMicros(value){
+ if(typeof value!=='string'||value.length>32||value.startsWith('0000-'))return null
+ const match=taskTimestamp.exec(value)
+ if(!match||match[0]!==value)return null
+ const [,wall,fraction='',sign,hours='00',minutes='00']=match
+ // Use Date only for exact whole seconds. Round-trip the wall clock at UTC
+ // before applying its offset: e.g. Feb 30 or 24:00 cannot silently roll over.
+ const ms=Date.parse(wall+'Z')
+ if(!Number.isSafeInteger(ms)||new Date(ms).toISOString()!==wall+'.000Z'||Number(hours)>23||Number(minutes)>59)return null
+ const offset=(sign==='-'?-1:1)*(Number(hours)*60+Number(minutes))
+ const utc=ms-offset*60000,year=new Date(utc).getUTCFullYear()
+ if(year<1||year>9999)return null
+ return BigInt(utc)*1000n+BigInt(fraction.padEnd(6,'0'))
+}
+export function recordedTaskElapsed(task,observedAt){
+ if(!terminalTaskStates.has(task?.status))return 'unavailable'
+ const start=recordedMicros(task.started_at),end=recordedMicros(task.finished_at),observed=recordedMicros(observedAt)
+ if(start===null||end===null||observed===null||start>end||end>observed)return 'unavailable'
+ const elapsed=end-start,seconds=elapsed/1000000n,hours=seconds/3600n,minutes=(seconds/60n)%60n
+ const fraction=String(elapsed%1000000n).padStart(6,'0').replace(/0+$/,'')
+ return (hours?`${hours}h `:'')+(hours||minutes?`${minutes}m `:'')+`${seconds%60n}${fraction?'.'+fraction:''}s`
+}
 export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{},onBusyChange=()=>{}}){
 if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
 const el=id=>document.getElementById(id),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
@@ -87,7 +111,7 @@ async function loadTasks(status,offset){
   taskPage=data;taskFilter=status;el('detail-status').textContent=`${run.status} · snapshot version ${version} · observed ${run.observed_at}`
   el('task-stages').append(text('h3','Stage observations'),text('p','Stage result was not supplied. Job counts do not certify stage success, run success or a release gate.'))
   for(const stage of data.stages){const counts=Object.entries(stage.status_counts).filter(([,count])=>count).map(([state,count])=>`${state}: ${count}`).join(' · ');el('task-stages').append(text('p',`${stage.index+1}. ${stage.name} · ${stage.task_count} recorded tasks${counts?' · '+counts:''}`))}
-  for(const job of data.items){const row=text('article','','job');row.append(text('h4',job.name),text('p',`Stage ${job.stage_index+1}, task ${job.job_index+1} · ${job.id} · ${job.status}`),text('p',`Started: ${job.started_at??'unavailable'}`),text('p',`Finished: ${job.finished_at??'unavailable'}`));if(job.id_occurrences>1)row.append(text('p',`Ambiguous provider ID: ${job.id_occurrences} occurrences in this run. Position is a reference within this snapshot, not permission to target a remote job.`));el('tasks').append(row)}
+  for(const job of data.items){const row=text('article','','job');row.append(text('h4',job.name),text('p',`Stage ${job.stage_index+1}, task ${job.job_index+1} · ${job.id} · ${job.status}`),text('p',`Started: ${job.started_at??'unavailable'}`),text('p',`Finished: ${job.finished_at??'unavailable'}`),text('div','Recorded elapsed: '+recordedTaskElapsed(job,run.observed_at),'task-elapsed'));if(job.id_occurrences>1)row.append(text('p',`Ambiguous provider ID: ${job.id_occurrences} occurrences in this run. Position is a reference within this snapshot, not permission to target a remote job.`));el('tasks').append(row)}
   if(!data.items.length)el('tasks').append(text('p',run.stages===null?'Task details unavailable. This is not evidence that no tasks ran.':'No recorded tasks match this filter. No provider history completeness is implied.'))
   el('task-summary').textContent=`${data.total} matching of ${data.coverage.task_count} recorded tasks · Page ${Math.floor(data.offset/10)+1} of ${Math.max(1,Math.ceil(data.total/10))} · duplicate-ID observations: ${data.coverage.duplicate_id_tasks}`
   el('task-status-filter').disabled=false;el('task-previous').disabled=offset===0;el('task-next').disabled=offset+10>=data.total

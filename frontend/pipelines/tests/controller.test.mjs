@@ -201,3 +201,51 @@ test('a detached sample cannot retarget a reused run ID across workspace, connec
   await s.click(previous);assert.equal(s.requests.length,baseline+2);assert.equal(h.nodes.get('detail').open,true);assert.equal(h.nodes.get('detail-body').textContent,body)
  })
 })
+
+test('mounted task cards keep position-specific elapsed, status and original timestamps without promoting duplicate jobs to trends',()=>harness(async h=>{
+ const observed='2026-01-01T00:00:02.000005Z', start='2026-01-01T00:00:00Z'
+ const stages=[
+  {name:'First',jobs:[
+   {id:'repeat',name:'Collect',status:'failure',started_at:start,finished_at:'2026-01-01T00:00:01.2Z'},
+   {id:'repeat',name:'Collect',status:'running',started_at:start,finished_at:observed}]},
+  {name:'Second',jobs:[
+   {id:'repeat',name:'Collect',status:'timed_out',started_at:'2026-01-01T00:00:02.000004Z',finished_at:observed},
+   {id:'later',name:'Later',status:'cancelled',started_at:start,finished_at:'2026-01-01T00:00:02.000006Z'},
+   // The existing JS detail reader can display extra fractional digits; the
+   // derived metric cannot silently round them, or discard the whole page.
+   {id:'precise',name:'Extra precision',status:'skipped',started_at:'2026-01-01T00:00:00.1234567Z',finished_at:observed}]}]
+ const totals=(failure,running,timed_out,cancelled,skipped=0)=>({...counts,failure,running,timed_out,cancelled,skipped})
+ const row={...summary,status:'running',observed_at:observed,stage_count:2,job_count:5}
+ const items=stages.flatMap((stage,stage_index)=>stage.jobs.map((j,job_index)=>({...j,stage_index,job_index,id_occurrences:j.id==='repeat'?3:1})))
+ h.setHook(async(kind,opt)=>{
+  if(kind==='runs')return {...responses.runs,items:[row]}
+  if(kind==='durations')return {...responses.durations,coverage:{...responses.durations.coverage,
+   nonterminal_or_unknown_runs:1,observed_terminal_runs:0,selected_runs:0,runs_with_details:0,excluded_jobs:0}}
+  if(kind==='detail')return {scope,source,run:{...scope,id:row.id,status:row.status,observed_at:observed,stages}}
+  assert.equal(kind,'tasks');assert.equal(opt.runID,row.id);assert.equal(opt.revision,source.revision)
+  const matching=items.filter(j=>!opt.status||j.status===opt.status)
+  return {scope,source,run:{id:row.id,status:row.status,observed_at:observed,details_available:true},
+   coverage:{stage_count:2,task_count:5,status_counts:totals(1,1,1,1,1),duplicate_id_tasks:3,stage_status_supplied:false},
+   stages:stages.map((stage,index)=>({index,name:stage.name,task_count:stage.jobs.length,status_counts:index?totals(0,0,1,1,1):totals(1,1,0,0)})),
+   filter:{status:opt.status},total:matching.length,offset:0,limit:10,items:matching}
+ })
+ await h.open();const before=h.nodes.get('durations').textContent;assert.match(before,/No valid successful-job duration samples/)
+ await h.detail()
+ assert.equal(h.nodes.get('detail').open,true)
+ const cards=h.nodes.get('tasks').children;assert.equal(cards.length,5)
+ const expected=['1.2s','unavailable','0.000001s','unavailable','unavailable']
+ const check=(card,j,value)=>{
+  assert.equal(card.tagName,'article');assert.equal(card.className,'job')
+  const lines=card.children.filter(n=>n.tagName==='p').map(n=>n.textContent)
+  assert.ok(lines.includes(`Stage ${j.stage_index+1}, task ${j.job_index+1} · ${j.id} · ${j.status}`))
+  assert.ok(lines.includes('Started: '+j.started_at));assert.ok(lines.includes('Finished: '+j.finished_at))
+  assert.equal(lines.some(line=>line.includes('Ambiguous provider ID: 3 occurrences')),j.id==='repeat')
+  assert.deepEqual(card.children.filter(n=>n.className==='task-elapsed').map(n=>n.textContent),['Recorded elapsed: '+value])
+ }
+ cards.forEach((card,index)=>check(card,items[index],expected[index]))
+ assert.equal(h.nodes.get('durations').textContent,before)
+ const filter=h.nodes.get('task-status-filter');filter.value='timed_out';await filter.fire('change')
+ const filtered=h.nodes.get('tasks').children;assert.equal(filtered.length,1);check(filtered[0],items[2],expected[2])
+ assert.equal(h.nodes.get('durations').textContent,before)
+ assert.deepEqual(h.calls,['runs','durations','detail','tasks','tasks'])
+}))
