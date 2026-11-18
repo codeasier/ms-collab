@@ -8,7 +8,7 @@ import sqlite3
 import ssl
 import sys
 import tempfile
-from threading import Event
+from threading import Event, Lock
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs,urlencode
 from wsgiref.simple_server import WSGIServer,WSGIRequestHandler,make_server
@@ -43,6 +43,45 @@ def main():
         def pause_read():
             if paused[0]:paused[0]=False;release.wait(15)
         objects.read_hook=pause_read
+        if product:
+            # The UI retires a rejected fetch immediately after headers. Witness the
+            # actual response to that same browser POST here, not via a second POST
+            # or a DevTools body read racing the client's abort. No request body,
+            # credentials, response content, or unrecognized error is retained.
+            byte_path='/api/workspaces/alpha/artifact-download/source/bucket/'
+            product_path='/api/workspaces/alpha/artifacts/source/bucket/product-views/kit'
+            denials={
+                (byte_path+'availability','404 Not Found'):('unbound','"1"',b'{"error":"not_found"}'),
+                (byte_path+'download','412 Precondition Failed'):('stale_bytes','"1"',b'{"error":"stale_revision"}'),
+                (product_path,'412 Precondition Failed'):('stale_view',None,b'{"error":"stale_observation"}'),
+                (byte_path+'download','401 Unauthorized'):('revoked','"3"',b'{"error":"authentication_required"}'),
+            }
+            denial_paths={path for path,_ in denials}
+            seen={name:[0,0,0,0] for name,_,_ in denials.values()}
+            lock=Lock()
+
+            def observe_denial(env,start):
+                target=[]
+                def observe_start(status,headers,*args):
+                    spec=denials.get((env['PATH_INFO'],status))
+                    if spec:
+                        name,match,expected=spec
+                        required={'content-type':'application/json; charset=utf-8','content-length':str(len(expected)),
+                                  'cache-control':'no-store'}
+                        exact=(env.get('HTTP_IF_MATCH')==match and not env.get('QUERY_STRING') and
+                               all([v for k,v in headers if k.lower()==key]==[value] for key,value in required.items()))
+                        target.append((name,expected,exact))
+                    return start(status,headers,*args)
+                result=app(env,observe_start)
+                if target:
+                    name,expected,exact=target[0]
+                    # The session JSON boundary returns a one-element list, already
+                    # materialized. Do not consume/wrap an iterable or a byte stream.
+                    readable=type(result) is list and len(result)==1 and type(result[0]) is bytes
+                    with lock:
+                        row=seen[name];row[0]+=1;row[1]+=int(len(target)==1 and exact)
+                        row[2]+=int(readable);row[3]+=int(readable and result[0]==expected)
+                return result
         def fixture(env,start):
             path=env.get('PATH_INFO','')
             if path.startswith('/synthetic/download/'):
@@ -51,7 +90,7 @@ def main():
                 if wheel and path!='/synthetic/download/state':
                     start('404 Not Found',[('Content-Length','0')]);return [b'']
                 if product and (path not in {'/synthetic/download/state','/synthetic/download/product-republish',
-                                            '/synthetic/download/product-revoke-session'}
+                                            '/synthetic/download/product-revoke-session','/synthetic/download/product-denials'}
                                 or env.get('HTTP_HOST')!='127.0.0.1:'+str(server.server_port)
                                 or env.get('QUERY_STRING') or env.get('CONTENT_LENGTH','') not in ('','0')):
                     start('404 Not Found',[('Content-Length','0')]);return [b'']
@@ -60,6 +99,8 @@ def main():
                     with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
                         rows=db.execute('SELECT state,offered FROM artifact_download_leases_v1 ORDER BY rowid').fetchall()
                     result={'calls':len(objects.calls),'loads':len(objects.loads),'leases':rows,'active':sum(r[0]=='active' for r in rows)}
+                elif product and action=='product-denials':
+                    with lock:result={name:counts.copy() for name,counts in seen.items()}
                 elif product and action=='product-republish':
                     result={'published_revision':republish_product_file(policy)}
                 elif product and action=='product-revoke-session':
@@ -81,6 +122,8 @@ def main():
                     start('400 Bad Request',[('Content-Length','0')]);return [b'']
                 code=exchange.authorize(params['code_challenge'][0]);target=login.binding.callback_uri+'?'+urlencode({'code':code,'state':params['state'][0]})
                 start('303 See Other',[('Location',target),('Content-Length','0'),('Cache-Control','no-store'),('Referrer-Policy','no-referrer')]);return [b'']
+            if product and env.get('REQUEST_METHOD')=='POST' and path in denial_paths:
+                return observe_denial(env,start)
             return app(env,start)
         server.set_app(fixture);context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(sys.argv[1],sys.argv[2]);server.socket=context.wrap_socket(server.socket,server_side=True)
         signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(SystemExit()))

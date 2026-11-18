@@ -44,12 +44,15 @@ async function screen(p,name,w,h,statusOnly){
  await p.screenshot({path:path.join(work,name),animations:'disabled'})
  console.log('PRODUCT_FILE_SCREEN '+JSON.stringify({...pngEvidence(name,w,h),painted:geometry}))
 }
+// Only literal case names and stage labels constructed below may leave this
+// harness; never print the rejected body or a browser/server error message.
+class DenialEvidenceError extends Error {}
 async function run(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-product-file-'))
  let child,browser,context,cdp,checkpoint='startup',problem
  const fail=e=>{
   const n=/artifact-product-downloads[.]cjs:(\d+):\d+/.exec(String(e?.stack))?.[1]||'unknown'
-  return Error('Product-file fixture failed at '+checkpoint+' (harness line '+n+').')
+  return Error('Product-file fixture failed at '+checkpoint+' (harness line '+n+(e instanceof DenialEvidenceError?', '+e.message:'')+').')
  }
  try{
   for(const [name,width,height] of [['catalog.png',1440,1100],['confirmation.png',1440,1100],['mobile.png',390,844],['handoff.png',1440,1100],['denied.png',1440,1100]])
@@ -110,6 +113,36 @@ async function run(){
    assert.equal(await req.headerValue('if-match'),rev==null?null:'"'+rev+'"')
    assert.ok(Boolean(await req.headerValue('x-csrf-token')));assert.equal(await req.headerValue('authorization'),null)
   }
+  const denials={unbound:'not_found',stale_bytes:'stale_revision',stale_view:'stale_observation',revoked:'authentication_required'}
+  const witnessed=new Set()
+  async function verifyDenial(res,name){
+   const reject=stage=>{throw new DenialEvidenceError(name+': '+stage)}
+   const size=Buffer.byteLength(JSON.stringify({error:denials[name]}))
+   // On these errors the UI deliberately aborts/clears on HEADERS, not body.
+   // Check both browser-visible headers and the actual fixed response bytes at
+   // the fixture boundary for this same request, without replay or interception.
+   let headers
+   try{headers=await bounded(Promise.all(['content-type','content-length','cache-control'].map(k=>res.headerValue(k))))}
+   catch{reject('browser headers unreadable')}
+   if(headers[0]!=='application/json; charset=utf-8'||headers[1]!==String(size)||headers[2]!=='no-store')reject('browser header protocol')
+   let snapshot
+   try{snapshot=await bounded(p.evaluate(async()=>{
+    const r=await fetch('/synthetic/download/product-denials',{method:'POST'})
+    if(r.status!==200||r.headers.get('content-type')!=='application/json')throw Error()
+    const raw=await r.text();if(raw.length>512)throw Error();return JSON.parse(raw)
+   }))}
+   catch{reject('fixture witness unreadable')}
+   if(!snapshot||Array.isArray(snapshot)||Object.keys(snapshot).sort().join(',')!==Object.keys(denials).sort().join(','))reject('fixture witness shape')
+   if(witnessed.has(name))reject('duplicate check')
+   witnessed.add(name)
+   for(const id of Object.keys(denials)){
+    const count=Number(witnessed.has(id)),row=snapshot[id]
+    if(!Array.isArray(row)||row.length!==4||row[0]!==count)reject('response count')
+    if(row[1]!==count)reject('fixture header protocol')
+    if(row[2]!==count)reject('fixture body unreadable')
+    if(row[3]!==count)reject('fixture body mismatch')
+   }
+  }
   // Match the complete literal key, not a partial label or a common basename.
   const row=k=>p.locator('#pv-results li').filter({has:p.locator('bdi.pv-key').filter({hasText:new RegExp('^'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$')})})
   const select=k=>row(k).getByRole('button',{name:'Check byte access',exact:true})
@@ -138,7 +171,7 @@ async function run(){
    await checkWire(ar,available,{key:k},level.catalog_revision,status)
    assert.deepEqual(events.slice(start),[['request',product],['response',product,200],['request',available],['response',available,status]])
    if(status===404){
-    assert.deepEqual(await ar.json(),{error:'not_found'})
+    await verifyDenial(ar,'unbound')
     await p.waitForFunction(()=>/unavailable/i.test(document.querySelector('#download-status').textContent))
     assert.ok(await confirm.isDisabled());assert.equal(await p.locator('#download-key').textContent(),'')
    }else{
@@ -244,14 +277,14 @@ async function run(){
   const revision=await republish();assert.equal(revision,3)
   const failStart=events.length
   const [denied]=await bounded(Promise.all([responseTo(binary),confirm.click()]))
-  await checkWire(denied,binary,{key:leaf,expected_sha256:checksum},1,412)
+  await checkWire(denied,binary,{key:leaf,expected_sha256:checksum},1,412);await verifyDenial(denied,'stale_bytes')
   await p.waitForFunction(()=>document.querySelector('#download-confirm').disabled&&!document.querySelector('#download-key').textContent)
   assert.deepEqual(events.slice(failStart),[['request',binary],['response',binary,412]])
   assert.deepEqual(await state(),delivered);assert.equal(downloads.length,1)
   const selectStart=events.length
   const [stale]=await bounded(Promise.all([responseTo(product),select(leaf).click()]))
   await checkWire(stale,product,{...body,path:'pkg/',if_observation:level.observation},null,412)
-  assert.deepEqual(await stale.json(),{error:'stale_observation'})
+  await verifyDenial(stale,'stale_view')
   await p.locator('#pv-reopen').waitFor({state:'visible'})
   assert.equal(await p.locator('#pv-results li').count(),0);assert.equal(await p.locator('#pv-evidence').textContent(),'')
   assert.deepEqual(events.slice(selectStart),[['request',product],['response',product,412]])
@@ -282,7 +315,7 @@ async function run(){
   })
   assert.deepEqual(control,[200,{}]);assert.equal(await confirm.isEnabled(),true)
   const [unauthorized]=await bounded(Promise.all([responseTo(binary),confirm.click()]))
-  await checkWire(unauthorized,binary,{key:leaf,expected_sha256:checksum},3,401)
+  await checkWire(unauthorized,binary,{key:leaf,expected_sha256:checksum},3,401);await verifyDenial(unauthorized,'revoked')
   await p.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified')
   assert.equal(await p.locator('#app-status').textContent(),'Your session expired or was rejected.')
   assert.equal(await p.locator('#pv-controls').isVisible(),false);assert.equal(await p.locator('#download-panel').isVisible(),false)
