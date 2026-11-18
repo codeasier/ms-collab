@@ -124,3 +124,32 @@ invitation recipient is a real synthetic fixture principal (unlike the pre-exist
 initial-admin layout-only interception). This is an exact-head CI acceptance plan;
 local work used syntax/text checks only. No real login/provider or production
 acceptance is implied.
+
+## Overview module-status consumption
+
+`module-status-client.test.mjs` and `module-status-controller.test.mjs` cover the
+exact four-field wire contract, route-bound private current-request guard,
+value-free failures, old/new busy ownership, input invalidation and no automatic
+reads. `shell.test.mjs` preserves the previous module-page tests and checks the
+Overview's original workspace-list ownership and synchronous clear/activation.
+
+The existing `browser.cjs` awaits `module-status.cjs` against a separately opted-in
+HTTPS fixture and **separate BrowserContext**. Different localhost ports do not
+isolate Cookie scope. Only the two tabs inside the new context share its session.
+The actual API/SQLite checks distinguish stored lifecycle from data/admin access,
+exercise retained-selection revocation, and keep the original administration,
+invitation and responsibility journeys intact. Late-response routing completes
+`route.fetch()` before holding browser delivery, so it cannot lock the fixture's
+single-threaded WSGI server. A held old 401 is released during a newer held request
+without changing session epoch; it is transport-ownership evidence, not a provider
+or authorization success.
+
+Actual Back records whether the browser returned a fresh or persisted document.
+A synthetic `pageshow.persisted` proves the handler only; if the real run reports
+fresh document, do not call it real BFCache acceptance. Deep-link restoration is
+not added. The two new exact artifacts are `module-status-desktop.png` and
+`module-status-mobile.png`, showing a real long-key observation and disclaimer.
+They are layout evidence, not proof of every race/role case. All original eleven
+screenshots, assertions and cleanup gates remain; the overall PASS stays after
+both journeys and child/context/temp cleanup. Execution and visual acceptance
+must be checked for the precise CI head, not inferred from this inventory.

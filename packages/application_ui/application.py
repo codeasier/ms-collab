@@ -47,6 +47,7 @@ _FILES = {
     '/app/artifacts.css': ('application/artifacts.css', 'text/css'),
     '/app/shell.mjs': ('application/shell.mjs', 'text/javascript'),
     '/app/client.mjs': ('application/client.mjs', 'text/javascript'),
+    '/app/module-status.mjs': ('application/module-status.mjs', 'text/javascript'),
     '/app/style.css': ('application/style.css', 'text/css'),
     '/manage/admin.mjs': ('workspace-admin/admin.mjs', 'text/javascript'),
     '/manage/client.mjs': ('workspace-admin/client.mjs', 'text/javascript'),

@@ -67,6 +67,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-application-ui/conflict.png
             ${{ runner.temp }}/ms-collab-application-ui/invitation-review-desktop.png
             ${{ runner.temp }}/ms-collab-application-ui/invitation-review-mobile.png
+            ${{ runner.temp }}/ms-collab-application-ui/module-status-desktop.png
+            ${{ runner.temp }}/ms-collab-application-ui/module-status-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

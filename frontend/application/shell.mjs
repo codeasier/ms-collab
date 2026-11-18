@@ -1,3 +1,4 @@
+import {mountModuleStatus} from './module-status.mjs'
 import {mountPipelineScopePicker} from './pipeline-scopes.mjs'
 import {mountArtifactScopePicker} from './artifact-scopes.mjs'
 import {mountConnectionsPage,mountConnectionPicker} from './connections.mjs'
@@ -19,7 +20,7 @@ import {createArtifactSessionClients} from './artifacts-session.mjs'
 import {mountArtifactCatalogPage} from '/artifacts/browser.mjs'
 import {mountArtifactAdministrationPage} from '/artifact-admin/browser.mjs'
 const el=id=>document.getElementById(id)
-let generation=0,bootstrap,page,busy=false,principal,ready=false,initializing=false
+let generation=0,bootstrap,page,overviewStatus,busy=false,principal,ready=false,initializing=false
 const session=createSessionClient({onInvalid:message=>clear(message)})
 function controls(){
  el('app-sign-in').disabled=busy||!ready||!bootstrap?.login_configured||Boolean(principal)
@@ -27,7 +28,7 @@ function controls(){
  el('app-recheck').disabled=busy||initializing
 }
 function clear(message='Session needs an explicit recheck. Any interrupted change may already have completed.'){
- generation++;principal=undefined;busy=false;initializing=false;session.clear();page?.clear(message)
+ generation++;principal=undefined;busy=false;initializing=false;session.clear();page?.clear(message);overviewStatus?.clear()
  el('app-principal').textContent='Not verified';el('app-workspaces')?.replaceChildren();el('app-data')?.setAttribute('hidden','')
  el('app-status').textContent=message;controls()
 }
@@ -42,6 +43,7 @@ async function inspect(){
    const spaces=validateWorkspaces(await session.request('/api/workspaces'));if(turn!==generation)return
    for(const space of spaces){const item=document.createElement('li');item.textContent=`${space.name} · ${space.kind} · ${space.state} · ${space.id}`;el('app-workspaces').append(item)}
    if(!spaces.length){const item=document.createElement('li');item.textContent='No accessible workspaces. Shared spaces still require explicit membership.';el('app-workspaces').append(item)}
+   overviewStatus?.activate(spaces)
    el('app-data').hidden=false
   }
   if(turn!==generation)return
@@ -79,7 +81,8 @@ async function start(){
   const assistant=el('app-assistant-link');if(assistant)assistant.hidden=!bootstrap.ui_modules.includes('assistant')
   const responsibility=el('app-responsibility-link');responsibility.hidden=!bootstrap.ui_modules.includes('responsibility')
   for(const module of ['artifacts','artifact-admin']){const link=el('app-'+module+'-link');if(link)link.hidden=!bootstrap.ui_modules.includes(module)}
-  if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
+  if(document.body.dataset.page==='overview')overviewStatus=mountModuleStatus({session})
+  else if(document.body.dataset.page==='manage')page=mountWorkspacePage({client:session,sessionMode:true,onSignOut:signOut})
   else if(document.body.dataset.page==='connections'){
    if(!bootstrap.ui_modules.includes('connections'))throw new Error('Connection management is not configured on this service.')
    page=mountConnectionsPage({session})

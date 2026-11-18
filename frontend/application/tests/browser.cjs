@@ -4,6 +4,7 @@ const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('pla
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 const {exerciseIdentitySelection}=require('../../workspace-admin/tests/identity-selection.cjs')
 const {exerciseInvitationReview}=require('../../workspace-admin/tests/invitation-review.cjs')
+const {exerciseModuleStatus}=require('./module-status.cjs')
 const {stopSyntheticFixtures}=require('./fixture-process.cjs')
 async function within(p,label){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 // Check actual computed foreground/background after the browser has applied both
@@ -24,10 +25,10 @@ async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-application-cert-')),children=[],diagnostics=[];let browser,failure
  try{
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',path.join(temp,'key.pem'),'-out',path.join(temp,'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1'],{stdio:'ignore'})
-  const fixture=async closed=>{
-   const child=spawn('python3',['-m','packages.application_ui.tests.browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem'),...(closed?['closed']:[])],{env:{...process.env,MS_COLLAB_SYNTHETIC_APPLICATION_UI:'1'},stdio:['ignore','pipe','pipe']})
+  const fixture=async(closed,mode='')=>{
+   const child=spawn('python3',['-m','packages.application_ui.tests.browser_server',path.join(temp,'cert.pem'),path.join(temp,'key.pem'),...(closed?['closed']:mode?[mode]:[])],{env:{...process.env,MS_COLLAB_SYNTHETIC_APPLICATION_UI:'1'},stdio:['ignore','pipe','pipe']})
    children.push(child)
-   const diagnostic={label:closed?'closed fixture':'main fixture',stderr:''};diagnostics.push(diagnostic)
+   const diagnostic={label:closed?'closed fixture':(mode||'main')+' fixture',stderr:''};diagnostics.push(diagnostic)
    child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{diagnostic.stderr=(diagnostic.stderr+chunk).slice(-8192)})
    const lines=readline.createInterface({input:child.stdout})
    return within(new Promise((resolve,reject)=>{
@@ -164,6 +165,8 @@ async function main(){
   assert.equal((await context.cookies(main.origin)).some(c=>c.name==='__Host-ms-collab-session'),false)
   await page.goto('about:blank');await page.goBack();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='Not verified');assert.equal(await page.locator('#app-data').isVisible(),false)
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
+  const statusFixture=await fixture(false,'module-status')
+  await exerciseModuleStatus({browser,fixture:statusFixture,folder,readable})
  }catch(error){failure=error}
  finally{
   const failures=failure?[failure]:[]
@@ -178,7 +181,7 @@ async function main(){
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Unified UI scenario or cleanup failed')
  }
- console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and eleven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
+ console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider, member module-status observations and thirteen responsive screenshots with contrast checks. Synthetic HTTPS only.')
 }
 function reportFailure(error){
  console.error(error?.stack||String(error))

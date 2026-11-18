@@ -81,3 +81,23 @@ are synthetic and never imported by production factories.
   clean child exit and preserves failure while forcibly reaping any stuck child.
   Existing `unittest discover -s packages/application_ui/tests` CI commands pick
   it up automatically; no new workflow, product shutdown route or upstream call.
+
+### Member status fixture
+
+The optional `module-status` browser fixture mode is synthetic only. It provisions
+reader's explicit viewer/developer/admin memberships in three separate spaces via
+the existing trusted fixture seam, different local pipeline states, and a bounded
+long-key module in commons for the screenshots. It selects `reader-sub` only in
+that mode; the original/default provider fixture still selects `admin-sub`.
+`module_status_fixture.py` exposes only four fixed origin-checked POST controls in
+this mode, with no query/body/target parameters. `test_module_status_fixture.py`
+checks the real Cookie/SQLite observations and rejects wrong methods/origins,
+other modes, unknown paths and unexpected inputs without applying a control.
+These setup controls are not product APIs, enrollment or migration tooling.
+
+The browser test uses a distinct Cookie context, normal/held/two-tab cases before
+revocation, a retained beta selection for its post-revocation 404 before Recheck,
+and still-accessible commons for the final logout/401 observation. It does not
+regrant revoked authority or implicitly reset fixture history to continue.
+Current backend status gates remain covered by the existing core/API/host W08
+suites; this slice adds a consumer, not a replacement authorization model.

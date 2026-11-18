@@ -19,7 +19,12 @@ rechecked. A synthetic fixture is never imported by the production factory.
 
 ## One entry and authority
 
-- `/` shows only the current authenticated user's accessible workspaces.
+- `/` shows the current authenticated user's accessible workspaces, plus an
+  independent explicit single-module stored-status check. It consumes the existing
+  four-field [member GET](../workspace_api/README.md#minimal-member-module-status-w08-http-slice),
+  not an installed-module directory, effective capability or host/provider status.
+  Enabled does not enable links, reads or writes. No module request runs until the
+  person selects a workspace, enters an exact key and chooses Check status.
 - `/manage/` reuses the reviewed membership, invitation, module and platform
   lifecycle controller with a cookie-only request client. New workspace creation
   uses separate initial-admin Review and Create actions, preserving the
@@ -86,7 +91,10 @@ lost logout is reported as unconfirmed, never as a successful logout.
 Current 401 responses clear module/account state. Invitation Review/POST requests
 add a narrow current-request guard before this transport side effect, so a delayed
 response after dialog/scope invalidation cannot sign out the newer interaction.
-This does not suppress a genuinely current 401 or change unrelated requests.
+The separate Overview status method likewise has an exact-route private guard,
+not a general request-option override. These guards do not suppress a genuinely
+current 401 or change unrelated requests. The status view uses fixed safe messages
+instead of displaying raw response/parser/network errors.
 Pagehide invalidates both controller and
 session epochs, aborting/dropping old replies even when AbortSignal is ineffective.
 A restored page requires an explicit session recheck. Cancellation never promises
@@ -251,3 +259,20 @@ Selecting/Open within the same loaded directory preserves its Next position
 while clearing old exact results. Directory resets clear both token and local
 last-tuple state. See the [support matrix and authority/data distinction](../directory_cursors/README.md).
 Strict service_runtime is not integrated or migrated by this increment.
+
+### Overview status lifecycle
+
+The Overview shell still owns its one accessible-workspace read per inspection.
+It synchronously supplies that result to the separate status controller and clears
+its inputs/results on Recheck, sign-out and page lifecycle events. No additional
+member/list/catalog request is a prerequisite. The administrator page and its
+existing gates are unchanged. Unknown/nonmember status is unavailable, not proof
+that a module is uninstalled; archived status remains readable and suspended
+workspace errors are not converted into a module state. An old full-instance
+response is rejected rather than decoded as a minimal observation.
+
+Queries/results remain local to each document, with no storage or deep-link
+restoration. A second tab's prior displayed observation is not promised to clear
+immediately after logout elsewhere; its next authenticated request rechecks the
+shared server session. This is a UI consumer of the W08 HTTP slice, not completion
+of MCP, task cancellation, real identity/provider or production acceptance.

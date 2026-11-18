@@ -56,4 +56,31 @@ Review GET or invitation-collection POST. It checks ownership plus the session
 epoch before any 401 clear/onInvalid side effect, and after reading a response.
 A current 401 still invalidates the session. `invitationRecipientPrecondition`
 is valid only on the exact POST, never a URL/body field. CSRF is freshly read for
-each mutation; no Bearer fallback, login enablement or new static route is added.
+each mutation. That invitation slice adds no Bearer fallback, login enablement or
+new static route.
+
+## Exact member module status
+
+Overview has a separate `module-status.mjs` controller. It receives the already
+validated accessible-workspace list from the shell, without replacing that list
+or using the administration page's member/list/catalog gates. Choose a workspace,
+enter one exact module key and explicitly check its stored lifecycle. No module
+request runs on activation or an input edit. The response is exactly
+`workspace_id/key/state/revision`; enabled/disabling/disabled is not effective
+capability, a mounted business endpoint or provider readiness. No result enables
+navigation or a business control. Admin lists and configuration remain separate.
+
+The Cookie client's dedicated `readModuleStatus` accepts only an exact identifier
+pair and request-current callback. Its private send context checks local ownership
+before a 401 side effect and after body reading, including ignored aborts. It is
+not a new general-purpose `request` option. An older full module object containing
+capabilities fails the four-field codec; there is no admin fallback. The view uses
+fixed safe error text, never parser/network error messages or response bodies.
+
+Clear, input edits, repeated checks, Recheck, sign-out and page lifecycle events
+invalidate old observations. Back may reload a document or restore it; neither
+restores a module query from storage or a deep link. Two tabs keep independent
+inputs/results; shared Cookie logout is observed by the other tab on its next
+request, not via a promised push update. The feature consumes only the existing
+[member status API](../../packages/workspace_api/README.md#minimal-member-module-status-w08-http-slice),
+not MCP, provider, task-cancellation or production migration behavior.
