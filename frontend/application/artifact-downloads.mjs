@@ -15,6 +15,30 @@ export function downloadPath(scope,action){
  return `/api/workspaces/${s.workspace_id}/artifact-download/${s.connection_id}/${s.bucket_id}/${action}`
 }
 export function downloadName(key){return 'artifact-'+key.split('/').at(-1).replace(/[^A-Za-z0-9._-]/gu,'_').slice(0,80)}
+
+// A browser save suggestion, never a wire filename or a claim about package contents.
+// Match whole fields in an intentionally small subset of the wheel filename format.
+const decimal='(?:0|[1-9][0-9]*)'
+const wheelVersion=new RegExp(`^${decimal}(?:\\.${decimal})*(?:(?:a|b|rc)${decimal})?(?:\\.post${decimal})?(?:\\.dev${decimal})?$`)
+const pythonTag=/^(?:py|cp)[0-9]+$/
+const abiTag=/^(?:none|abi3|cp[0-9]+(?:d|m|u|dm|du|mu|dmu|t|td)?)$/
+const linuxArch='(?:x86_64|i686|aarch64|armv7l|ppc64|ppc64le|s390x|riscv64|loongarch64)'
+const platformTag=new RegExp(`^(?:any|win32|win_amd64|win_arm64|linux_${linuxArch}`
+ +`|manylinux(?:1|2010)_(?:x86_64|i686)|manylinux2014_(?:x86_64|i686|aarch64|armv7l|ppc64|ppc64le|s390x)`
+ +`|(?:manylinux|musllinux)_${decimal}_${decimal}_${linuxArch}|macosx_${decimal}_${decimal}_(?:x86_64|arm64|universal2))$`)
+function verifiedSaveName(key,fallback){
+ const base=key.slice(key.lastIndexOf('/')+1)
+ if(base.length>200||!base.endsWith('.whl')||/[^A-Za-z0-9._-]/.test(base))return fallback
+ const fields=base.slice(0,-4).split('-')
+ if(fields.length!==5&&fields.length!==6)return fallback
+ const [dist,version]=fields
+ if(!/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(dist)||/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(dist)
+    ||!wheelVersion.test(version)||(fields.length===6&&!/^[0-9][A-Za-z0-9_]*$/.test(fields[2])))return fallback
+ const tags=fields.slice(-3),rules=[pythonTag,abiTag,platformTag]
+ const canonical=tags.every((field,i)=>field.split('.').every((tag,j,list)=>
+  rules[i].test(tag)&&(j===0||list[j-1]<tag)))
+ return canonical?base:fallback
+}
 function dispose(response){try{const p=response?.body?.cancel();p?.catch(()=>{})}catch{}}
 export async function receiveArtifact({binding,fetcher,csrf,guard,onUnauthorized,pending,signal,digest=data=>crypto.subtle.digest('SHA-256',data),deadline=TIMEOUT_MS}){
  binding=validateDownloadBinding(binding);guard();if(signal?.aborted)throw Error('Download canceled.')
@@ -51,7 +75,8 @@ export async function receiveArtifact({binding,fetcher,csrf,guard,onUnauthorized
   check();const hashed=await Promise.race([digest(output),cancelled]);check()
   const actual=Array.from(new Uint8Array(hashed),v=>v.toString(16).padStart(2,'0')).join('')
   if(actual!==binding.sha256)throw Error('Download checksum did not match.')
-  delivered=true;return {bytes:output,name,sha256:actual}
+  const saveName=verifiedSaveName(binding.key,name)
+  delivered=true;return {bytes:output,name:saveName,sha256:actual}
  }finally{
   clearTimeout(timer);signal?.removeEventListener('abort',external);pending.delete(cancel)
   controller.abort();try{if(reader)reader.cancel().catch(()=>{});else dispose(response)}catch{}
