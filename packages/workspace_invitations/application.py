@@ -2,11 +2,12 @@
 from datetime import datetime, timezone
 
 from packages.workspace_api import WorkspaceApplication
-from packages.workspace_api.application import _SEGMENT, _invalid
+from packages.workspace_api.application import _SEGMENT, _invalid, _workspace_hint_operation
 from packages.workspace_admin_api import WorkspaceAdministrationApplication
 from packages.workspace_admin_api.requests import request_key
 from packages.workspaces import Membership, PolicyError
 from .store import check_schema, records, create, transition, effective_state, view, binding
+from .selection import _MISSING, recipient_selection
 
 
 class WorkspaceInvitationApplication(WorkspaceApplication):
@@ -46,6 +47,8 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
             body = self._body(environ, {'state'})
         elif admin and len(parts) == 5 and verb == 'GET':
             command, args = 'list', (parts[3],)
+        elif admin and len(parts) == 8 and parts[5] == 'selections' and verb == 'GET':
+            command, args = 'recipient_selection', (parts[3], parts[6], parts[7])
         elif admin and len(parts) == 5 and verb == 'POST':
             command, write, args = 'create', True, (parts[3], request_key(environ))
             body = self._body(environ, {'principal_id','role'})
@@ -56,6 +59,31 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
             body = self._body(environ, {'state'})
         if command is None:
             raise PolicyError(404,'not_found')
+        if command == 'recipient_selection':
+            def review(policy, actor):
+                return recipient_selection(policy, actor, *args)
+
+            # This new read only: unwrap W05 before capturing a policy denial,
+            # so the normal successful-read final guards also cover that outcome.
+            # No dedicated auxiliary-table lookup, business persistence or receipt
+            # mode. The ordinary policy loader/global FK check remains unchanged.
+            assertion, review = _workspace_hint_operation(assertion, review)
+            pending, denied = None, object()
+
+            def observed(policy, actor):
+                nonlocal pending
+                try:
+                    return review(policy, actor)
+                except PolicyError as error:
+                    pending = error
+                    return denied
+
+            result = self._api._authenticated_transaction(assertion, observed, write=False)
+            # Authentication/storage/fatal errors above win; the private sentinel
+            # never reaches serialization, including after Cookie clock commit.
+            if pending is not None:
+                raise pending
+            return result
         deadline = None
         def operation(policy, actor, connection):
             nonlocal deadline
@@ -94,7 +122,8 @@ class WorkspaceInvitationApplication(WorkspaceApplication):
             if member.role != 'admin':
                 raise PolicyError(403,'forbidden')
             if command == 'create':
-                return view(policy,create(connection,policy,actor,workspace,body,args[1],int(now)),now)
+                return view(policy,create(connection,policy,actor,workspace,body,args[1],int(now),
+                    expected_recipient_selection=environ.get('HTTP_IF_INVITATION_RECIPIENT_MATCH', _MISSING)),now)
             if command == 'list':
                 result = records(connection,'workspace_id=?',(workspace,))
                 result.sort(key=lambda item:(effective_state(policy,item,now)!='pending',-item['created'],item['id']))

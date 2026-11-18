@@ -17,3 +17,8 @@ python3 -m packages.service_runtime.tests.https_acceptance
 
 Do not upload test runtime DBs, certificate keys or server raw output. CI reports
 only assertion summaries and fixed success text. Return to [runtime](../README.md).
+
+The invitation recipient-selection regression in `test_server.py` uses the
+existing Gunicorn raw-parser harness to reject duplicate
+`If-Invitation-Recipient-Match` names and underscore aliases before WSGI mapping.
+It adds no runtime startup, identity enrollment, provider or configuration enablement.

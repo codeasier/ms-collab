@@ -5,6 +5,7 @@ import tempfile
 from wsgiref.simple_server import make_server, WSGIRequestHandler, WSGIServer
 from socketserver import ThreadingMixIn
 
+from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 from packages.identity import AuthenticationError, Provider, VerifiedIdentity
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_admin_api import WorkspaceAdministrationApplication, ModuleTemplate, initialize_administration
@@ -35,7 +36,7 @@ class Threaded(ThreadingMixIn, WSGIServer):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteWorkspaceService.initialize(Path(directory)/"ui.sqlite3",
-            principals=tuple(Principal(p,ISSUER,p) for p in ("admin","reader","retiree","other","operator","newcomer")),
+            principals=tuple(Principal(p,ISSUER,p) for p in ("admin","reader","retiree","other","operator","newcomer","p" * 200)),
             workspaces=(Workspace("alpha","Product Alpha"),Workspace("commons","Shared collaboration","shared"),Workspace("hidden","Hidden")),
             memberships=(Membership("alpha","admin","admin"),Membership("alpha","reader","viewer"),Membership("alpha","retiree","viewer"),Membership("commons","admin","admin"),Membership("hidden","other","admin")),
             modules=(ModuleInstance("alpha","board",("read","write")),), resources=(), operators=frozenset({"operator"}))
@@ -47,6 +48,4 @@ if __name__ == "__main__":
         server=make_server("127.0.0.1",0,api,server_class=Threaded,handler_class=Quiet)
         origin=f"http://127.0.0.1:{server.server_port}"
         server.set_app(WorkspaceManagementUI(api=api,origin=origin))
-        print(origin,flush=True)
-        try:server.serve_forever()
-        finally:server.server_close()
+        serve_synthetic(server,on_ready=lambda:print(origin,flush=True))

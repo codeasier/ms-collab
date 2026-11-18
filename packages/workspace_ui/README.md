@@ -72,9 +72,14 @@ or reservation. It has no TTL and need not change on a server restart. Current
 authorization is checked again on every lookup, creation and replay. The
 [HTTP compatibility contract](../workspace_admin_api/README.md#durable-retries-and-transaction-boundary)
 preserves valid old three-field-body exact replay without the new header, but
-old clients cannot make new creations without it. Invitations/other identity
-selection, real login, legacy grant recovery and identity transitions stay closed
-or separately scoped as documented; this UI does not complete those gates.
+old clients cannot make new creations without it. Invitations use a separate
+[recipient Review and retry contract](../workspace_invitations/README.md#explicit-recipient-identity-review):
+fresh requests carry the workspace/role/current-identity equality value, while
+original historical requests replay without re-granting. Uncertain invitation
+key/body/proof pairs remain in page memory and are retried explicitly without
+another Review; only a confirmed selection 412 permits replacing the proof.
+Other identity selection, real login, legacy grant recovery and identity
+transitions stay closed or separately scoped; this UI does not complete those gates.
 
 The base API alone still supports member administration; new controls stay hidden
 when the extension is not configured. No UI flag grants backend authority.

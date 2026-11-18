@@ -18,6 +18,7 @@ from packages.workspaces.tests.test_counter_bounds import CountedAudit
 class InvitationCounterTests(unittest.TestCase):
     setUp=invitation_fixtures.InvitationTests.setUp
     request=invitation_fixtures.InvitationTests.request
+    selection=invitation_fixtures.InvitationTests.selection
     invite=invitation_fixtures.InvitationTests.invite
     respond=invitation_fixtures.InvitationTests.respond
     revoke=invitation_fixtures.InvitationTests.revoke
@@ -29,7 +30,7 @@ class InvitationCounterTests(unittest.TestCase):
             bind_core_grants_for_test(db, ('outsider',))
 
     def test_reenrollment_uses_last_increment_once_and_restart_preserves_it(self):
-        self.revoked_member(MAX-1);item=self.item()
+        self.revoked_member(MAX-1);item=self.item(proof=self.selection())
         self.assertEqual(self.respond(item)['status'],200)
         reopened=SQLiteWorkspaceService(self.path)
         member=next(x for x in reopened.list_memberships('admin','alpha') if x.principal_id=='outsider')
@@ -41,7 +42,7 @@ class InvitationCounterTests(unittest.TestCase):
         self.assertEqual(snapshot(self.path),before)
 
     def test_membership_max_prevents_accept_but_not_explicit_decline(self):
-        self.revoked_member(MAX);item=self.item();before=snapshot(self.path)
+        self.revoked_member(MAX);item=self.item(proof=self.selection());before=snapshot(self.path)
         result=self.respond(item)
         self.assertEqual((result['status'],result['body']), (409,{'error':'counter_exhausted'}))
         self.assertEqual(snapshot(self.path),before)
@@ -51,7 +52,7 @@ class InvitationCounterTests(unittest.TestCase):
     def test_invitation_revision_budget_precedes_membership_and_audits(self):
         for value in (MAX-1,MAX):
             with self.subTest(value=value):
-                item=self.item()
+                item=self.item(proof=self.selection())
                 with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
                     db.execute('UPDATE workspace_invitations_v1 SET revision=? WHERE id=?',(value,item['id']))
                 item['revision']=value;before=snapshot(self.path)
@@ -67,7 +68,7 @@ class InvitationCounterTests(unittest.TestCase):
                     self.assertEqual(snapshot(self.path),before)
 
     def test_epoch_and_two_audit_budget_are_preflighted_before_acceptance(self):
-        item=self.item();before=snapshot(self.path)
+        item=self.item(proof=self.selection());before=snapshot(self.path)
         original=SQLiteWorkspaceService._load
         def load(store,db):
             policy=original(store,db);policy._audit=CountedAudit(MAX-1);return policy
@@ -83,7 +84,7 @@ class InvitationCounterTests(unittest.TestCase):
         self.assertEqual(self.respond(item,'declined')['status'],200)
 
     def test_invalid_persisted_revision_coordinates_never_echo_or_repair(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         for column in ('revision','workspace_revision','inviter_revision','member_revision'):
             with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
                 old=db.execute(f'SELECT {column} FROM workspace_invitations_v1 WHERE id=?',(item['id'],)).fetchone()[0]
@@ -96,7 +97,7 @@ class InvitationCounterTests(unittest.TestCase):
                 db.execute(f'UPDATE workspace_invitations_v1 SET {column}=? WHERE id=?',(old,item['id']))
 
     def test_audit_failure_and_final_expiry_restore_invitation_membership_epoch(self):
-        self.revoked_member(MAX-1);item=self.item()
+        self.revoked_member(MAX-1);item=self.item(proof=self.selection())
         with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
             db.execute('UPDATE metadata SET epoch=?',(MAX-1,))
         before=snapshot(self.path)
@@ -116,7 +117,7 @@ class InvitationCounterTests(unittest.TestCase):
         self.assertEqual(snapshot(self.path),before)
 
     def test_concurrent_acceptance_at_last_member_increment_has_one_winner(self):
-        self.revoked_member(MAX-1);item=self.item();barrier=Barrier(2)
+        self.revoked_member(MAX-1);item=self.item(proof=self.selection());barrier=Barrier(2)
         def accept():
             barrier.wait(timeout=5)
             return self.respond(item)['status']
@@ -127,7 +128,7 @@ class InvitationCounterTests(unittest.TestCase):
                          ['invitation.create','membership.join','invitation.accepted'])
 
     def test_if_match_exact_safe_integer_limit(self):
-        item=self.item();before=snapshot(self.path)
+        item=self.item(proof=self.selection());before=snapshot(self.path)
         for value in (f'"{MAX+1}"','"9999999999999999"','"true"','"1.0"'):
             result=self.respond(item,revision=value)
             self.assertEqual((result['status'],result['body']),(400,{'error':'invalid_revision'}))

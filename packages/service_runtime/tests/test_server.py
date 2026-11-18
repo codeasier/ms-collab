@@ -174,6 +174,21 @@ class GunicornPolicyTests(unittest.TestCase):
                                f"{name.lower()}: synthetic-two\r\n\r\n").encode())
         self.rejected(b"GET / HTTP/1.1\r\nHost: localhost\r\nhost: localhost\r\n\r\n")
 
+    def test_invitation_selection_header_duplicates_and_underscore_aliases_are_rejected(self):
+        # The existing raw parser policy, not a runtime/provider activation.
+        proof = "irs1-" + "0" * 64
+        base = "GET /api/workspaces/alpha/invitations/selections/outsider/viewer HTTP/1.1\r\nHost: localhost\r\n"
+        request = self.request((base + "If-Invitation-Recipient-Match: " + proof + "\r\n\r\n").encode())
+        self.assertIn(("IF-INVITATION-RECIPIENT-MATCH", proof), request.headers)
+        for headers in (
+            "If-Invitation-Recipient-Match: " + proof + "\r\nif-invitation-recipient-match: " + proof + "\r\n",
+            "If_Invitation_Recipient_Match: " + proof + "\r\n",
+            "If-Invitation-Recipient_Match: " + proof + "\r\n",
+            "If-Invitation-Recipient-Match: " + proof + "\r\nIf_Invitation_Recipient_Match: " + proof + "\r\n",
+        ):
+            with self.subTest(headers=headers):
+                self.rejected((base + headers + "\r\n").encode())
+
     def test_framing_ambiguity_and_unsupported_transfer_rejected(self):
         for headers in (
             b"Content-Length: 0\r\nContent-Length: 0\r\n",

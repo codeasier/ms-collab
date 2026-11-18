@@ -1,4 +1,4 @@
-import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations, initialAdminSelectionURL, validateInitialAdminSelection} from './client.mjs'
+import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations, initialAdminSelectionURL, validateInitialAdminSelection, invitationSelectionURL, validateInvitationSelection} from './client.mjs'
 export function mountWorkspacePage({client,sessionMode=false,onSignOut=()=>{}}) {
 if (!client || typeof client.request !== 'function' || typeof client.clear !== 'function') throw new Error('Explicit request client required.')
 const el = id => document.getElementById(id)
@@ -6,6 +6,28 @@ const pendingCreations = new Map(), pendingInvitations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
 let managementAvailable = false, saveGeneration = 0
 let createSelection, selectionGeneration = 0, selectionController, reviewing = false
+let inviteSelection, inviteGeneration = 0, inviteController, inviteReviewing = false, inviteSaveTicket
+const inviteBody = () => ({principal_id:el('invite-principal').value.trim(),role:el('invite-role').value})
+const inviteSignature = () => JSON.stringify([selection,inviteBody()])
+function currentInviteSelection() {
+  return inviteSelection && inviteSelection.generation === generation && inviteSelection.turn === inviteGeneration && inviteSelection.signature === inviteSignature() && el('invite-dialog').open
+}
+function inviteControls() {
+  const body = inviteBody(), pending = pendingInvitations.get(inviteSignature())
+  const unresolved = pending && !pending.selectionRejected
+  el('invite-review').disabled = saving || inviteReviewing || !!unresolved || !validId(selection) || !validId(body.principal_id) || !['viewer','developer'].includes(body.role)
+  el('invite-save').disabled = saving || inviteReviewing || !(unresolved || currentInviteSelection())
+  el('invite-save').textContent = unresolved ? 'Retry original invitation' : 'Send in-app invitation'
+  if (unresolved) el('invite-selection').textContent = 'Retry the original reviewed invitation; its result is still unconfirmed. The original recipient, role, retry key and selection are retained in this page only.'
+}
+function clearInviteSelection() {
+  inviteGeneration++; inviteController?.abort(); inviteController = undefined
+  inviteSelection = undefined; inviteReviewing = false
+  el('invite-selection').textContent = ''
+  // An interrupted old request never owns a later interaction's busy state.
+  if (inviteSaveTicket !== undefined) { const ticket = inviteSaveTicket; inviteSaveTicket = undefined; busy(false,ticket) }
+  inviteControls()
+}
 function currentCreateSelection() {
   return createSelection && createSelection.generation === generation && createSelection.turn === selectionGeneration && createSelection.initial_admin === el('initial-admin').value.trim() && el('create-dialog').open
 }
@@ -18,7 +40,7 @@ function clearCreateSelection() {
   createSelection = undefined; reviewing = false
   el('initial-admin-selection').textContent = ''; createControls()
 }
-function cancelRequests() { generation++; controller?.abort(); controller = new AbortController(); return generation }
+function cancelRequests() { generation++; clearInviteSelection(); controller?.abort(); controller = new AbortController(); return generation }
 function closeEditor() {
   editing = undefined; el('editor').close()
   for (const id of ['editing','edit-status']) el(id).textContent = ''
@@ -29,7 +51,7 @@ function closeAction() {
   action = undefined; el('action-dialog').close()
   for (const id of ['action-title','action-description','action-status']) el(id).textContent = ''
 }
-function closeInvite() { el('invite-dialog').close(); el('invite-form').reset(); el('invite-status').textContent = '' }
+function closeInvite() { clearInviteSelection(); el('invite-dialog').close(); el('invite-form').reset(); el('invite-selection').textContent = ''; el('invite-status').textContent = ''; inviteControls() }
 function closeDialogs() { closeEditor(); closeCreate(); closeAction(); closeInvite() }
 function clearPanel() {
   closeDialogs(); el('panel').hidden = true; el('members').replaceChildren()
@@ -43,7 +65,7 @@ function busy(value, ticket) {
   saveGeneration++
   saving = value
   for (const control of document.querySelectorAll('dialog button,dialog input,dialog select')) control.disabled = value
-  createControls()
+  createControls(); inviteControls()
   return saveGeneration
 }
 function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
@@ -333,28 +355,67 @@ el('action-form').addEventListener('submit', async event => {
   } catch (error) { await mutationError(error,current,'action-status',item.scope) }
   finally { busy(false,saveTurn) }
 })
-el('invite-open').addEventListener('click',()=>{ closeInvite(); el('invite-dialog').showModal() })
-el('invite-form').addEventListener('submit',async event=>{
-  event.preventDefault(); if (saving || !validId(selection)) return
-  const body = {principal_id:el('invite-principal').value.trim(),role:el('invite-role').value}
-  if (!validId(body.principal_id) || !['viewer','developer'].includes(body.role)) { el('invite-status').textContent = 'Enter an existing verified principal ID and bounded role.'; return }
-  const scope = selection, current = generation, signature = JSON.stringify([scope,body])
-  if (!pendingInvitations.has(signature)) pendingInvitations.set(signature,crypto.randomUUID())
-  const saveTurn = busy(true); el('invite-status').textContent = 'Inviting… Verify the result before closing the page.'
+el('invite-open').addEventListener('click',()=>{ closeInvite(); el('invite-dialog').showModal(); inviteControls() })
+for (const id of ['invite-principal','invite-role']) for (const event of ['input','change']) el(id).addEventListener(event,()=>{
+  clearInviteSelection(); el('invite-status').textContent = 'Explicitly review this recipient and role before sending a new invitation.'
+})
+el('invite-review').addEventListener('click',async()=>{
+  if (saving || inviteReviewing || !el('invite-dialog').open) return
+  const body = inviteBody(), scope = selection, signature = inviteSignature(), pending = pendingInvitations.get(signature)
+  if (!validId(scope) || !validId(body.principal_id) || !['viewer','developer'].includes(body.role) || (pending && !pending.selectionRejected)) return
+  clearInviteSelection()
+  const current = generation, turn = inviteGeneration
+  inviteController = new AbortController(); inviteReviewing = true; inviteControls()
+  const isCurrent = () => current === generation && turn === inviteGeneration && scope === selection && signature === inviteSignature() && el('invite-dialog').open
+  el('invite-status').textContent = 'Reviewing recipient identity… No invitation is being sent.'
   try {
-    const item = await client.request(invitationURL(scope),{method:'POST',body,requestKey:pendingInvitations.get(signature),signal:controller.signal})
-    if (current !== generation) return
+    const selected = validateInvitationSelection(await client.request(invitationSelectionURL(scope,body.principal_id,body.role),{signal:inviteController.signal,invitationIsCurrent:isCurrent}),scope,body.principal_id,body.role)
+    if (!isCurrent()) return
+    inviteSelection = {...selected,generation:current,turn,signature}
+    el('invite-selection').textContent = `Reviewed recipient: ${selected.principal_id}. Workspace: ${selected.workspace_id}. Role: ${selected.role}. This identity review grants no access and does not reserve an invitation. The recipient must separately accept.`
+    el('invite-status').textContent = 'Recipient reviewed. Choose Send in-app invitation to submit.'
+  } catch (error) {
+    if (!isCurrent() || error.name === 'AbortError') return
+    if (error.status === 401) { disconnect(error.message); return }
+    el('invite-status').textContent = error.status ? error.message : 'Unable to verify this recipient selection. Explicitly review again.'
+  } finally { if (isCurrent()) { inviteReviewing = false; inviteControls() } }
+})
+el('invite-form').addEventListener('submit',async event=>{
+  event.preventDefault(); if (saving || inviteReviewing || !el('invite-dialog').open || !validId(selection)) return
+  const body = inviteBody(), scope = selection, current = generation, signature = inviteSignature()
+  if (!validId(body.principal_id) || !['viewer','developer'].includes(body.role)) { el('invite-status').textContent = 'Enter an existing verified principal ID and bounded role.'; return }
+  let pending = pendingInvitations.get(signature)
+  if ((!pending || pending.selectionRejected) && !currentInviteSelection()) {
+    el('invite-status').textContent = 'Explicitly review this recipient and role before sending a new invitation.'; inviteControls(); return
+  }
+  if (!pending) { pending = {requestKey:crypto.randomUUID(),body:{...body},precondition:inviteSelection.precondition}; pendingInvitations.set(signature,pending) }
+  else if (pending.selectionRejected) { pending.precondition = inviteSelection.precondition; delete pending.selectionRejected }
+  const turn = inviteGeneration, {requestKey,precondition:invitationRecipientPrecondition} = pending
+  inviteController = new AbortController()
+  const isCurrent = () => current === generation && turn === inviteGeneration && scope === selection && signature === inviteSignature() && el('invite-dialog').open && pendingInvitations.get(signature) === pending
+  const saveTurn = busy(true); inviteSaveTicket = saveTurn
+  el('invite-status').textContent = 'Inviting… Verify the result before closing the page. Leaving this page loses the retained retry request; inspect current state before creating again.'
+  try {
+    const item = await client.request(invitationURL(scope),{method:'POST',body:pending.body,requestKey,invitationRecipientPrecondition,invitationIsCurrent:isCurrent,signal:inviteController.signal})
+    if (!isCurrent()) return
     validateInvitations([item],scope)
     if (item.principal_id !== body.principal_id || item.role !== body.role) throw new Error('Invalid result')
     pendingInvitations.delete(signature); closeInvite(); await loadMembers(scope,'Invitation recorded. The target must sign in and explicitly join; no message or secret link was sent.')
-  } catch (error) { await mutationError(error,current,'invite-status',scope) }
-  finally { busy(false,saveTurn) }
+  } catch (error) {
+    if (!isCurrent() || error.name === 'AbortError') return
+    if (error.status === 412 && error.invitationSelectionRejected === true) {
+      pending.selectionRejected = true; clearInviteSelection()
+      el('invite-status').textContent = 'Recipient selection changed. No invitation was written. Explicitly review again, then send with the same retry key.'
+    } else if ([400,409,412,428].includes(error.status)) {
+      el('invite-status').textContent = error.message; inviteControls()
+    } else await mutationError(error,current,'invite-status',scope)
+  } finally { if (inviteSaveTicket === saveTurn) inviteSaveTicket = undefined; busy(false,saveTurn) }
 })
 window.addEventListener('pagehide', () => disconnect('Disconnected. Reconnect and verify any uncertain creation before submitting another request.'))
 if (!sessionMode && location.protocol !== 'https:' && !(location.protocol === 'http:' && location.hostname === '127.0.0.1')) {
   el('connect').hidden = true; el('status').textContent = 'HTTPS is required outside numeric loopback.'
 }
 
-createControls()
+createControls(); inviteControls()
 return {activate(){el('session').hidden=false;return reload()},clear:disconnect}
 }

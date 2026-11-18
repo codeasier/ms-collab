@@ -157,8 +157,11 @@ class HostTests(unittest.TestCase):
         with sqlite3.connect(self.policy._path) as db:self.assertIsNone(db.execute("SELECT name FROM sqlite_schema WHERE name='assistant_events'").fetchone())
 
     def test_invitation_acceptance_uses_recipient_session_not_body_identity(self):
+        proof=self.request('/api/workspaces/alpha/invitations/selections/outsider/viewer')
+        self.assertEqual(proof['status'],200,proof)
         created=self.mutation('/api/workspaces/alpha/invitations',body={'principal_id':'outsider','role':'viewer'},
-                              extra={'HTTP_IDEMPOTENCY_KEY':'11111111-1111-4111-8111-111111111111'})
+                              extra={'HTTP_IDEMPOTENCY_KEY':'11111111-1111-4111-8111-111111111111',
+                                     'HTTP_IF_INVITATION_RECIPIENT_MATCH':proof['body']['data']['precondition']})
         self.assertEqual(created['status'],200,created)
         ident=created['body']['data']['id'];other=session(self.login,self.exchange,'outsider-sub')
         cookies=cookie_header({_SESSION:other.token.value,_CSRF:other.csrf.value})

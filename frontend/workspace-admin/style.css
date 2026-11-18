@@ -3,3 +3,5 @@
 #operator-panel{border:1px solid #6a5c37;background:#211f1b;padding:24px;margin:24px 0;border-radius:14px}#operator-panel li span{max-width:100%}#module-panel{border-top:1px solid #30405d;margin-top:24px;padding-top:16px}#module-status{color:#b6c3dd}input{min-width:0}#action-description{overflow-wrap:anywhere}
 
 #initial-admin-selection{overflow-wrap:anywhere}
+
+#invite-selection,#invite-status{overflow-wrap:anywhere}#invite-dialog form{min-width:0}

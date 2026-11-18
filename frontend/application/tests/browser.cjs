@@ -3,6 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 const {exerciseIdentitySelection}=require('../../workspace-admin/tests/identity-selection.cjs')
+const {exerciseInvitationReview}=require('../../workspace-admin/tests/invitation-review.cjs')
 const {stopSyntheticFixtures}=require('./fixture-process.cjs')
 async function within(p,label){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 // Check actual computed foreground/background after the browser has applied both
@@ -64,7 +65,9 @@ async function main(){
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
   await page.getByRole('button',{name:'Edit reader',exact:true}).click();await readable(page,['#editing','#role','#member-state','#save','#cancel']);await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
-  const managementReady=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#operator-panel').hidden&&document.querySelector('#members').children.length===3&&!document.querySelector('#status').textContent.startsWith('Loading'))
+  // Members/status are rendered before modules and invitations. Wait for the
+  // current alpha invitation projection, not just its earlier member projection.
+  const managementReady=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#operator-panel').hidden&&document.querySelector('#workspace').value==='alpha'&&document.querySelector('#members').children.length===3&&!document.querySelector('#status').textContent.startsWith('Loading')&&!document.querySelector('#invitation-panel').hidden&&!document.querySelector('#invite-open').hidden&&/^\d+ recent invitations \(/.test(document.querySelector('#invitation-status').textContent))
   const reconnectManagement=async()=>{
    if((await page.locator('#app-status').textContent()).includes('server session is revoked')){
     await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden);await page.locator('nav a[href="/manage/"]').click()
@@ -77,6 +80,12 @@ async function main(){
    ()=>page.evaluate(()=>document.querySelector('#workspace').dispatchEvent(new Event('change'))),
    ()=>page.evaluate(()=>document.querySelector('#app-recheck').dispatchEvent(new Event('click'))),
    async()=>{await page.evaluate(()=>document.querySelector('#app-sign-out').dispatchEvent(new Event('click')));await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))}
+  ]})
+  await exerciseInvitationReview({page,router,ready:managementReady,reconnect:reconnectManagement,folder,readable,inspectState:()=>page.evaluate(async()=>({invitations:(await(await fetch('/api/workspaces/alpha/invitations')).json()).data,members:(await(await fetch('/api/workspaces/alpha/members')).json()).data})),invalidations:[
+   ()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide'))),
+   ()=>page.evaluate(()=>document.querySelector('#app-recheck').dispatchEvent(new Event('click'))),
+   async()=>{await page.evaluate(()=>document.querySelector('#app-sign-out').dispatchEvent(new Event('click')));await page.waitForFunction(()=>document.querySelector('#app-status').textContent.includes('server session is revoked'))},
+   async()=>{await page.goto('about:blank');await page.goBack();await page.locator('#invite-dialog').waitFor({state:'attached'})}
   ]})
   const before=writes.length;await page.locator('#create-open').click();assert.equal(await page.locator('#create-save').isDisabled(),true)
   await readable(page,['#create-dialog h2','#space-name','#space-kind','#initial-admin','#create-cancel']);await page.locator('#space-name').fill('Discarded workspace');await page.locator('#initial-admin').fill('admin')
@@ -105,7 +114,7 @@ async function main(){
   await page.screenshot({path:path.join(folder,'identity-selection-mobile.png'),fullPage:true})
   await within(router.drain(),'long identity selection route drain');router.remove(longSelectionPath)
   await page.locator('#create-cancel').click();assert.equal(await page.locator('#create-dialog').isVisible(),false);assert.equal(writes.length,before);await page.setViewportSize({width:1440,height:1050})
-  await page.locator('#invite-open').click();await readable(page,['#invite-dialog h2','#invite-principal','#invite-role','#invite-save','#invite-cancel']);await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
+  await page.locator('#invite-open').click();await readable(page,['#invite-dialog h2','#invite-principal','#invite-role','#invite-cancel']);await page.locator('#invite-principal').fill('outsider');await page.locator('#invite-role').selectOption('developer');await page.locator('#invite-review').click();await page.waitForFunction(()=>!document.querySelector('#invite-save').disabled);await readable(page,['#invite-save']);await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
   // Membership success notice precedes the separately awaited module/invitation reads.
   await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('outsider · developer · pending'))
   assert.match(await page.locator('#invitations').textContent(),/outsider · developer · pending/)
@@ -169,7 +178,7 @@ async function main(){
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Unified UI scenario or cleanup failed')
  }
- console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and nine responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
+ console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider and eleven responsive screenshots with administration contrast checks. Synthetic HTTPS only.')
 }
 function reportFailure(error){
  console.error(error?.stack||String(error))

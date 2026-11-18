@@ -46,23 +46,92 @@ export function membershipURL(workspace, member) {
 export function messageFor(status) {
   return ({401:'Authentication expired or was rejected. Reconnect with a valid credential.',403:'You do not have the required administrator permission.',404:'This workspace is unavailable or no longer accessible.',409:'This change conflicts with the current lifecycle, approved catalog, retry key or last administrator protection.',412:'This record changed elsewhere. Reload before editing again.',428:'A fresh record revision is required.',503:'The service is temporarily unavailable. Retry after checking its status.'})[status] || 'The service could not complete the request.'
 }
+
+// Invitation-only codecs. The Cookie transport has the same exact wire rules;
+// both executed Node roots register the shared invitation contract cases.
+const exactFields = (value, fields) => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',')
+export const validInvitationRecipientPrecondition = value => typeof value === 'string' && value.length === 69 && /^irs1-[a-f0-9]{64}$/.test(value)
+export function invitationSelectionURL(workspace, principal, role) {
+  if (!validId(workspace) || !validId(principal) || !['viewer','developer'].includes(role)) throw new Error('Invalid invitation selection.')
+  return `${invitationURL(workspace)}/selections/${encodeURIComponent(principal)}/${role}`
+}
+export function validateInvitationSelection(data, workspace, principal, role) {
+  invitationSelectionURL(workspace, principal, role)
+  if (!exactFields(data, ['workspace_id','principal_id','role','precondition']) || data.workspace_id !== workspace || data.principal_id !== principal || data.role !== role || !validInvitationRecipientPrecondition(data.precondition)) throw new Error('Invalid invitation selection response.')
+  return data
+}
+export function invitationSelectionRequest(path, method, body, precondition, isCurrent) {
+  let review, workspace
+  const parts = path.split('/')
+  if (parts[1] === 'api' && parts[2] === 'workspaces' && parts[4] === 'invitations' && (parts[5]?.startsWith('selections') || (method === 'POST' && parts.length === 5))) {
+    try { workspace = decodeURIComponent(parts[3]) } catch { throw new Error('Invalid invitation path.') }
+    if (!validId(workspace) || parts[3] !== encodeURIComponent(workspace)) throw new Error('Invalid invitation path.')
+    if (parts[5]?.startsWith('selections')) {
+      let principal
+      try { principal = decodeURIComponent(parts[6]) } catch { throw new Error('Invalid invitation selection path.') }
+      if (method !== 'GET' || body !== undefined || path !== invitationSelectionURL(workspace, principal, parts[7])) throw new Error('Invalid invitation selection path.')
+      review = {workspace, principal, role:parts[7]}
+    }
+  }
+  const creation = validId(workspace) && method === 'POST' && path === invitationURL(workspace)
+  if (creation && (!exactFields(body,['principal_id','role']) || !validId(body.principal_id) || !['viewer','developer'].includes(body.role))) throw new Error('Invalid invitation body.')
+  if (precondition !== undefined && (!creation || !validInvitationRecipientPrecondition(precondition))) throw new Error('Invalid invitation recipient precondition.')
+  if (isCurrent !== undefined && ((!creation && !review) || typeof isCurrent !== 'function')) throw new Error('Invalid invitation response guard.')
+  return {review, creation, workspace, recipient:creation ? {principal_id:body.principal_id,role:body.role} : undefined}
+}
+export function assertCurrentInvitation(isCurrent) {
+  if (isCurrent !== undefined && !isCurrent()) { const error = new Error('Stale invitation response discarded.'); error.name = 'AbortError'; throw error }
+}
+export function validateInvitationResult(payload, request) {
+  if (!exactFields(payload,['data'])) throw new Error('Invalid invitation response.')
+  if (request.review) {
+    const {workspace,principal,role} = request.review
+    return validateInvitationSelection(payload.data,workspace,principal,role)
+  }
+  const item = payload.data
+  if (!exactFields(item,['id','workspace_id','workspace_name','principal_id','role','state','created','expires','revision'])) throw new Error('Invalid invitation response.')
+  validateInvitations([item],request.workspace)
+  if (item.principal_id !== request.recipient.principal_id || item.role !== request.recipient.role) throw new Error('Invalid invitation response.')
+  return item
+}
+export async function invitationSelectionRejected(response) {
+  // A post-read bound is not a streaming memory limit. Never expose raw errors.
+  try {
+    const raw = await response.text()
+    if (raw.length > 128) return false
+    const payload = JSON.parse(raw)
+    return exactFields(payload,['error']) && payload.error === 'invitation_recipient_selection_changed'
+  } catch { return false }
+}
+
 export function createClient({fetcher = fetch} = {}) {
   let credential = ''
   return {
     connect(value) { if (typeof value !== 'string' || !value || value.length > 8192 || /\s/.test(value)) throw new Error('Enter a valid opaque credential.'); credential = value },
     clear() { credential = '' },
-    async request(path, {method='GET', body, revision, requestKey, initialAdminPrecondition, signal} = {}) {
+    async request(path, {method='GET', body, revision, requestKey, initialAdminPrecondition, invitationRecipientPrecondition, invitationIsCurrent, signal} = {}) {
       if (!credential) throw new Error('Disconnected.')
-      if (typeof path !== 'string' || /[\u0000-\u0020\u007f]/.test(path) || !['GET','POST','PATCH'].includes(method) || (method === 'GET' && body !== undefined) || (path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?|initial-admin-selections\/[A-Za-z0-9%._:-]+)$/.test(path))) throw new Error('Invalid service path.')
+      const invitation = typeof path === 'string' ? invitationSelectionRequest(path, method, body, invitationRecipientPrecondition, invitationIsCurrent) : {}
+      if (typeof path !== 'string' || /[\u0000-\u0020\u007f]/.test(path) || !['GET','POST','PATCH'].includes(method) || (method === 'GET' && body !== undefined) || (!invitation.review && path !== '/api/workspaces' && !/^\/api\/invitations(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/(?:members|modules|invitations)(?:\/[A-Za-z0-9%._:-]+)?$/.test(path) && !/^\/api\/workspaces\/[A-Za-z0-9%._:-]+\/module-catalog$/.test(path) && !/^\/api\/control\/(?:capabilities|workspaces(?:\/[A-Za-z0-9%._:-]+)?|initial-admin-selections\/[A-Za-z0-9%._:-]+)$/.test(path))) throw new Error('Invalid service path.')
       initialAdminSelectionRequest(path, method, initialAdminPrecondition)
       const headers = {Authorization: `Bearer ${credential}`}
       if (body !== undefined) headers['Content-Type'] = 'application/json'
       if (revision !== undefined) headers['If-Match'] = `"${revision}"`
       if (requestKey !== undefined) headers['Idempotency-Key'] = requestKey
       if (initialAdminPrecondition !== undefined) headers['If-Initial-Admin-Match'] = initialAdminPrecondition
+      if (invitationRecipientPrecondition !== undefined) headers['If-Invitation-Recipient-Match'] = invitationRecipientPrecondition
       const response = await fetcher(path, {method, headers, body:body === undefined ? undefined : JSON.stringify(body), signal, credentials:'omit', cache:'no-store', redirect:'error'})
-      if (!response.ok) { const error = new Error(messageFor(response.status)); error.status = response.status; throw error }
-      const payload = await response.json()
+      assertCurrentInvitation(invitationIsCurrent)
+      if (!response.ok) {
+        const error = new Error(messageFor(response.status)); error.status = response.status
+        if (invitation.creation && response.status === 412) error.invitationSelectionRejected = await invitationSelectionRejected(response)
+        assertCurrentInvitation(invitationIsCurrent)
+        throw error
+      }
+      if ((invitation.review || invitation.creation) && response.status !== 200) throw new Error('Invalid invitation response.')
+      let payload
+      try { payload = await response.json() } finally { assertCurrentInvitation(invitationIsCurrent) }
+      if (invitation.review || invitation.creation) return validateInvitationResult(payload,invitation)
       if (!payload || !Object.hasOwn(payload,'data')) throw new Error('Invalid service response.')
       return payload.data
     }

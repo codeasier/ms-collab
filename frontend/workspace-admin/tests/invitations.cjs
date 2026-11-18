@@ -2,10 +2,12 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os')
 const {spawn}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('./scenario-router.cjs')
+const {exerciseInvitationReview}=require('./invitation-review.cjs')
+const {stopSyntheticFixture}=require('../../application/tests/fixture-process.cjs')
 const within=async(p)=>{let t;try{return await Promise.race([p,new Promise((_,reject)=>t=setTimeout(()=>reject(new Error('barrier timeout')),10000))])}finally{clearTimeout(t)}}
 async function main(){
  const child=spawn('python3',['-m','packages.workspace_ui.tests.browser_server'],{cwd:path.resolve(__dirname,'../../..'),stdio:['ignore','pipe','pipe']});child.stderr.resume()
- let browser
+ let browser,failure
  try{
   const origin=await within(new Promise((resolve,reject)=>{let s='';child.stdout.on('data',c=>{s+=c;const m=s.match(/http:\/\/127\.0\.0\.1:\d+/);if(m)resolve(m[0])});child.once('exit',()=>reject(new Error('server stopped')))}))
   browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000}})
@@ -21,12 +23,13 @@ async function main(){
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{assert.ok(!r.url().includes('synthetic-'));if(['POST','PATCH'].includes(r.method()))writes.push({path:new URL(r.url()).pathname,key:r.headers()['idempotency-key']})})
   const connect=async token=>{await page.locator('#credential').fill(token);await page.locator('#connect button').click();await page.locator('#inbox-panel:not([hidden])').waitFor()}
   const invite=async(target='newcomer',role='developer')=>{await page.locator('#invite-open').click();await page.locator('#invite-principal').fill(target);await page.locator('#invite-role').selectOption(role)}
+  const review=async()=>{await page.locator('#invite-review').click();await page.waitForFunction(()=>!document.querySelector('#invite-save').disabled)}
   await page.goto(origin+'/manage/');await connect('synthetic-admin');await page.locator('#invite-open:not([hidden])').waitFor()
   await invite();const before=writes.length;await page.locator('#invite-cancel').click();assert.equal(writes.length,before)
   // Server accepted creation, client lost its response. Retry must keep its key.
   let lost=false
   router.set('/api/workspaces/alpha/invitations',async route=>{if(route.request().method()==='POST'&&!lost){lost=true;await route.fetch();return route.abort('failed')}return route.continue()})
-  await invite();await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Result uncertain'))
+  await invite();await review();await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Result uncertain'))
   router.remove('/api/workspaces/alpha/invitations');await page.locator('#invite-open:not([hidden])').waitFor()
   await invite();await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Invitation recorded'))
   const creation=writes.filter(r=>r.path==='/api/workspaces/alpha/invitations');assert.equal(creation.length,2);assert.equal(creation[0].key,creation[1].key)
@@ -49,7 +52,7 @@ async function main(){
   assert.equal((await context.request.patch(origin+'/api/workspaces/alpha/members/newcomer',{headers:{...admin,'If-Match':'"1"'},data:{role:'viewer',state:'revoked'}})).status(),200)
   assert.equal((await context.request.patch(origin+'/api/invitations/'+old.id,{headers:{...newcomer,'If-Match':`"${old.revision}"`},data:{state:'accepted'}})).status(),409)
   await page.locator('#disconnect').click();await connect('synthetic-admin');await page.locator('#invite-open:not([hidden])').waitFor()
-  await invite('newcomer','viewer');await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('newcomer · viewer · pending'))
+  await invite('newcomer','viewer');await review();await page.locator('#invite-save').click();await page.waitForFunction(()=>document.querySelector('#invitations').textContent.includes('newcomer · viewer · pending'))
   // Exact revision conflict: admin revokes after the recipient opened Join.
   await page.locator('#disconnect').click();await connect('synthetic-newcomer');await page.getByRole('button',{name:'Join Product Alpha',exact:true}).click()
   let active=(await(await context.request.get(origin+'/api/workspaces/alpha/invitations',{headers:admin})).json()).data.find(i=>i.state==='pending')
@@ -74,11 +77,11 @@ async function main(){
   const startedA=new Promise(r=>seenA=r),gateA=new Promise(r=>releaseA=r),handledA=new Promise(r=>doneA=r)
   const startedB=new Promise(r=>seenB=r),gateB=new Promise(r=>releaseB=r),handledB=new Promise(r=>doneB=r)
   router.set('/api/workspaces/alpha/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenA();await gateA;const response=await route.fetch();await route.fulfill({response});doneA()})
-  await invite();await page.locator('#invite-save').click();await within(startedA)
+  await invite();await review();await page.locator('#invite-save').click();await within(startedA)
   // pagehide is the supported interruption while the modal owns focus.
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));await connect('synthetic-admin');await page.locator('#workspace').selectOption('commons');await page.waitForFunction(()=>document.querySelector('#title').textContent==='Shared collaboration'&&!document.querySelector('#invite-open').hidden)
   router.set('/api/workspaces/commons/invitations',async route=>{if(route.request().method()!=='POST')return route.continue();seenB();await gateB;const response=await route.fetch();await route.fulfill({response});doneB()})
-  await invite();assert.equal(await page.locator('#invite-save').isDisabled(),false);await page.locator('#invite-save').click();await within(startedB)
+  await invite();await review();assert.equal(await page.locator('#invite-save').isDisabled(),false);await page.locator('#invite-save').click();await within(startedB)
   const completed=await page.evaluate(()=>window.finishedInvitationWrites.length);releaseA();await within(handledA)
   await page.waitForFunction(n=>window.finishedInvitationWrites.length>n,completed)
   assert.equal(await page.locator('#invite-save').isDisabled(),true)
@@ -88,8 +91,20 @@ async function main(){
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
   assert.equal(await page.locator('#invite-dialog').isVisible(),false);assert.equal(await page.locator('#invite-principal').inputValue(),'');assert.equal(await page.locator('#invitations').textContent(),'');assert.equal(await page.locator('#inbox').textContent(),'')
   assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length,cookie:document.cookie})),{local:0,session:0,cookie:''})
+  const invitationReady=()=>page.waitForFunction(()=>!document.querySelector('#session').hidden&&!document.querySelector('#invite-open').hidden&&document.querySelector('#workspace').value==='alpha'&&document.querySelector('#title').textContent==='Product Alpha'&&!document.querySelector('#status').textContent.startsWith('Loading'))
+  const reconnectInvitations=async()=>{if(await page.locator('#session').isHidden())await connect('synthetic-admin');await page.locator('#invite-open:not([hidden])').waitFor();if(await page.locator('#workspace').inputValue()!=='alpha')await page.locator('#workspace').selectOption('alpha');await invitationReady()}
+  await reconnectInvitations()
+  await exerciseInvitationReview({page,router,ready:invitationReady,reconnect:reconnectInvitations,folder,inspectState:async()=>({invitations:(await(await context.request.get(origin+'/api/workspaces/alpha/invitations',{headers:admin})).json()).data,members:(await(await context.request.get(origin+'/api/workspaces/alpha/members',{headers:admin})).json()).data}),invalidations:[()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide'))),async()=>{await page.goto('about:blank');await page.goBack();await page.locator('#invite-dialog').waitFor({state:'attached'})}]})
   await router.drain();await context.unrouteAll({behavior:'wait'})
-  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log('Invitation acceptance passed: real SQLite/HTTP, identity-bound join, cancel/replay/revoke/races/cleanup; synthetic only.')
- }finally{if(browser)await browser.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r))}
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[])
+ }catch(error){failure=error}
+ finally{
+  const failures=failure?[failure]:[]
+  try{if(browser)await within(browser.close())}catch(error){failures.push(error)}
+  try{await stopSyntheticFixture(child)}catch(error){failures.push(error)}
+  if(failures.length===1)throw failures[0]
+  if(failures.length)throw new AggregateError(failures,'Invitation scenario or cleanup failed')
+ }
+ console.log('Invitation acceptance passed: real SQLite/HTTP, identity-bound join, explicit recipient Review, original-request recovery, cancel/replay/revoke/races/cleanup; synthetic only.')
 }
 main().catch(error=>{console.error(error);process.exitCode=1})
