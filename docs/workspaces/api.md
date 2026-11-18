@@ -36,7 +36,7 @@ No fallback to the current UI tab, a default space, or the shared space.
 | `GET /api/v1/workspaces/{w}/memberships` | Workspace admin, with minimum necessary identity fields. |
 | `POST /api/v1/workspaces/{w}/invitations` | Workspace admin; verified target identity and bounded workspace role. |
 | `PATCH /api/v1/workspaces/{w}/memberships/{m}` | Workspace admin; ETag and last-admin protection. |
-| `POST /api/v1/workspaces/{w}/admin-transfers` | Atomic replacement of current admin with eligible active member. |
+| `POST /api/workspaces/{w}/admin-transfers` | Explicitly configured atomic replacement of current admin with eligible active member; see the current handover contract below. |
 | `GET/PATCH /api/v1/workspaces/{w}/modules/{key}` | Member reads the exact minimal lifecycle projection, not effective capabilities; only admin changes validated config/state. |
 | `GET/POST /api/v1/workspaces/{w}/connections` | Admin manages approved bindings; never return secrets or grant new provider authority. |
 | `GET /api/v1/workspaces/{w}/modules/{key}/resources` | Capability-checked collection; module may expose a more specific resource type. |
@@ -100,3 +100,20 @@ replace server-issued audit IDs.
   Logical IDs or directory prefixes alone are not a filesystem sandbox.
 - A connector shared by infrastructure is still separately bound and scoped per
   workspace. Upstream OAuth/token scopes remain an additional upper bound.
+
+
+### Current atomic administrator handover routes
+
+The optional administrator adapter and exact runtime I2 expose
+`GET /api/workspaces/{w}/admin-transfers/capabilities`,
+`GET /api/workspaces/{w}/admin-transfers/selections/{replacement}`, and
+`POST /api/workspaces/{w}/admin-transfers`. These concrete routes have no `/v1`
+alias. I1 and unconfigured factories retain 404 and no automatic initialization.
+See the [wire, permanent-key, current-authority and unknown-outcome contract](../../packages/workspace_admin_api/README.md#atomic-administrator-handover).
+Both selected membership revisions and identity/ownership review are mandatory
+for a new write. Historical exact replay does not bypass today's admin check;
+a successful actor's immediate retry can return 403 after self-demotion. Such a
+response cannot resolve an earlier lost response. No receipt-query privilege,
+automatic retry, new member directory or existing-installation conversion is
+introduced. Installed lifecycle observations and member resource permissions are
+unchanged.

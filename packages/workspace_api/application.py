@@ -156,16 +156,20 @@ class WorkspaceApplication:
         # Protocol verification (possibly network I/O) occurs before any DB lock.
         return _workspace_hint(self._verifier.verify(self._provider_key, credential), environ)
 
-    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None, receipt_only=None):
+    def _authenticated_transaction(self, assertion, callback, *, write=False, with_connection=False, before_commit=None, receipt_only=None, storage_admission=None):
         """Internal adapter seam, never an HTTP callback or reusable authority.
 
         Resolve the current subject binding and evaluate the complete adapter
         operation in the same policy snapshot. Callback is trusted Python code.
         """
+        if storage_admission is not None and (not callable(storage_admission)
+                or not with_connection or receipt_only is not None):
+            raise ValueError("invalid trusted storage admission")
         assertion, callback = _workspace_hint_operation(assertion, callback)
         if self._session_boundary is not None:
             return self._session_boundary._authenticated_transaction(assertion, callback,
-                write=write, with_connection=with_connection, before_commit=before_commit, receipt_only=receipt_only)
+                write=write, with_connection=with_connection, before_commit=before_commit, receipt_only=receipt_only,
+                storage_admission=storage_admission)
         if receipt_only is not None:
             from packages.directory_cursors.transaction import run, validate_mode
             validate_mode(receipt_only, write=write, with_connection=with_connection, before_commit=before_commit)
@@ -179,6 +183,10 @@ class WorkspaceApplication:
             except (sqlite3.Error, OSError):
                 raise PolicyError(503, 'scope_directory_unavailable') from None
         def operation(policy, connection=None):
+            # Only an explicitly mounted trusted adapter supplies this read-only
+            # structural check. It must precede current-auth/business denials.
+            if storage_admission is not None and storage_admission(connection) is not None:
+                raise ValueError("invalid trusted storage admission result")
             # Recheck after waiting for the lock, not merely when token arrived.
             actor = self._current_bearer_actor(assertion, policy)
             result = (callback(policy, actor, connection) if with_connection

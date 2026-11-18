@@ -208,14 +208,19 @@ def create_application(config_path):
     lease = None
     try:
         lease = Lease(config.directory)
-        with closing(connection(config.directory)) as db: inspect(config, db)
+        with closing(connection(config.directory)) as db: inspection = inspect(config, db)
         policy = SQLiteWorkspaceService(config.directory / POLICY)
         login = SQLiteLoginStore(config.directory / LOGIN, binding=config.binding)
         sessions = SessionPolicyStore(policy=policy, login=login)
+        transfers = None
+        if inspection.profile.format == 2:
+            from packages.workspace_admin_api.transfer_store import _from_verified_runtime
+            transfers = _from_verified_runtime(policy, inspection)
         keys = tuple(k.replace('-', '_') if k in {'research-assets','gui-smoke'} else k for k in config.modules)
         host = ApplicationHost(config=HostConfig(config.origin, config.modules,
             tuple(ModuleTemplate(k,('read','write')) for k in keys),
-            artifact_administration=config.artifact_administration), sessions=sessions)
+            artifact_administration=config.artifact_administration), sessions=sessions,
+            admin_transfers=transfers)
         return RuntimeApplication(ApplicationUI(host=host), lease)
     except Exception:
         if lease is not None: lease.close()

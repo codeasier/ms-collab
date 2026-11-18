@@ -140,10 +140,11 @@ class SessionWorkspaceApplication(WorkspaceApplication):
         return _workspace_hint(SessionRequest(token, csrf), environ)
 
     def _authenticated_transaction(self, request, callback, *, write=False,
-                                   with_connection=False, before_commit=None, receipt_only=None):
+                                   with_connection=False, before_commit=None, receipt_only=None, storage_admission=None):
         request, callback = _workspace_hint_operation(request, callback)
         return self._sessions.transaction(request, callback, write=write,
-            with_connection=with_connection, before_commit=before_commit, receipt_only=receipt_only)
+            with_connection=with_connection, before_commit=before_commit, receipt_only=receipt_only,
+            storage_admission=storage_admission)
 
     def _reject_or_clear_stale(self, token):
         # Recovery only, never an authorization snapshot. Do not turn storage

@@ -222,11 +222,10 @@ one dedicated permanent administrator-handover history table:
 ```
 
 Both layouts retain disabled real login and the same application/SQLite core and
-login versions. I2 is a **storage foundation only**: no transfer HTTP route,
-current-authority replay, transfer writer, management button or provider is
-added here. The current host remains unchanged for I1 and I2. A later independently
-reviewed adapter/UI slice must wire this capability. No old installation gains
-handover support just by running the new binary. Constructors/check/HTTP do no
+login versions. I2 now mounts the [explicit administrator handover adapter](../workspace_admin_api/README.md#atomic-administrator-handover)
+and its two management clients through the real factory's verified private
+handle. I1 keeps every prior route and does not mount this subtree. No old
+installation gains handover support just by running the new binary. Constructors/check/HTTP do no
 DDL. Unknown formats, booleans/floats in format fields, extra objects, mixed
 fingerprints and partial layouts fail closed, without rewriting a manifest.
 An older one-layout binary rejects I2; it must not be used to “repair” it.
@@ -255,8 +254,10 @@ historical audit events. A full historical vector permits proof validation
 without substituting current identity or roles. Valid stale/revoked/NULL-current
 ownership is retained, not repaired, rebound or treated as a corrupt backup.
 Runtime inspection, backup verification and restore all apply this structural
-validation. It is **not authorization to replay**; a future online handler must
-independently require current authority.
+validation. It is **not authorization to replay**; the online adapter separately
+requires current admin authority and the original identity/ownership pins.
+A legitimately stale retained receipt remains a valid backup record even when
+its current-authority replay must be refused.
 
 The fixed history format uses 4 KiB canonical intent and 32 KiB canonical review
 vector bounds. The complete vector's conservative maximum is 32,725 ASCII bytes,
@@ -269,8 +270,9 @@ There is no token, secret or grant in this storage format.
 
 Consumed history is permanent: no TTL, pruning or reset on identity changes.
 Validation enforces at most 256 receipts per local actor/workspace partition,
-including counts spanning page boundaries. A future writer must reject excess
-fresh requests rather than evict history. Different generations of the same
+including counts spanning page boundaries. The writer resolves an existing key
+before counting a fresh partition and rejects excess fresh requests rather than
+evicting history. Different generations of the same
 local actor ID share that partition. The total is a partition-count-dependent
 bound, not a constant database size. The full scan is O(history) with bounded
 receipt working memory; the existing core loader still materializes its policy
@@ -287,7 +289,11 @@ receipt consumption; checksums and a fresh login do not provide anti-rollback.
 
 New test sources live in the already-discovered `service_runtime/tests` and
 `workspace_admin_api/tests` roots. Their scope is exact profiles, codec, controlled
-synthetic historical records, restart and backup/restore. They do not establish
-HTTP transfer authorization, self-demotion replay, browser behavior or production
-recovery. Existing runtime/TLS and product suites remain unchanged acceptance
-gates; actual execution results belong to the exact revision's CI evidence.
+synthetic historical records, restart and backup/restore. The additional
+`test_transfer_profile.py` exercises actual I1/I2 factories and restored-profile
+mounting; the separate adapter/management suites cover synthetic HTTP authorization
+and the unknown-outcome UI. None establishes real login or production recovery.
+Existing runtime/TLS and product suites remain unchanged acceptance gates; actual
+execution results belong to the exact revision's CI evidence. Online admission
+uses a factory-prepared exact registry with bounded complete-byte projections,
+not per-request offline `inspect`, full-history validation or in-memory DDL.

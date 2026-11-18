@@ -68,7 +68,7 @@ class SessionPolicyStore:
         return row[1]
 
     def transaction(self, request: SessionRequest, callback, *, write=False,
-                    with_connection=False, before_commit=None, receipt_only=None):
+                    with_connection=False, before_commit=None, receipt_only=None, storage_admission=None):
         """Trusted operation only; callback must not perform network/external I/O.
 
         Module adapters may use the same connection for their dedicated tables.
@@ -76,6 +76,9 @@ class SessionPolicyStore:
         share a lock/snapshot. Independent logout/revoke/policy writers serialize
         before or after this transaction, not between verification and mutation.
         """
+        if storage_admission is not None and (not callable(storage_admission)
+                or not with_connection or receipt_only is not None):
+            raise ValueError("invalid trusted storage admission")
         if type(request) is not SessionRequest or (write and request.csrf is None):
             raise AuthenticationError()
         if not callable(callback) or (before_commit is not None and not callable(before_commit)):
@@ -90,6 +93,10 @@ class SessionPolicyStore:
             with closing(self._connect()) as db:
                 db.execute("BEGIN IMMEDIATE")
                 try:
+                    # Outside the business savepoint/clock-preserving handler:
+                    # unsafe clock targets must never be written on rejection.
+                    if storage_admission is not None and storage_admission(db) is not None:
+                        raise ValueError("invalid trusted storage admission result")
                     # An operator may have changed journal mode after connect.
                     # Recheck under both locks before relying on atomic commit.
                     self._storage_modes(db)
