@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from packages.service_runtime import initialize, check, create_application, backup, restore, verify_backup, load_config, RuntimeFailure
 from packages.service_runtime.__main__ import main
-from packages.service_runtime.runtime import connection, Lease, manifest, canonical
+from packages.service_runtime.runtime import connection, Lease, manifest, canonical, now_micros
 from packages.service_runtime.schema import POLICY_DIGEST, LOGIN_DIGEST, schema_digest
 from packages.application_ui.tests.test_application import request
 
@@ -355,6 +355,28 @@ class RuntimeTests(unittest.TestCase):
         return (self.config.read_bytes(),
                 {p.name: p.read_bytes() for p in self.directory.iterdir()})
 
+    def _installed_manifest_login(self):
+        # Observe real committed state without running a store constructor or
+        # opening a writable connection. SELECT * retains every stored column.
+        uri = (self.directory/'login.sqlite').as_uri() + '?mode=ro'
+        with closing(sqlite3.connect(uri, uri=True, isolation_level=None)) as db:
+            db.execute('BEGIN')
+            metadata = db.execute('SELECT * FROM metadata ORDER BY id').fetchall()
+            self.assertEqual(len(metadata), 1)
+            self.assertEqual(len(metadata[0]), 3)
+            identifier, binding, clock = metadata[0]
+            self.assertIs(type(clock), int)
+            state = {
+                'schema': db.execute('SELECT * FROM sqlite_schema ORDER BY type,name,tbl_name').fetchall(),
+                'application_id': db.execute('PRAGMA application_id').fetchone(),
+                'user_version': db.execute('PRAGMA user_version').fetchone(),
+                'journal_mode': db.execute('PRAGMA journal_mode').fetchone(),
+                'metadata': (identifier, binding),
+                'attempts': db.execute('SELECT * FROM attempts ORDER BY state').fetchall(),
+                'sessions': db.execute('SELECT * FROM sessions ORDER BY token').fetchall(),
+            }
+        return state, clock
+
     def _installed_manifest_application(self):
         app = create_application(self.config)
         try:
@@ -375,8 +397,14 @@ class RuntimeTests(unittest.TestCase):
                 before = self._installed_manifest_source()
                 root_entries = {p.name for p in self.root.iterdir()}
                 self.assertFalse(destination.exists())
+                successful_factory = error is None and name == 'factory'
+                if successful_factory:
+                    login_before, clock_before = self._installed_manifest_login()
+                    self.assertEqual(before, self._installed_manifest_source())
                 if error is None:
                     result = operation()
+                    if successful_factory:
+                        finished = now_micros()
                     if name != 'factory':
                         self.assertTrue(result['installation_valid' if name == 'check' else 'backup_valid'])
                 else:
@@ -388,7 +416,22 @@ class RuntimeTests(unittest.TestCase):
                         self.assertEqual(raised.exception.code, code)
                         self.assertEqual(str(raised.exception), code)
                         allocator.assert_not_called()
-                self.assertEqual(before, self._installed_manifest_source())
+                if successful_factory:
+                    # Existing SQLiteLoginStore construction maintains its safety
+                    # clock. No other logical login state may change on success.
+                    login_after, clock_after = self._installed_manifest_login()
+                    self.assertEqual(login_before, login_after)
+                    self.assertLessEqual(clock_before, clock_after)
+                    self.assertLessEqual(clock_after, finished)
+                    after = self._installed_manifest_source()
+                    self.assertEqual(before[0], after[0])
+                    self.assertEqual(set(before[1]), set(after[1]))
+                    self.assertEqual({k: v for k, v in before[1].items() if k != 'login.sqlite'},
+                                     {k: v for k, v in after[1].items() if k != 'login.sqlite'})
+                    lease_baseline = after
+                else:
+                    self.assertEqual(before, self._installed_manifest_source())
+                    lease_baseline = before
                 if error is None and name == 'backup':
                     self.assertEqual({p.name for p in destination.iterdir()}, {'policy.sqlite', 'backup.json'})
                     root_entries.add(destination.name)
@@ -399,7 +442,7 @@ class RuntimeTests(unittest.TestCase):
                 # factory close or a rejected factory/check/backup. No lock mocks.
                 with Lease(self.directory, exclusive=True) as lease:
                     self.assertTrue(lease.valid())
-                self.assertEqual(before, self._installed_manifest_source())
+                self.assertEqual(lease_baseline, self._installed_manifest_source())
 
     def test_installed_manifest_integer_one_preserves_canonical_and_noncanonical_bytes(self):
         self.init()
