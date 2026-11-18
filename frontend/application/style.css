@@ -48,3 +48,23 @@ body[data-page="pipelines"] .pipeline-picker-grid{display:grid;grid-template-col
 body[data-page="pipelines"] #pipeline-picker :is(select,button){width:100%}
 body[data-page="pipelines"] #pipeline-picker-status{color:#21485c}
 @media(max-width:700px){body[data-page="pipelines"] .pipeline-picker-grid{grid-template-columns:minmax(0,1fr)}body[data-page="pipelines"] #pipeline-picker .toolbar{align-items:stretch}body[data-page="pipelines"] #pipeline-picker .toolbar button{flex:1 1 100%}}
+
+/* Overview's exact stored-status observation never styles business authority. */
+body[data-page="overview"] #module-status{min-width:0;color:#173044}
+body[data-page="overview"] #module-status :is(p,dd){overflow-wrap:anywhere}
+body[data-page="overview"] .module-status-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+body[data-page="overview"] #module-status label{display:flex;flex-direction:column;gap:6px;min-width:0;font-weight:650}
+body[data-page="overview"] #module-status :is(input,select,button){font:inherit;background:#fff;color:#21485c;border:1px solid #8aa8b9;border-radius:8px;padding:10px 12px;min-width:0;max-width:100%}
+body[data-page="overview"] #module-status :is(input,select){width:100%}
+body[data-page="overview"] .module-status-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:18px}
+body[data-page="overview"] #module-status button{cursor:pointer}
+body[data-page="overview"] #module-status button[type="submit"]{color:#fff;background:#1e5b70}
+body[data-page="overview"] #module-status :disabled{cursor:not-allowed;opacity:.6}
+body[data-page="overview"] #module-status :focus-visible{outline:3px solid #327993;outline-offset:3px}
+body[data-page="overview"] #module-status-message{color:#21485c;min-height:1.5em}
+body[data-page="overview"] #module-status-result{padding:16px;background:#edf4f7;border:1px solid #b7cdd9;border-radius:8px}
+body[data-page="overview"] #module-status dl{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:10px 18px;margin:0}
+body[data-page="overview"] #module-status dt{font-weight:700}
+body[data-page="overview"] #module-status dd{margin:0;min-width:0}
+body[data-page="overview"] #module-status-disclaimer{padding:12px 16px;border-left:3px solid #7298aa;background:#e9f1f5;color:#21485c}
+@media(max-width:600px){body[data-page="overview"] .module-status-fields{grid-template-columns:minmax(0,1fr)}body[data-page="overview"] #module-status dl{grid-template-columns:minmax(0,1fr);gap:4px}body[data-page="overview"] #module-status dd{margin-bottom:10px}}

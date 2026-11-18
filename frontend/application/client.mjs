@@ -14,6 +14,23 @@ function initialAdminSelectionRequest(path,method,precondition){
  if(precondition!==undefined&&(path!=='/api/control/workspaces'||method!=='POST'||typeof precondition!=='string'||precondition.length!==69||!/^ias1-[a-f0-9]{64}$/.test(precondition)))throw Error('Invalid initial administrator precondition.')
 }
 const validId=value=>typeof value==='string'&&!/[\u0000-\u0020\u007f]/.test(value)&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)
+// Exact stored-status codec. This projection is not a capability or readiness result.
+export const validModuleStatusId=validId
+export function moduleStatusURL(workspace,key){
+ if(!validId(workspace)||!validId(key))throw new Error('Invalid module status query.')
+ return `/api/workspaces/${encodeURIComponent(workspace)}/modules/${encodeURIComponent(key)}`
+}
+export function validateModuleStatus(data,workspace,key){
+ moduleStatusURL(workspace,key)
+ if(!own(data,['workspace_id','key','state','revision'])||data.workspace_id!==workspace||data.key!==key||!['enabled','disabling','disabled'].includes(data.state)||!integer(data.revision))throw new Error('Invalid module status response. Check again explicitly.')
+ return data
+}
+function staleModuleStatus(){const error=new Error('Stale module status request discarded.');error.name='AbortError';return error}
+function assertCurrentModuleStatus(context){
+ if(!context)return
+ try{if(context.isCurrent()===true)return}catch{}
+ throw staleModuleStatus()
+}
 const invitationURL=workspace=>`/api/workspaces/${encodeURIComponent(workspace)}/invitations`
 const validateInvitations=(items,workspace)=>{if(items.some(i=>!i||!validId(i.id)||i.workspace_id!==workspace||!validId(i.principal_id)||typeof i.workspace_name!=='string'||i.workspace_name.length>200||!['viewer','developer'].includes(i.role)||!['pending','accepted','declined','revoked','expired','invalidated'].includes(i.state)||!Number.isSafeInteger(i.created)||!Number.isSafeInteger(i.expires)||i.expires<=i.created||!integer(i.revision)))throw Error('Invalid invitation response.')}
 // Invitation-only codecs mirror the standalone transport. Their asset roots are
@@ -103,11 +120,14 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  let active=false,epoch=0
  const transfers=new Set()
  const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
- async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={}){
+ async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={},moduleStatus){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
   initialAdminSelectionRequest(path,method,initialAdminPrecondition)
   const invitation=invitationSelectionRequest(path,method,body,invitationRecipientPrecondition,invitationIsCurrent)
+  // Only readModuleStatus creates this private third argument. Public request
+  // options cannot install a navigation guard or suppress genuine 401 handling.
+  if(moduleStatus&&(typeof moduleStatus.isCurrent!=='function'||path!==moduleStatus.path||path!==moduleStatusURL(moduleStatus.workspace,moduleStatus.key)||method!=='GET'||!authenticated||login||[body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent].some(value=>value!==undefined)))throw new Error('Invalid module status request.')
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
   if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
@@ -120,8 +140,11 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    if(login){headers['X-MS-Collab-Login']='1';const raw=cookie();if(raw.split(';').some(x=>x.trim().startsWith('__Host-ms-collab-csrf=')))headers['X-CSRF-Token']=csrfCookie(raw)}
    else headers['X-CSRF-Token']=csrfCookie(cookie())
   }
-  const response=await fetcher(path,{method,headers,body,signal,credentials:'same-origin',cache:'no-store',redirect:'error'})
-  const current=()=>{assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch)throw new Error('Stale session response discarded.')}
+  const current=()=>{assertCurrentModuleStatus(moduleStatus);assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch){if(moduleStatus)throw staleModuleStatus();throw new Error('Stale session response discarded.')}}
+  if(moduleStatus)current()
+  let response
+  try{response=await fetcher(path,{method,headers,body,signal,credentials:'same-origin',cache:'no-store',redirect:'error'})}
+  catch(error){if(moduleStatus)current();throw error}
   current() // Before 401 can clear the current session or call onInvalid.
   if(!response.ok){
    const error=new Error(messages[response.status]||'The request could not be verified. Nothing was retried.');error.status=response.status
@@ -129,13 +152,18 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    current()
    if(response.status===401){clear();onInvalid(error.message)}throw error
   }
+  if(moduleStatus&&response.status!==200)throw new Error('Invalid module status response. Check again explicitly.')
   if((invitation.review||invitation.creation)&&response.status!==200)throw new Error('Invalid invitation response.')
   let raw;try{raw=await response.text()}finally{current()}
-  if(raw.length>2097152)throw new Error('Invalid service response.')
-  const payload=JSON.parse(raw);if(!own(payload,['data']))throw new Error('Invalid service response.')
-  current()
-  if(invitation.review||invitation.creation)return validateInvitationResult(payload,invitation)
-  return payload.data
+  try{
+   // Existing bound is checked after reading, not a streaming allocation limit.
+   if(raw.length>2097152)throw new Error('Invalid service response.')
+   const payload=JSON.parse(raw);if(!own(payload,['data']))throw new Error('Invalid service response.')
+   current()
+   if(moduleStatus)return validateModuleStatus(payload.data,moduleStatus.workspace,moduleStatus.key)
+   if(invitation.review||invitation.creation)return validateInvitationResult(payload,invitation)
+   return payload.data
+  }finally{if(moduleStatus)current()}
  }
  return {
   clear,
@@ -143,6 +171,12 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||typeof data.principal_id!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(data.principal_id)||/[\u0000-\u0020\u007f]/.test(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},
   logout(){clear();return send('/auth/logout',{method:'POST',body:{}})},
+  async readModuleStatus(workspace,key,options={}){
+   const path=moduleStatusURL(workspace,key)
+   if(!options||typeof options!=='object'||Array.isArray(options)||![Object.prototype,null].includes(Object.getPrototypeOf(options))||Reflect.ownKeys(options).some(name=>!['signal','isCurrent'].includes(name))||!Object.hasOwn(options,'isCurrent')||typeof options.isCurrent!=='function'||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new Error('Invalid module status options.')
+   const {signal,isCurrent}=options
+   return send(path,{method:'GET',signal,authenticated:true,login:false},Object.freeze({workspace,key,path,isCurrent}))
+  },
   async downloadArtifact(binding,{signal,isCurrent=()=>true}={}){
    if(typeof isCurrent!=='function')throw Error('Invalid download guard.')
    const turn=epoch,guard=()=>{if(!active||turn!==epoch||!isCurrent())throw Error('Stale session download discarded.')}

@@ -19,7 +19,7 @@ def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_APPLICATION_UI') != '1' or len(sys.argv) not in (3,4):
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
     mode=sys.argv[3] if len(sys.argv)==4 else ''
-    if mode not in {'','closed','pipelines','assets','pipeline-tasks','pipeline-discovery'}:raise SystemExit('unknown synthetic mode')
+    if mode not in {'','closed','pipelines','assets','pipeline-tasks','pipeline-discovery','module-status'}:raise SystemExit('unknown synthetic mode')
     enabled=mode!='closed'
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
@@ -31,6 +31,9 @@ def main():
         provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
         host,policy,login,exchange=setup(directory,origin=origin,enabled=enabled,
             authorization_endpoint=provider,clock=lambda:datetime.now(timezone.utc))
+        if mode=='module-status':
+            from .module_status_fixture import dispatch,provision
+            provision(policy)
         app=ApplicationUI(host=host)
         with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
             db.execute("UPDATE workspaces SET name=? WHERE id='alpha'",('<img src=x onerror=alert(1)> Synthetic alpha',))
@@ -69,6 +72,9 @@ def main():
             provision(policy)
         def fixture(env,start):
             path=env.get('PATH_INFO')
+            if mode=='module-status':
+                response=dispatch(policy,mode=mode,origin=origin,environ=env,start_response=start)
+                if response is not None:return response
             if path.startswith('/synthetic/pipeline/') and mode=='pipeline-discovery':
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
@@ -110,7 +116,8 @@ def main():
                         or params.get('redirect_uri')!=[login.binding.callback_uri]
                         or params.get('client_id')!=[login.binding.audience]):
                     start('400 Bad Request',[('Content-Length','0')]);return [b'']
-                code=exchange.authorize(params['code_challenge'][0])
+                code=exchange.authorize(params['code_challenge'][0],
+                    'reader-sub' if mode=='module-status' else 'admin-sub')
                 target=login.binding.callback_uri+'?'+urlencode({'code':code,'state':params['state'][0]})
                 start('303 See Other',[('Location',target),('Content-Length','0'),('Cache-Control','no-store'),('Referrer-Policy','no-referrer')]);return [b'']
             return app(env,start)
