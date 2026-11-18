@@ -16,7 +16,9 @@ def main(argv=None):
         parser = Parser(description='Single-host installation tooling; real login stays disabled.')
         parser.add_argument('--config', required=True)
         sub = parser.add_subparsers(dest='command', required=True, parser_class=Parser)
-        sub.add_parser('validate-config'); sub.add_parser('init')
+        sub.add_parser('validate-config')
+        initializer = sub.add_parser('init')
+        initializer.add_argument('--layout', type=int, choices=(1, 2), default=1)
         checker = sub.add_parser('check'); checker.add_argument('--require-production', action='store_true')
         for name in ('backup','restore','verify-backup'):
             sub.add_parser(name).add_argument('--directory', required=True)
@@ -25,7 +27,7 @@ def main(argv=None):
         args = parser.parse_args(argv)
         if args.command == 'validate-config':
             load_config(args.config); result = {'configuration_valid':True,'login_enabled':False,'production_ready':False}
-        elif args.command == 'init': result = initialize(args.config)
+        elif args.command == 'init': result = initialize(args.config, layout=args.layout)
         elif args.command == 'check':
             result = check(args.config)
             if args.require_production:

@@ -202,3 +202,92 @@ rewritten by `check`, startup or restore. The standalone [offline retry helper](
 as unbound conflict tombstones; it is not an installation/manifest upgrade tool.
 Do not delete or edit manifests to bypass this gate. A full runtime upgrade and
 production recovery plan remains separate work.
+
+
+## Exact installed profiles and handover-history foundation
+
+`init` and `initialize(config_path)` still create **I1** by default. I1 is the
+exact pre-handover layout, not an alias for whatever schema current modules
+export. [The frozen declarations](_layout_v1.py) retain the baseline SQL and its
+source commit; [the finite registry](schema.py) checks the actual SQLite-normalized
+schema. Compatibility tests compare current module declarations and old runtime
+behavior with this frozen contract. Schema drift requires reviewed evolution,
+not refreshing I1's fingerprint to make an old installation pass.
+
+A separate, explicit **I2** creates a new directory with the same I1 tables plus
+one dedicated permanent administrator-handover history table:
+
+```sh
+.venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/service.json init --layout 2
+```
+
+Both layouts retain disabled real login and the same application/SQLite core and
+login versions. I2 is a **storage foundation only**: no transfer HTTP route,
+current-authority replay, transfer writer, management button or provider is
+added here. The current host remains unchanged for I1 and I2. A later independently
+reviewed adapter/UI slice must wire this capability. No old installation gains
+handover support just by running the new binary. Constructors/check/HTTP do no
+DDL. Unknown formats, booleans/floats in format fields, extra objects, mixed
+fingerprints and partial layouts fail closed, without rewriting a manifest.
+An older one-layout binary rejects I2; it must not be used to “repair” it.
+
+Installation and backup formats are separately registered:
+
+| Installation | Backup envelope | Restore result |
+| --- | --- | --- |
+| I1, installation `format:1` | Original B1 `format:1`, unchanged keys | New I1 directory |
+| I2, installation `format:2` | B2 `format:2` plus exact `installation_format:2` | New I2 directory |
+
+B1/B2 validation selects only these exact pairs. Restore preserves the profile,
+not “latest”; no source or backup is upgraded. Source validation precedes output
+allocation. Every restore creates empty login/session state with a nondecreasing
+security floor. Successful ordinary factory creation can still maintain the
+existing login clock; it is not a byte-read-only operation. Before-commit failure
+with confirmed rollback leaves no partial transaction. Commit/I/O or final
+publication failures may have an unknown outcome; a failure response alone is
+not proof that nothing was written. Incomplete new directories are retained for
+inspection and never silently reused. No target is automatically activated.
+
+[Retained receipt validation](../workspace_admin_api/transfer_records.py) checks
+all rows with bounded natural-PK keyset pages, complete byte-prefix projections,
+canonical intent/provenance, duplicate-column consistency and the exact two
+historical audit events. A full historical vector permits proof validation
+without substituting current identity or roles. Valid stale/revoked/NULL-current
+ownership is retained, not repaired, rebound or treated as a corrupt backup.
+Runtime inspection, backup verification and restore all apply this structural
+validation. It is **not authorization to replay**; a future online handler must
+independently require current authority.
+
+The fixed history format uses 4 KiB canonical intent and 32 KiB canonical review
+vector bounds. The complete vector's conservative maximum is 32,725 ASCII bytes,
+including non-BMP policy identities, repeated sidecars, encoded route and JSON
+structure. Policy identity strings keep their existing `identifier` semantics;
+complete UTF-8 BLOB projections preserve embedded NUL/DEL. A raw NUL suffix after
+JSON, or a malformed fixed UUID/proof, is invalid; an escaped NUL inside a valid
+policy identity is not truncated or rejected by an authentication-string helper.
+There is no token, secret or grant in this storage format.
+
+Consumed history is permanent: no TTL, pruning or reset on identity changes.
+Validation enforces at most 256 receipts per local actor/workspace partition,
+including counts spanning page boundaries. A future writer must reject excess
+fresh requests rather than evict history. Different generations of the same
+local actor ID share that partition. The total is a partition-count-dependent
+bound, not a constant database size. The full scan is O(history) with bounded
+receipt working memory; the existing core loader still materializes its policy
+and audit history, and the runtime's 256 MiB database cap remains in force.
+
+There is **no conversion command** in this slice. A possible later conversion
+would consume a verified cold B1 backup into a different, new I2 directory,
+preserve all old pins/keys/audit, add only empty transfer history and fresh login,
+and require an independent review and cutover decision. It must never infer old
+receipts from past promote/demote events. In-place upgrade, down-conversion,
+production cutover, arbitrary old-layout migration and identity enrollment are
+not implemented. A whole-database rollback can erase later revocations or
+receipt consumption; checksums and a fresh login do not provide anti-rollback.
+
+New test sources live in the already-discovered `service_runtime/tests` and
+`workspace_admin_api/tests` roots. Their scope is exact profiles, codec, controlled
+synthetic historical records, restart and backup/restore. They do not establish
+HTTP transfer authorization, self-demotion replay, browser behavior or production
+recovery. Existing runtime/TLS and product suites remain unchanged acceptance
+gates; actual execution results belong to the exact revision's CI evidence.

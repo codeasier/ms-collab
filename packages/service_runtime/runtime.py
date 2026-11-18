@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Explicit installation, read-only checks, maintenance lease and WSGI factory."""
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import fcntl
@@ -14,10 +15,11 @@ from packages.application_host import ApplicationHost, HostConfig
 from packages.application_ui import ApplicationUI
 from packages.login_state import SQLiteLoginStore
 from packages.session_api import SessionPolicyStore
-from packages.workspaces import SQLiteWorkspaceService
+from packages.workspaces import SQLiteWorkspaceService, StorageError
 from packages.workspace_admin_api import ModuleTemplate
 from .config import RuntimeFailure, absolute, private, read_private, decode, load_config
-from .schema import MODULE_SCHEMA, POLICY_DIGEST, LOGIN_DIGEST, schema_digest, _APPLICATION_ID, _SCHEMA_VERSION, _APP, _VERSION
+from .schema import layout_profile, schema_digest, _APPLICATION_ID, _SCHEMA_VERSION, _APP, _VERSION
+from packages.workspace_admin_api.transfer_records import validate_all as validate_transfer_history
 
 MAX_DB = 256 * 1024 * 1024
 POLICY = 'policy.sqlite'
@@ -82,8 +84,23 @@ class Lease:
     def __del__(self): self.close()
 
 
-def manifest(config):
-    return {'format': 1, 'binding': config.binding.fingerprint(), 'policy_schema': POLICY_DIGEST, 'login_schema': LOGIN_DIGEST}
+def _profile(value):
+    try:
+        return layout_profile(value)
+    except ValueError:
+        raise RuntimeFailure('unsupported_layout') from None
+
+
+def manifest(config, *, layout=1):
+    profile = _profile(layout)
+    return {'format': profile.format, 'binding': config.binding.fingerprint(),
+            'policy_schema': profile.policy_digest, 'login_schema': profile.login_digest}
+
+
+@dataclass(frozen=True)
+class Inspection:
+    profile: object
+    clock_floor: int
 
 
 def connection(directory, *, writable=False):
@@ -108,11 +125,13 @@ def connection(directory, *, writable=False):
 
 def inspect(config, db):
     stored = decode(read_private(config.directory / MANIFEST, 4096))
-    expected = manifest(config)
-    if (type(stored) is not dict or set(stored) != set(expected)
-            or type(stored['format']) is not int or stored != expected):
+    if type(stored) is not dict:
         raise RuntimeFailure('unsupported_layout')
-    for name, app, version, expected in (('main',_APPLICATION_ID,_SCHEMA_VERSION,POLICY_DIGEST),('login',_APP,_VERSION,LOGIN_DIGEST)):
+    profile = _profile(stored.get('format'))
+    expected = manifest(config, layout=profile.format)
+    if set(stored) != set(expected) or stored != expected:
+        raise RuntimeFailure('unsupported_layout')
+    for name, app, version, expected in (('main',_APPLICATION_ID,_SCHEMA_VERSION,profile.policy_digest),('login',_APP,_VERSION,profile.login_digest)):
         # Recheck the snapshot size under SQLite locks, not only an earlier stat.
         size = db.execute(f'PRAGMA {name}.page_count').fetchone()[0] * db.execute(f'PRAGMA {name}.page_size').fetchone()[0]
         if not 0 < size <= MAX_DB:
@@ -129,22 +148,28 @@ def inspect(config, db):
         raise RuntimeFailure('invalid_storage')
     # Full current policy model validation; read-only, no epoch/time update.
     policy = object.__new__(SQLiteWorkspaceService)
-    policy._load(db)
-    return row[1]
+    model = policy._load(db)
+    if profile.format == 2:
+        try:
+            validate_transfer_history(db, model)
+        except StorageError:
+            raise RuntimeFailure('invalid_storage') from None
+    return Inspection(profile, row[1])
 
 
-def initialize(config_path):
+def initialize(config_path, *, layout=1):
     config = load_config(config_path)
+    profile = _profile(layout)
     allocate_directory(config.directory)
     try:
         write_new(config.directory / LOCK, b'')
         with Lease(config.directory, exclusive=True):
             policy = SQLiteWorkspaceService.initialize(config.directory / POLICY, principals=(), workspaces=(), memberships=(), modules=())
             def setup(_, db):
-                for sql in MODULE_SCHEMA: db.execute(sql)
+                for sql in profile.module_schema: db.execute(sql)
             policy._transaction(setup, write=True, with_connection=True)
             SQLiteLoginStore.initialize(config.directory / LOGIN, binding=config.binding)
-            write_new(config.directory / MANIFEST, canonical(manifest(config)))
+            write_new(config.directory / MANIFEST, canonical(manifest(config, layout=profile.format)))
             sync_directory(config.directory); sync_directory(config.directory.parent)
             with closing(connection(config.directory)) as db: inspect(config, db)
         return status(config)
