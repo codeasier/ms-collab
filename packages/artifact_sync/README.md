@@ -153,3 +153,7 @@ legacy explicit-provider API and approval contract remain unchanged.
 The configured indexed reader also supports [current-authority scope discovery](DISCOVERY.md):
 local published scopes only, public publication revisions, no candidate reads,
 explicit bounded pagination, and no provider requests or new grants.
+
+[Single-bucket product views (API v1)](PRODUCT-VIEWS.md) are an optional,
+factory-only read of this approved index. They match stored relative keys and
+do not change ordinary named views, grant downloads, or enable a product UI.
