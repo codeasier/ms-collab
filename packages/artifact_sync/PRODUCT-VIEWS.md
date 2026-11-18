@@ -189,14 +189,52 @@ strict timestamp representation cannot be verified on this page. This does not
 diagnose bad stored data. Neither the private product token nor the quarterly
 index offset is supplied to the browser to recompute the server’s match.
 
-Only the exact product POST carries scope and view IDs in its API path.
+For metadata reads, only the exact product POST carries scope and view IDs in its API path.
 Directory, query, time and observation are sent only in its body. No shared
 link, page URL, history state or browser storage carries your selection. The
-page does not query the ordinary catalog, enumerate scopes or views, contact a
-provider or offer byte downloads. Return to the ordinary catalog explicitly
-and open a new scope there if needed. Recheck, sign-out and leaving the
+page does not query the ordinary catalog, enumerate scopes or views, or use a
+provider to list product files. By default it has no file actions. Return to
+the ordinary catalog explicitly and open a new scope there if needed. Recheck, sign-out and leaving the
 document clear private page state; Back does not reopen a query. Other tabs
 keep separate unsaved selections and recheck shared Cookie authority on their
 next request. Late results cannot replace a newer selection or expire its
 session; a current 401 clears the page and requires explicit re-verification.
 Previously viewed metadata cannot be recalled.
+
+### Optional: check a product file for byte access
+
+A trusted Cookie UI can separately enable `ApplicationUI(..., product_file_downloads=True)`
+on a host with product views and the content-bound artifact download service.
+Neither feature enables this handoff by itself. Without the separate bootstrap
+hint `artifact-product-file-downloads`, the product page has no file-action
+buttons or mounted download panel. Ordinary catalog downloads remain unchanged.
+
+1. For a verified file of at most **5 MiB**, choose **Check byte access**.
+   Browsing or selecting a folder never requests bytes. The page first rereads
+   the same scope, view, quarter, folder, filters and page with its original
+   `if_observation`. It checks the publication revision and time and the exact
+   file row, including its key, size and modification time. A mismatch does
+   not fall back to another publication, view or ordinary catalog.
+2. Only after that check does the page submit the frozen scope, key and
+   published revision to the **separate** byte-availability service. It checks
+   the returned scope, revision, key and size before displaying the approved
+   SHA-256. Neither metadata recheck nor availability check reads provider
+   bytes. They are separate requests, **not one atomic authorization**: the
+   product observation is not a byte grant and is never sent to the byte
+   service. `source.download_available: false` in the product API still means
+   that its metadata response does not establish byte availability.
+3. Review the exact key, size and digest, then choose **Confirm download**.
+   Only that action requests bytes; the existing download service checks current
+   authority and the content binding again. The browser hands off the file only
+   after verifying the complete bounded length and SHA-256. The existing safe
+   wheel naming rule applies only to eligible verified `.whl` basenames; other
+   files use a sanitized suggestion. This does not install or inspect a package,
+   create a permanent link, or prove that your browser saved the file.
+
+Another file check, an edit, paging, a folder or quarter change, session recheck,
+sign-out or leaving the document retires the local handoff. Following a fixed
+application link in the same tab (including Return, Overview, Workspaces or
+the brand) retires it immediately; opening a link in another tab does not. Late replies cannot be confirmed in its place. Canceling does not
+recall bytes already delivered. Nothing is automatically retried or stored in
+the page URL or browser storage. Synthetic coverage is not live provider or
+production download evidence.

@@ -62,6 +62,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-download-session/mobile.png
             ${{ runner.temp }}/ms-collab-download-session/handoff.png
             ${{ runner.temp }}/ms-collab-download-session/denied.png
+            ${{ runner.temp }}/ms-collab-download-session/product-file-review-desktop.png
+            ${{ runner.temp }}/ms-collab-download-session/product-file-denied-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

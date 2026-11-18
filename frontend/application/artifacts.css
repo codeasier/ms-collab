@@ -77,3 +77,18 @@ body[data-page="artifact-product-views"] .pv-pages{padding-top:8px;color:#3b5361
   body[data-page="artifact-product-views"] .pv-pages{display:grid;grid-template-columns:auto minmax(0,1fr) auto}
   body[data-page="artifact-product-views"] #pv-page{text-align:center;overflow-wrap:anywhere;font-size:.86rem}
 }
+
+/* Only the explicitly mounted product-file handoff uses these elements. */
+body[data-page="artifact-product-views"] .pv-check-download{margin-top:6px}
+body[data-page="artifact-product-views"] .pv-list small{display:block;margin-top:4px;color:#405968}
+body[data-page="artifact-product-views"] #download-panel{border-left:4px solid #286654}
+body[data-page="artifact-product-views"] #download-panel :is(p,dd){overflow-wrap:anywhere}
+body[data-page="artifact-product-views"] #download-panel dl{display:grid;grid-template-columns:8rem minmax(0,1fr);gap:8px 12px;margin:14px 0}
+body[data-page="artifact-product-views"] #download-panel dl:has(#download-key:empty){display:none}
+body[data-page="artifact-product-views"] #download-panel dt{font-weight:650}
+body[data-page="artifact-product-views"] #download-panel dd{margin:0}
+body[data-page="artifact-product-views"] #download-digest{font-family:ui-monospace,monospace;font-size:.88rem}
+@media(max-width:640px){
+  body[data-page="artifact-product-views"] #download-panel dl{grid-template-columns:minmax(0,1fr);gap:3px}
+  body[data-page="artifact-product-views"] #download-panel dd{margin-bottom:8px}
+}

@@ -256,3 +256,60 @@ class ProductViewUITests(unittest.TestCase):
         self.assertEqual(request(self.app, '/auth/session', cookies=self.cookies)['status'], 200)
         self.now = self.session.expires_at
         self.assertEqual(self.post()['status'], 401)
+
+    def test_product_file_factory_is_independently_boolean_and_default_off_on_dual_capable_host(self):
+        gate = 'artifact-product-file-downloads'
+        host = self.app._host
+        original = self.data(request(self.app, '/app/bootstrap'))
+        self.assertTrue({SUPPORT, 'artifacts', 'artifact-downloads'} <= set(original['ui_modules']))
+        self.assertNotIn(gate, original['ui_modules'])
+        self.assertEqual(self.data(request(ApplicationUI(host=host, product_file_downloads=False), '/app/bootstrap')),
+                         original)
+        for bad in (None, 0, 1, 'true', []):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                ApplicationUI(host=host, product_file_downloads=bad)
+        enabled = ApplicationUI(host=host, product_file_downloads=True)
+        with patch.object(ProductViewRegistry, 'lookup', side_effect=AssertionError('not scope discovery')):
+            public = self.data(request(enabled, '/app/bootstrap'))
+            self.assertEqual(self.data(request(enabled, '/app/bootstrap', cookies=self.cookies)), public)
+        self.assertEqual(public['ui_modules'].count(gate), 1)
+        self.assertEqual({**public, 'ui_modules':[m for m in public['ui_modules'] if m != gate]}, original)
+        self.assertEqual(self.data(request(self.app, '/app/bootstrap')), original)
+
+    def test_product_file_factory_requires_both_a_product_registry_and_an_actual_download_host(self):
+        from packages.application_ui.tests.artifact_product_fixtures import _definition
+        from packages.artifact_download import ArtifactDownloadConfiguration
+        from packages.artifact_download.tests.session_fixtures import SyntheticObjects
+
+        sessions = self.app._host._boundary._sessions
+        objects = SyntheticObjects()
+        definition = _definition(self.policy, Scope('alpha', 'source', 'bucket'), 'kit', 'kit_')
+        for has_views, has_downloads in ((False, False), (True, False), (False, True)):
+            with self.subTest(views=has_views, downloads=has_downloads):
+                host = ApplicationHost(config=HostConfig(fixtures.ORIGIN, ('artifacts',), artifact_downloads=has_downloads),
+                    sessions=sessions, artifact_product_views=(definition,) if has_views else (),
+                    artifact_downloads=ArtifactDownloadConfiguration(objects.loader, objects) if has_downloads else None)
+                modules = self.data(request(ApplicationUI(host=host), '/app/bootstrap'))['ui_modules']
+                self.assertIs(SUPPORT in modules, has_views)
+                self.assertIs('artifact-downloads' in modules, has_downloads)
+                self.assertNotIn('artifact-product-file-downloads', modules)
+                with self.assertRaises(ValueError):
+                    ApplicationUI(host=host, product_file_downloads=True)
+        self.assertEqual((objects.calls, objects.loads), ([], []))
+
+    def test_product_file_factory_neither_grants_bytes_to_a_visible_row_nor_imports_a_named_view(self):
+        self.app = ApplicationUI(host=self.app._host, product_file_downloads=True)
+        view = self.data(self.post(fields={'mode':'files', 'path':'pkg/', 'recursive':True, 'page_size':50}))
+        keys = [item['key'] for item in view['items']]
+        self.assertIn('pkg/kit_01', keys)
+        self.assertNotIn('pkg/ordinary-only.bin', keys)
+        self.assertIs(view['source']['download_available'], False)
+        named = self.data(request(self.app, BASE+'/views/kit?quarter=2026Q2', cookies=self.cookies))
+        self.assertEqual([item['key'] for item in named['items']], ['pkg/ordinary-only.bin'])
+
+        def availability(key):
+            return request(self.app, '/api/workspaces/alpha/artifact-download/source/bucket/availability',
+                method='POST', cookies=self.cookies, origin=fixtures.ORIGIN, csrf=self.session.csrf.value,
+                revision='"%d"' % view['catalog_revision'], body={'key':key})
+        self.assertEqual(availability('pkg/kit_01')['status'], 404)
+        self.assertEqual(self.data(availability('pkg/ordinary-only.bin'))['key'], 'pkg/ordinary-only.bin')
