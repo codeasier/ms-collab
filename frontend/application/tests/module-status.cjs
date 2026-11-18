@@ -50,7 +50,9 @@ async function exerciseModuleStatus({browser,fixture,folder,readable}){
   await context.addInitScript(()=>{
    // Ignore AbortSignal deliberately. Correctness must depend on request ownership.
    const original=window.fetch.bind(window);window.fetch=(input,options={})=>{const {signal,...rest}=options;return original(input,rest)}
-   window.__moduleStatusDocument=crypto.randomUUID();window.__moduleStatusPageShows=[]
+   // Non-secret document marker: init scripts also run where secure-context-only
+   // randomUUID is unavailable. getRandomValues does not require a secure context.
+   window.__moduleStatusDocument=Array.from(crypto.getRandomValues(new Uint32Array(4)),value=>value.toString(16).padStart(8,'0')).join('');window.__moduleStatusPageShows=[]
    addEventListener('pageshow',event=>window.__moduleStatusPageShows.push({persisted:event.persisted}))
   })
   await context.route('**/api/**',route=>router.handle(route))
