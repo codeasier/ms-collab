@@ -25,13 +25,28 @@ const files = (diff={}) => ({path:layer,mode:'files',recursive:false,...diff})
 const privateIds = ['workspace','connection','bucket','view','quarter','keyword','start','end']
 const frames = page => bounded(page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))),'two real animation frames')
 function defer(){let resolve,reject;const promise=new Promise((ok,no)=>{resolve=ok;reject=no});return {resolve,reject,promise}}
-function bounded(p,label,ms=15000){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(Error('Timed out: '+label)),ms)})]).finally(()=>clearTimeout(t))}
+// Only our own deadline error may expose a substep, never arbitrary messages
+// from Chromium, CDP, a fixture, a response or an assertion.
+const waitNames=new Set([
+  'loopback TLS ready','synthetic fixture journey','response interception stopped','context closed','browser closed',
+  'two real animation frames','fixture Network.enable','fixture Network.setBlockedURLs','fixture Fetch.enable',
+  'fixture Fetch.continueResponse','fixture Fetch.getResponseBody','explicit synthetic reply release',
+  'fixture Fetch.fulfillRequest','fixture Fetch.failRequest','finish active CDP responses','fixture Fetch.disable',
+  'fixture session detached','browser wire response and action','browser decoded real product response',
+  'arm page delivery witness','page delivery witness digest','held response delivered','old Chromium request received response',
+  'old Chromium response header checks','old Chromium module bytes','restore browser date','injected response delivered',
+  'Chromium decoded injected body','time fault delivered','Chromium decoded time fault','ABA began with real response',
+  'real response before navigation','real quarters read before navigation','real product module export',
+  'close isolated history context before next cookie journey'
+])
+class HarnessTimeout extends Error{constructor(label){super('Harness deadline');this.wait=waitNames.has(label)?label:'scenario deadline'}}
+function bounded(p,label,ms=15000){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(new HarnessTimeout(label)),ms)})]).finally(()=>clearTimeout(t))}
 let currentCheckpoint=''
 class FixtureFailure extends Error{}
 function failure(label,e){
   if(e instanceof FixtureFailure)return e
   const line=/artifact-product-views[.]cjs:(\d+):\d+/.exec(String(e?.stack))?.[1]
-  const kind=e?.name==='TimeoutError'||String(e?.message).startsWith('Timed out: ')?'timeout':e?.code==='ERR_ASSERTION'?'assertion':'error'
+  const kind=e instanceof HarnessTimeout?'timeout ['+e.wait+']':e?.name==='TimeoutError'?'browser timeout':e?.code==='ERR_ASSERTION'?'assertion':'error'
   return new FixtureFailure('Product-view '+kind+' in '+label+' / '+currentCheckpoint+(line?' at harness line '+line:''))
 }
 function checkpoint(label){currentCheckpoint=label;console.log('PRODUCT_VIEW_STEP '+label)}
@@ -160,24 +175,62 @@ async function surface(env,{clean=false}={}){
     window.__pvShow=[]
     addEventListener('pageshow',e=>window.__pvShow.push({persisted:e.persisted,native:e.isTrusted}))
   })
-  if(!clean)await ctx.addInitScript(()=>{
+  if(!clean)await ctx.addInitScript(({fixtureOrigin,kitPath,quartersPath})=>{
     // Deterministically lose abort, not TLS/CSRF/authorization. Only collect
     // boolean properties of fetch options. Optional timing barrier on response
     // body uses exactly the bytes actually read from the server.
     const original=window.fetch
     window.__pvNet={product:[],bodyStarted:0,bodyDone:0,transportDone:0,invalidations:0}
+    // One witness may claim one exact fetch invocation, before any await. An
+    // ABA request at the same URL cannot inherit the old invocation's reader.
+    // No forwarding, storage, credential reads or extra network requests.
+    const tickets=new Map();let next=null,serial=0
+    window.__pvNet.arm=kind=>{
+      if(!['kit','quarters'].includes(kind)||location.href!==fixtureOrigin+(kind==='kit'?'/artifacts/product-views/':'/artifacts/')||next||tickets.size)throw Error('Invalid witness')
+      const id=++serial;let finish
+      tickets.set(id,new Promise(resolve=>{finish=resolve}))
+      next={id,kind,finish};return id
+    }
+    window.__pvNet.take=async id=>{
+      if(!tickets.has(id))throw Error('Missing witness')
+      try{return await tickets.get(id)}finally{tickets.delete(id)}
+    }
     // Once leaving, do not strand held promises in a cached document. The
     // synchronous navigation/pagehide guards still run before any continuation.
     addEventListener('pagehide',()=>{window.__pvNet.releaseBody?.();window.__releaseOldNamed?.()})
     window.fetch=async function(input,options={}){
-      const requestPath=new URL(typeof input==='string'?input:input.url,location.origin).pathname
+      const url=new URL(typeof input==='string'?input:input.url,location.origin),requestPath=url.pathname
+      const method=options.method||input?.method||'GET'
+      let witness=null
+      if(next&&location.origin===fixtureOrigin&&url.href===fixtureOrigin+(next.kind==='kit'?kitPath:quartersPath)&&method===(next.kind==='kit'?'POST':'GET')){
+        witness=next;next=null
+      }
       const {signal,...rest}=options
       const pv=requestPath.startsWith('/api/')&&requestPath.includes('/product-views/')
       if(pv){
         const h=new Headers(options.headers)
         window.__pvNet.product.push(options.method==='POST'&&options.credentials==='same-origin'&&options.cache==='no-store'&&options.redirect==='error'&&h.has('x-csrf-token')&&!h.has('authorization'))
       }
-      const response=await original.call(window,input,rest)
+      let response
+      try{response=await original.call(window,input,rest)}catch(e){witness?.finish(null);throw e}
+      if(witness){
+        // The real application deliberately ignores error/obsolete bodies. A
+        // tee drains ONLY the selected fixture response. Start the read now but
+        // do NOT await it before returning the original Response to the app.
+        // Never retain body bytes, text, headers or a raw response in the proof.
+        const measure=async()=>{
+          if(response.url!==url.href||response.redirected||response.type!=='basic'||
+             !/^application\/json(?:;|$)/.test(response.headers.get('Content-Type')||''))return null
+          const advertised=Number(response.headers.get('Content-Length'))
+          if(!Number.isSafeInteger(advertised)||advertised<1||advertised>2097152)return null
+          const buffer=await response.clone().arrayBuffer()
+          if(buffer.byteLength!==advertised)return null
+          const hash=await crypto.subtle.digest('SHA-256',buffer)
+          return {id:witness.id,status:response.status,bytes:buffer.byteLength,
+            sha:Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('')}
+        }
+        measure().then(witness.finish,()=>witness.finish(null))
+      }
       if(pv&&window.__pvNet.holdBody){
         window.__pvNet.holdBody=false
         const read=response.text.bind(response)
@@ -198,7 +251,7 @@ async function surface(env,{clean=false}={}){
         for(const e of entries)for(const n of e.addedNodes)if(n.textContent==='Not verified')window.__pvNet.invalidations++
       }).observe(node,{childList:true})
     })
-  })
+  },{fixtureOrigin:info.origin,kitPath:kit,quartersPath:s1+'/quarters'})
   const page=await ctx.newPage()
   page.setDefaultTimeout(9000)
   if(!clean)owner.gate=await syntheticGate(ctx,page,info,errors)
@@ -329,7 +382,7 @@ async function rendered(page,keys){
 async function wire(s,action,target,expected,statusCode=200){
   const {page,journal,info}=s,start=journal.length
   const wait=page.waitForResponse(r=>r.url()===info.origin+target&&r.request().method()==='POST')
-  const [response]=await Promise.all([wait,action()])
+  const [response]=await bounded(Promise.all([wait,action()]),'browser wire response and action')
   assert.equal(response.status(),statusCode)
   const observed=journal.slice(start).filter(r=>r.p.startsWith('/api/'))
   // Keep proofs and any unexpected caller fields out of failure logs.
@@ -402,15 +455,27 @@ async function ctrl(s,name){
     return r.status===200&&(await r.json()).ok===true
   },name),true,'Fixture control failed: '+name)
 }
-function held(s,target,injected){
+const digest=b=>createHash('sha256').update(b).digest('hex')
+async function deliveryWitness(s,target){
+  assert.ok(target===kit||target===s1+'/quarters')
+  const id=await bounded(s.page.evaluate(kind=>__pvNet.arm(kind),target===kit?'kit':'quarters'),'arm page delivery witness')
+  return async(status,bytes,sha)=>{
+    const result=await bounded(s.page.evaluate(id=>__pvNet.take(id),id),'page delivery witness digest')
+    assert.ok(result&&result.id===id&&result.status===status&&result.bytes===bytes&&result.sha===sha,
+      'The exact browser fetch must receive all intended bytes and status')
+  }
+}
+async function held(s,target,injected){
   const reached=defer(),gate=defer(),script='/app/artifact-product-view.mjs'
   // Bind the old Playwright Request *before* the click; another same-URL
   // request in the ABA exercise may have completed before this reply.
+  const witness=target===script?null:await deliveryWitness(s,target)
   const req=s.page.waitForRequest(r=>r.url()===s.info.origin+target&&r.method()===(target===kit?'POST':'GET'))
   req.catch(()=>{});s.releaseAll.push(gate.resolve)
-  let originalHash
+  let expectedHash,expectedSize
   const done=s.gate.once(target,async bytes=>{
-    originalHash=createHash('sha256').update(bytes).digest('hex')
+    const expected=injected?Buffer.from(JSON.stringify({error:'synthetic_protocol_fault'})):bytes
+    expectedHash=digest(expected);expectedSize=expected.length
     reached.resolve();await gate.promise
     return injected?{status:injected,dto:{error:'synthetic_protocol_fault'}}:null
   })
@@ -420,14 +485,15 @@ function held(s,target,injected){
     await bounded(done,'held response delivered')
     const response=await bounded((await req).response(),'old Chromium request received response')
     assert.equal(response?.status(),injected||200)
-    assert.ok(await response.headerValue('www-authenticate')===null&&await response.headerValue('set-cookie')===null,'no challenge or cookie')
-    const final=await bounded(response.body(),'old Chromium request received the full body')
-    if(injected)assert.ok(isDeepStrictEqual(JSON.parse(final),{error:'synthetic_protocol_fault'}),'expected obsolete error')
-    else assert.ok(createHash('sha256').update(final).digest('hex')===originalHash,'unmodified response bytes')
-    if(target===script){
+    if(witness)await witness(injected||200,expectedSize,expectedHash)
+    else{
+      const final=await bounded(response.body(),'old Chromium module bytes')
+      assert.ok(final.length===expectedSize&&digest(final)===expectedHash,'unmodified module response bytes')
       assert.ok(/^text\/javascript/.test(response.headers()['content-type']))
       assert.ok(final.equals(fs.readFileSync(path.join(__dirname,'../artifact-product-view.mjs'))),'original module only')
     }
+    const clean=await bounded(Promise.all(['www-authenticate','set-cookie'].map(async name=>(await response.headerValue(name))===null)),'old Chromium response header checks')
+    assert.ok(clean.every(Boolean),'no challenge or cookie')
     await frames(s.page)
   }}
 }
@@ -566,6 +632,7 @@ async function faults(s){
     const injected=typeof fault==='number',n=countApi(s.journal)
     let altered
     checkpoint('protocol fault: '+fault)
+    const witness=injected?await deliveryWitness(s,kit):null
     const delivered=s.gate.once(kit,original=>{
       if(injected)altered={error:'synthetic_protocol_fault'}
       else{altered=JSON.parse(original);mutations[fault](altered.data)}
@@ -573,7 +640,11 @@ async function faults(s){
     })
     const received=await wire(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:result.observation}),injected?fault:200)
     await bounded(delivered,'injected response delivered')
-    assert.ok(altered&&isDeepStrictEqual(await bounded(received.json(),'Chromium decoded injected body'),altered),'Intact injected DTO: '+fault)
+    if(witness){
+      const expected=Buffer.from(JSON.stringify({error:'synthetic_protocol_fault'}))
+      assert.ok(isDeepStrictEqual(altered,{error:'synthetic_protocol_fault'}))
+      await witness(fault,expected.length,digest(expected))
+    }else assert.ok(altered&&isDeepStrictEqual(await bounded(received.json(),'Chromium decoded injected body'),altered),'Intact injected DTO: '+fault)
     await waitFailed(s,injected&&fault!==503?'unavailable|inaccessible':'could not verify')
     assert.equal(await p.locator('#app-principal').textContent(),'admin')
     assert.doesNotMatch(await p.locator('#pv-status').textContent(),/synthetic_protocol_fault|synthetic-never-follow/i)
@@ -599,7 +670,7 @@ async function stale(s){
   for(const fault of [null,401,412]){
     await fields(s)
     checkpoint('ABA: hold '+(fault||200))
-    const hold=held(s,kit,fault)
+    const hold=await held(s,kit,fault)
     await enter(p,'pv-open');await bounded(hold.started,'ABA began with real response')
     await p.locator('#pv-view').fill('sensor');await read(s,keypress(s,'open'),sensor,body(),root,1)
     await p.locator('#pv-view').fill('kit')
@@ -626,7 +697,7 @@ async function cross(s){
   for(const id of ['pv-return','app-artifacts-link']){
     await fields(s)
     checkpoint('departure guard: '+id)
-    const h=held(s,kit,401);await enter(p,'pv-open');await bounded(h.started,'real response before navigation')
+    const h=await held(s,kit,401);await enter(p,'pv-open');await bounded(h.started,'real response before navigation')
     await preventThisNavigation(s,id);await empty(s,product)
     await recheck(s,'pv-controls');await fields(s,{bucket:'second-bucket'})
     await read(s,keypress(s,'open'),other,body(),['other/'],1)
@@ -643,7 +714,7 @@ async function cross(s){
   await ordinary(s,{named:true})
   // Hold a REAL old quarters read and inject a late 401 over it. The old shell
   // remains observable in this separate, prevented-navigation test.
-  const quarters=s1+'/quarters',old=held(s,quarters,401)
+  const quarters=s1+'/quarters',old=await held(s,quarters,401)
   await p.locator('#reload').click();await bounded(old.started,'real quarters read before navigation')
   await preventThisNavigation(s,'app-product-view-entry');await empty(s,catalog)
   await recheck(s,'session');await ordinary(s)
@@ -669,7 +740,7 @@ async function bootRace(s){
   const {page:p}=s
   // Delay the enabled page's actual module response. A stale dynamic mount
   // must not inspect the current cookie or reconstruct an already-cleared page.
-  const h=held(s,'/app/artifact-product-view.mjs')
+  const h=await held(s,'/app/artifact-product-view.mjs')
   const idx=s.journal.length
   await p.goto(s.info.origin+product,{waitUntil:'commit'});await bounded(h.started,'real response before navigation')
   await p.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
