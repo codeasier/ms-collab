@@ -59,3 +59,40 @@ No selection nonce table, credential, expiry, reservation or consumption is part
 of this protocol. A normal restart need not invalidate an unchanged selection.
 These cases do not open invitations/other identity selection, identity transitions,
 legacy grant recovery, real login, whole-backup anti-rollback or production use.
+
+## W13 namespace regressions
+
+`test_retry_namespaces.py` uses the non-TestCase support module
+`retry_namespace_fixture.py` and exercises the real in-process Bearer WSGI and
+Cookie session/SQLite paths. Cookie responses use the existing session responder,
+including its Cookie/Origin headers; normal POSTs supply the configured Origin
+and current CSRF token. A fixture-level negative check retains both prerequisites.
+This is not new TLS/browser or real identity-provider acceptance.
+
+- Creation fixes action, scope, UUID and body while changing only the executing
+  actor. Both current operators explicitly obtain their own initial-admin
+  selection before writes and retain it for replay; POST never prepares one.
+- Installation fixes actor, action, UUID and body across three spaces. Action
+  isolation fixes actor, scope and UUID by installing in a real synthetic
+  workspace named `platform`, matching creation's fixed scope. The route-specific
+  bodies necessarily differ; both operations remain independently legal.
+- One UUID also crosses administration and invitation tables without result or
+  row adoption. The invitation namespace is separate, not a new generic action
+  added to the administration table.
+- A changed-body conflict and a committed local membership revoke leave other
+  still-authorized namespaces replayable. Checks compare exact rows, results and
+  policy/audit snapshots after the legitimate revoke, not before it. They do not
+  promise availability across a corrupt schema/database or unchanged login-clock
+  metadata.
+- Six threads issue two copies of three different namespaces, using a barrier
+  before any request/DB lock, prebuilt sessions/selections, bounded joins and
+  collected failures. Each namespace must have one real object, retry row and
+  success audit. This is not new cross-process or measured lock-wait acceptance.
+
+The existing ABA, realm, restart, failure rollback, CSRF, selection and
+cross-process tests remain unchanged. These focused cases add evidence only for
+the existing creation/installation/invitation contracts, not generic business or
+external-provider retry semantics or whole-W13 completion. The existing
+`workspace-ui.yml` discovery includes this root without a workflow change.
+Execution acceptance belongs to CI on the exact reviewed source; no local test
+execution is claimed here.
