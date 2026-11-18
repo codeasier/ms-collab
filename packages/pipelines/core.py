@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import re
-from statistics import fmean
+from statistics import mean
 
 MAX_SNAPSHOTS = 5000
 MAX_JOBS = 10000
@@ -193,7 +193,7 @@ def summarize_durations(scope, snapshots, *, limit=30):
         result.append({
             'key': json.dumps([stage_name, job_name], ensure_ascii=False),
             'stage_name': stage_name, 'job_name': job_name,
-            'count': len(samples), 'average_seconds': fmean(durations),
+            'count': len(samples), 'average_seconds': mean(durations),
             'min_seconds': min(durations), 'max_seconds': max(durations),
             'latest_seconds': durations[-1], 'samples': samples,
         })

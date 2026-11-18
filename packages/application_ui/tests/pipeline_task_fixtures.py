@@ -6,11 +6,19 @@ from packages.pipelines import PipelineScope
 
 
 class TaskProvider:
+    def __init__(self, fractional_runs=False):
+        self.fractional_ids = ('timing-01', 'timing-02', 'timing-03') if fractional_runs else ()
+
     def get(self,path,credential,connection):
         scope=connection.scope
         if '?limit=' in path:
-            return {'items':[{'id':key,'pipeline_id':scope.pipeline_id} for key in ('run-tasks','run-missing','run-empty')]}
+            ids = ('run-tasks', 'run-missing', 'run-empty') + self.fractional_ids
+            return {'items':[{'id':key,'pipeline_id':scope.pipeline_id} for key in ids]}
         run_id=path.rsplit('/',1)[1]
+        if run_id in self.fractional_ids:
+            return {'pipeline_id':scope.pipeline_id, 'id':run_id, 'status':'success',
+                    'stages':[{'name':'Timing', 'jobs':[{'id':'job-'+run_id, 'name':'Probe', 'status':'success',
+                               'started_at':'2026-01-01T10:00:00Z', 'finished_at':'2026-01-01T10:00:00.100Z'}]}]}
         stages=None if run_id=='run-missing' else []
         if run_id=='run-tasks':
             jobs=[{'id':'duplicate' if i in (0,1,12) else f'job-{i}', 'name':f'Task {i:02d} <img src=x onerror=alert(1)>',
@@ -21,8 +29,8 @@ class TaskProvider:
                 'variables':{'fictional':'DISCARDED_SYNTHETIC_FIELD'},'logs':'DISCARDED_SYNTHETIC_FIELD'}
 
 
-def snapshot():
+def snapshot(*, fractional_runs=False):
     scope=PipelineScope('alpha','example-ci','build')
-    connection=Connection(scope,'https://adapter.example.invalid')
+    connection=Connection(scope,'https://adapter.example.invalid',run_limit=6 if fractional_runs else 5)
     return collect(connection,BoundCredential(scope,connection.origin,'synthetic-upstream-token-for-tests-only'),
-        before_read=lambda:None,transport=TaskProvider(),clock=lambda:datetime(2026,1,2,tzinfo=timezone.utc))
+        before_read=lambda:None,transport=TaskProvider(fractional_runs),clock=lambda:datetime(2026,1,2,tzinfo=timezone.utc))

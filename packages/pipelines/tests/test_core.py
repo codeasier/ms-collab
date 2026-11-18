@@ -246,5 +246,48 @@ class DurationTests(unittest.TestCase):
         self.assertEqual(SCOPE.workspace_id, 'product-alpha')
 
 
+class FractionalMeanTests(unittest.TestCase):
+    @staticmethod
+    def measured_run(number, microseconds):
+        start = f'2026-01-{number:02d}T00:00:00'
+        measured = job(started_at=start + 'Z', finished_at=f'{start}.{microseconds:06d}Z')
+        return run(number, stages=[{'name': 'build', 'jobs': [measured]}])
+
+    def assert_three_equal_measurements(self, microseconds, expected_seconds):
+        rows = [self.measured_run(i, microseconds) for i in (3, 1, 2)]
+        group, = summarize_durations(SCOPE, rows)['groups']
+        self.assertEqual((group['count'], group['min_seconds'], group['average_seconds'], group['max_seconds']),
+                         (3, expected_seconds, expected_seconds, expected_seconds))
+        self.assertEqual([(s['run_id'], s['duration_seconds']) for s in group['samples']],
+                         [('run-1', expected_seconds), ('run-2', expected_seconds), ('run-3', expected_seconds)])
+        self.assertEqual(group['latest_seconds'], expected_seconds)
+
+    def test_three_equal_100ms_samples_mean_does_not_exceed_max(self):
+        self.assert_three_equal_measurements(100_000, 0.1)
+
+    def test_three_equal_27us_samples_mean_does_not_fall_below_min(self):
+        self.assert_three_equal_measurements(27, 0.000027)
+
+    def test_selected_mixed_microseconds_keep_fractional_mean_and_scoped_samples(self):
+        rows = [self.measured_run(4, 2), run(1), run(5, status='running'),
+                self.measured_run(2, 4), self.measured_run(3, 1)]
+        result = summarize_durations(SCOPE, rows, limit=3)
+        group, = result['groups']
+        self.assertEqual(result['scope'], SCOPE.as_dict())
+        self.assertEqual((group['count'], group['min_seconds'], group['average_seconds'],
+                          group['max_seconds'], group['latest_seconds']),
+                         (3, 0.000001, 7 / 3_000_000, 0.000004, 0.000002))
+        self.assertEqual([(s['run_id'], s['duration_seconds']) for s in group['samples']],
+                         [('run-2', 0.000004), ('run-3', 0.000001), ('run-4', 0.000002)])
+        coverage = result['coverage']
+        self.assertEqual((coverage['supplied_runs'], coverage['observed_terminal_runs'],
+                          coverage['selected_runs'], coverage['runs_with_samples']), (5, 4, 3, 3))
+        self.assertTrue(coverage['selection_truncated'])
+        self.assertFalse(coverage['full_history_complete'])
+        # The older row lies outside the window, but its scope still has to match.
+        with self.assertRaisesRegex(InvalidSnapshot, '^scope_mismatch$'):
+            summarize_durations(SCOPE, [rows[0], run(1, workspace_id='other'), *rows[2:]], limit=3)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -5,6 +5,47 @@ const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('pla
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
 const frame=page=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))
+// Listen to the page's actual reads after unrouteAll; never supply a DTO.
+async function checkFractionalRuns(page,origin,base){
+ const ids=['timing-01','timing-02','timing-03'], selected=ids[1]
+ const scope={workspace_id:'alpha',connection_id:'example-ci',pipeline_id:'build'}
+ const source={kind:'stored_snapshot',revision:2,full_history_complete:false,live_provider_verified:false}
+ const read=async suffix=>{
+  const r=await page.waitForResponse(r=>r.url()===origin+base+suffix&&r.request().method()==='GET',{timeout:15000})
+  assert.equal(r.status(),200);const {data}=await r.json();assert.deepEqual(data.scope,scope);assert.deepEqual(data.source,source);return data
+ }
+ const [runs,report]=await Promise.all([read('/runs?limit=100'),read('/durations?limit=100'),page.locator('#reload').click()])
+ const matching=runs.items.filter(r=>ids.includes(r.id))
+ assert.deepEqual(matching.map(r=>r.id).sort(),ids);assert.ok(matching.every(r=>r.status==='success'&&r.details_available&&r.stage_count===1&&r.job_count===1))
+ const groups=report.groups.filter(g=>g.stage_name==='Timing'&&g.job_name==='Probe');assert.equal(groups.length,1)
+ const [g]=groups;assert.deepEqual([g.count,g.min_seconds,g.average_seconds,g.max_seconds,g.latest_seconds],[3,0.1,0.1,0.1,0.1])
+ assert.deepEqual(g.samples.map(s=>s.run_id).sort(),ids)
+ for(const s of g.samples){
+  assert.equal(s.run_status,'success');assert.equal(s.job_id,'job-'+s.run_id);assert.equal(s.duration_seconds,0.1)
+  assert.equal(s.observed_at,matching.find(r=>r.id===s.run_id).observed_at)
+  assert.equal(Date.parse(s.finished_at)-Date.parse(s.started_at),100)
+ }
+ await page.locator('#panel:not([hidden])').waitFor();assert.equal(await page.locator('#scope-title').textContent(),'alpha / example-ci / build')
+ assert.match(await page.locator('#revision').textContent(),/Stored snapshot version 2/)
+ const trend=page.locator('#durations article').filter({has:page.getByRole('heading',{name:'Timing / Probe',exact:true})})
+ assert.deepEqual(await trend.locator('dd').allTextContents(),['3','0.1','0.1','0.1','0.1'])
+ await trend.locator('summary').click();assert.equal(await trend.locator('.samples:visible li').count(),3)
+ const samples=await trend.locator('.samples li').allTextContents();for(const id of ids)assert.ok(samples.some(line=>line.startsWith(id+' (success) · 0.1 seconds ·')))
+ const runPath='/runs/'+selected
+ const [detail,taskPage]=await Promise.all([read(runPath),read(runPath+'/tasks?revision=2&offset=0&limit=10'),page.getByRole('button',{name:'View '+selected,exact:true}).click()])
+ const run=detail.run, sample=g.samples.find(s=>s.run_id===selected)
+ assert.equal(run.id,selected);assert.equal(run.status,'success');assert.equal(run.observed_at,sample.observed_at)
+ const job={id:sample.job_id,name:'Probe',status:'success',started_at:sample.started_at,finished_at:sample.finished_at}
+ assert.deepEqual(run.stages,[{name:'Timing',jobs:[job]}])
+ assert.deepEqual(taskPage.run,{id:selected,status:'success',observed_at:run.observed_at,details_available:true});assert.equal(taskPage.total,1)
+ assert.deepEqual(taskPage.items,[{...job,stage_index:0,job_index:0,id_occurrences:1}])
+ await page.locator('#detail[open] #tasks article').waitFor()
+ assert.equal(await page.locator('#detail-title').textContent(),selected);assert.match(await page.locator('#detail-status').textContent(),/success · snapshot version 2/)
+ assert.match(await page.locator('#task-stages').textContent(),/Timing · 1 recorded tasks · success: 1/)
+ assert.equal(await page.locator('#tasks article h4').textContent(),job.name)
+ assert.deepEqual(await page.locator('#tasks article p').allTextContents(),['Stage 1, task 1 · '+job.id+' · success','Started: '+job.started_at,'Finished: '+job.finished_at])
+ await page.keyboard.press('Escape')
+}
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-pipeline-tasks-'));let server,browser
  try{
@@ -41,6 +82,12 @@ async function main(){
   let hideSeen,hideRelease,hideFinished;const hideStarted=new Promise(r=>hideSeen=r),hideBarrier=new Promise(r=>hideRelease=r),hideDone=new Promise(r=>hideFinished=r)
   router.set(taskPath,async route=>{const response=await route.fetch();hideSeen();await hideBarrier;await route.fulfill({response});hideFinished()});await page.getByRole('button',{name:'View run-tasks',exact:true}).click();await within(hideStarted);await page.keyboard.press('Escape');await page.locator('#workspace').fill('beta');hideRelease();await within(hideDone);await frame(page);assert.equal(await page.locator('#detail-body').textContent(),'');assert.equal(await page.locator('#panel').isVisible(),false);router.remove(taskPath);await scope();await detail()
   await router.drain();await context.unrouteAll({behavior:'wait'})
+  // The earlier revision change published real timestamps in the same authorized
+  // temporary store. Restore the original run dialog for the revocation tests.
+  await page.keyboard.press('Escape');const readStart=requests.length
+  await checkFractionalRuns(page,origin,base)
+  assert.deepEqual(requests.slice(readStart),['/runs','/durations','/runs/timing-02','/runs/timing-02/tasks'].map(suffix=>({path:base+suffix,method:'GET'})))
+  await detail()
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status}),200);await page.locator('#task-next').click();await page.waitForFunction(()=>document.querySelector('#panel').hidden);assert.equal(await page.locator('#detail-body').textContent(),'')
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-session',{method:'POST'});return r.status}),200);await page.locator('#scope-form button').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#workspace').inputValue(),'')
   assert.deepEqual(requests.filter(r=>r.path.includes('/pipelines/')&&(r.method!=='GET'||r.path.includes('/logs'))),[]);assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
@@ -52,5 +99,6 @@ async function main(){
   if(failures.length)throw new AggregateError(failures,'Synthetic pipeline cleanup failed')
  }
   console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three screenshots. No raw logs or live provider.')
+  console.log('PIPELINE_FRACTIONAL_MEAN_PASS revision 2: 3 distinct successful runs, 3 x 100 ms; exact minimum/mean/maximum 0.1 s; real Cookie GETs and visible trend, run detail and task. No live CI or execution.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})
