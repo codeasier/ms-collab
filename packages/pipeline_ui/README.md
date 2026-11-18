@@ -59,6 +59,12 @@ job timings follow the core's exclusion rules, not zero-fill. Latest means
 latest sample start. Coverage counters may overlap. This is not a deployment,
 merge, release, root-cause or health gate.
 
+Expand the sample list on a trend and choose **View run** beside the sample
+you want to investigate. This opens that run even if the local run-list filter
+hides it. The detail must match the displayed snapshot, and its task list is
+read for that revision under current permissions. This opens the run, not a
+specific job or its logs. Expanding the sample list does not read any details.
+
 Run IDs, stage/job names and all provider-origin text are rendered with
 `textContent`, never HTML. The static file allowlist, same-origin checks,
 no-store/nosniff/no-referrer and strict CSP contain this narrow wrapper. These

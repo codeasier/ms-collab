@@ -12,13 +12,20 @@ function disconnect(message='Disconnected. Reconnect to read current authorized 
  for(const id of ['credential','workspace','connection','pipeline','query'])if(el(id))el(id).value='';el('state').value='';filter={query:'',status:''};el('status').textContent=message
 }
 function failure(error,token){if(token!==epoch||error.name==='AbortError')return;if(error.status===401){disconnect(error.message);return}clearPanel();el('status').textContent=error.status?error.message:'Snapshot changed or could not be validated. Reopen the scope to retry.'}
+// An ID can recur in a different scope or after a reload at the same revision.
+function runButton(runID,label){
+ const owner={scope,snapshot,revision:snapshot.revision,epoch}
+ const button=text('button','View run');button.type='button';button.setAttribute('aria-label',label)
+ button.addEventListener('click',()=>showDetail(runID,owner))
+ return button
+}
 function renderRuns(){
  if(!snapshot)return
  const rows=snapshot.list.items.filter(r=>(!filter.status||r.status===filter.status)&&r.id.toLocaleLowerCase().includes(filter.query.trim().toLocaleLowerCase()))
  const pages=Math.max(1,Math.ceil(rows.length/10));page=Math.min(page,pages-1);el('runs').replaceChildren()
  for(const run of rows.slice(page*10,(page+1)*10)){
   const card=text('li',''),body=text('div','','record');body.append(text('h3',run.id),text('p',run.status,'badge'),text('p',`Observed ${run.observed_at}`),text('p',run.details_available?`${run.stage_count} stages · ${run.job_count} recorded jobs`:'Stage and job details unavailable'))
-  const button=text('button','View run');button.type='button';button.setAttribute('aria-label',`View ${run.id}`);button.addEventListener('click',()=>showDetail(run.id));card.append(body,button);el('runs').append(card)
+  card.append(body,runButton(run.id,`View ${run.id}`));el('runs').append(card)
  }
  if(!rows.length)el('runs').append(text('li',snapshot.list.total?'No runs match this local filter.':'No runs in the stored subset. This does not prove the provider has no history.'))
  el('summary').textContent=`${rows.length} matching runs of ${snapshot.list.total} stored · Page ${page+1} of ${pages}`
@@ -32,7 +39,12 @@ function renderDurations(){
   const card=text('article','','trend'),heading=text('h3',`${group.stage_name} / ${group.job_name}`);card.append(heading)
   const values=text('dl','','metrics');for(const [name,key]of[['Samples','count'],['Average seconds','average_seconds'],['Minimum seconds','min_seconds'],['Maximum seconds','max_seconds'],['Latest sample seconds','latest_seconds']]){const pair=text('div','');pair.append(text('dt',name),text('dd',Number(group[key]).toLocaleString(undefined,{maximumFractionDigits:3})));values.append(pair)}card.append(values)
   const disclosure=document.createElement('details');disclosure.append(text('summary',`Show ${group.samples.length} samples`));const list=text('ul','','samples')
-  for(const sample of group.samples)list.append(text('li',`${sample.run_id} (${sample.run_status}) · ${sample.duration_seconds} seconds · started ${sample.started_at}`));disclosure.append(list);card.append(disclosure);el('durations').append(card)
+  for(const sample of group.samples){
+   const row=text('li','')
+   row.append(text('span',`${sample.run_id} (${sample.run_status}) · ${sample.duration_seconds} seconds · started ${sample.started_at}`),runButton(sample.run_id,`View run ${sample.run_id}`))
+   list.append(row)
+  }
+  disclosure.append(list);card.append(disclosure);el('durations').append(card)
  }
  if(!report.groups.length)el('durations').append(text('p','No valid successful-job duration samples in this stored subset. Missing or invalid evidence is not zero duration.'))
 }
@@ -41,9 +53,13 @@ async function load(){
  const selected={...scope},token=cancel();loading=true;onBusyChange();clearPanel();el('status').textContent='Reading an authorized, consistent snapshot…'
  try{const data=await loadSnapshot(client,selected,controller.signal);if(token!==epoch)return;snapshot=data;el('scope-title').textContent=`${selected.workspace_id} / ${selected.connection_id} / ${selected.pipeline_id}`;el('revision').textContent=`Stored snapshot version ${data.revision} · complete provider history: no · live provider verified: no`;el('panel').hidden=false;renderRuns();renderDurations();el('status').textContent='Current access checked by the service. This reads stored data, not a live provider refresh.'}catch(error){failure(error,token)}finally{if(token===epoch){loading=false;onBusyChange()}}
 }
-async function showDetail(runID){
- if(!active||!snapshot||!scope||detailPending===runID)return
- closeDetail();detailPending=runID;detailController=new AbortController();const token=epoch,detailToken=detailEpoch,selected={...scope},version=snapshot.revision,summary=snapshot.list.items.find(row=>row.id===runID)
+async function showDetail(runID,owner){
+ if(!active||owner.epoch!==epoch||owner.scope!==scope||owner.snapshot!==snapshot||owner.revision!==snapshot.revision||detailPending===runID)return
+ // Both the run list and duration samples use the same verified, unfiltered list.
+ const summary=owner.snapshot.list.items.find(row=>row.id===runID)
+ if(!summary)return
+ const token=owner.epoch,selected={...owner.scope},version=owner.revision
+ closeDetail();detailPending=runID;detailController=new AbortController();const detailToken=detailEpoch
  el('detail-title').textContent=runID;el('detail-status').textContent='Reading current authorized run details…';el('detail').showModal()
  try{const data=validateDetail(await client.request(selected,'detail',{runID,signal:detailController.signal}),selected,version,runID,summary);if(token!==epoch||detailToken!==detailEpoch)return
   const run=data.run;detailRun=run
@@ -54,7 +70,10 @@ async function showDetail(runID){
   for(const status of ['','success','failure','cancelled','timed_out','skipped','queued','running','unknown']){const option=text('option',status||'All statuses');option.value=status;select.append(option)}label.append(select);controls.append(label)
   const previous=text('button','Previous tasks'),next=text('button','Next tasks');previous.id='task-previous';next.id='task-next';previous.type=next.type='button';controls.append(previous,next);el('detail-body').append(controls)
   const taskSummary=text('p','');taskSummary.id='task-summary';taskSummary.setAttribute('role','status');const jobs=text('div','');jobs.id='tasks';el('detail-body').append(taskSummary,jobs)
-  select.addEventListener('change',()=>loadTasks(select.value,0));previous.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,Math.max(0,taskPage.offset-10))});next.addEventListener('click',()=>{if(taskPage)loadTasks(taskFilter,taskPage.offset+10)})
+  const ownsDetail=()=>active&&token===epoch&&detailToken===detailEpoch
+  select.addEventListener('change',()=>{if(ownsDetail())return loadTasks(select.value,0)})
+  previous.addEventListener('click',()=>{if(ownsDetail()&&taskPage)return loadTasks(taskFilter,Math.max(0,taskPage.offset-10))})
+  next.addEventListener('click',()=>{if(ownsDetail()&&taskPage)return loadTasks(taskFilter,taskPage.offset+10)})
   await loadTasks('',0)
 
  }catch(error){if(token!==epoch||detailToken!==detailEpoch||error.name==='AbortError')return;failure(error,token)}finally{if(token===epoch&&detailToken===detailEpoch)detailPending=undefined}

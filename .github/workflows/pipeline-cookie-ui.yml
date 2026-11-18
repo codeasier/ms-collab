@@ -74,6 +74,7 @@ jobs:
             ${{ runner.temp }}/ms-collab-pipeline-tasks/desktop.png
             ${{ runner.temp }}/ms-collab-pipeline-tasks/mobile.png
             ${{ runner.temp }}/ms-collab-pipeline-tasks/detail.png
+            ${{ runner.temp }}/ms-collab-pipeline-tasks/duration-sample-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

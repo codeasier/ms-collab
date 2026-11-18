@@ -1,6 +1,7 @@
 const {stopSyntheticFixture}=require('./fixture-process.cjs')
 // Fictional task metadata only. Never requests raw logs or contacts a real CI.
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),readline=require('node:readline')
+const {createHash}=require('node:crypto')
 const {spawn,execFileSync}=require('node:child_process'),{chromium}=require('playwright')
 const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-router.cjs')
 async function within(p){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('synthetic barrier timeout')),15000))])}finally{clearTimeout(timer)}}
@@ -45,6 +46,65 @@ async function checkFractionalRuns(page,origin,base){
  assert.equal(await page.locator('#tasks article h4').textContent(),job.name)
  assert.deepEqual(await page.locator('#tasks article p').allTextContents(),['Stage 1, task 1 · '+job.id+' · success','Started: '+job.started_at,'Finished: '+job.finished_at])
  await page.keyboard.press('Escape')
+ return {selected,sample,latest:g.samples.at(-1).run_id,detail,taskPage}
+}
+// A second, independent activation with no run-list button available. Only
+// browser response observers are attached; no extra service read or mock DTO.
+async function fromDurationSample(page,origin,base,folder,known){
+ const {selected,sample,latest,detail,taskPage}=known
+ assert.equal(latest,'timing-03');assert.notEqual(selected,latest);assert.notEqual(selected,sample.job_id)
+ const urls=[base+'/runs/'+selected,base+'/runs/'+selected+'/tasks?revision=2&offset=0&limit=10']
+ const journal=[]
+ const collect=r=>{const u=new URL(r.url());if(u.pathname.startsWith('/api/'))journal.push([r.method(),u.origin===origin,u.pathname+u.search,r.postData()===null])}
+ const read=async suffix=>{
+  const r=await page.waitForResponse(res=>res.url()===origin+suffix&&res.request().method()==='GET',{timeout:15000})
+  assert.equal(r.status(),200);assert.equal(await r.headerValue('cache-control'),'no-store')
+  assert.match(await r.headerValue('content-type'),/^application\/json(?:;|$)/)
+  return r.json()
+ }
+ page.on('request',collect)
+ try{
+  await page.setViewportSize({width:390,height:844})
+  await page.locator('#query').fill('no-run-matches-this-filter');await page.locator('#filters button').click()
+  assert.equal(await page.locator('#runs button').count(),0);assert.match(await page.locator('#summary').textContent(),/^0 matching runs/)
+  const card=page.locator('#durations article').filter({has:page.getByRole('heading',{name:'Timing / Probe',exact:true})})
+  const control=card.locator('.samples li').getByRole('button',{name:'View run '+selected,exact:true})
+  assert.equal(await control.count(),1);assert.equal(await control.innerText(),'View run')
+  assert.ok(await control.evaluate(n=>n instanceof HTMLButtonElement&&n.type==='button'&&!n.disabled&&n.closest('details').open))
+  const expectedText=selected+' ('+sample.run_status+') · '+sample.duration_seconds+' seconds · started '+sample.started_at
+  assert.ok(await control.evaluate((n,s)=>n.closest('li').textContent.startsWith(s),expectedText))
+  const previous=card.getByRole('button',{name:'View run timing-01',exact:true})
+  await previous.focus();await page.keyboard.press('Tab')
+  assert.ok(await control.evaluate(n=>document.activeElement===n&&n.matches(':focus-visible')))
+  await control.evaluate(n=>n.scrollIntoView({block:'center',behavior:'instant'}))
+  await frame(page)
+  const geometry=await control.evaluate(n=>{
+   const r=n.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2
+   if(!(n===document.activeElement&&r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&
+        n.contains(document.elementFromPoint(x,y))&&document.documentElement.scrollWidth<=innerWidth))throw Error('Sample button is not visibly reachable')
+   return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}
+  })
+  const name='duration-sample-mobile.png',image=await page.screenshot({path:path.join(folder,name),animations:'disabled'})
+  assert.equal(image.subarray(0,8).toString('hex'),'89504e470d0a1a0a');assert.equal(image.toString('ascii',12,16),'IHDR')
+  assert.equal(image.readUInt32BE(16),390);assert.equal(image.readUInt32BE(20),844);assert.ok(image.length>4096)
+  console.log('PIPELINE_DURATION_SAMPLE_SCREEN '+JSON.stringify({name,width:390,height:844,bytes:image.length,sha256:createHash('sha256').update(image).digest('hex'),button:geometry}))
+  assert.deepEqual(journal,[]) // local filtering, disclosure and focus cannot trigger a read
+  const [selectedDetail,selectedTasks]=await Promise.all([read(urls[0]),read(urls[1]),page.keyboard.press('Enter')])
+  assert.deepEqual(selectedDetail,{data:detail});assert.deepEqual(selectedTasks,{data:taskPage})
+  await page.locator('#detail[open] #tasks article').waitFor()
+  assert.equal(await page.locator('#detail-title').textContent(),sample.run_id)
+  assert.match(await page.locator('#detail-status').textContent(),/success · snapshot version 2/)
+  assert.deepEqual(await page.locator('#tasks article p').allTextContents(),['Stage 1, task 1 · '+sample.job_id+' · success','Started: '+sample.started_at,'Finished: '+sample.finished_at])
+  assert.equal(await page.locator('#tasks article h4').textContent(),'Probe')
+  assert.equal(page.url(),origin+'/pipelines/');assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0])
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#detail').isVisible(),false)
+  assert.equal(await page.locator('#detail-body').textContent(),'');assert.equal(await page.locator('#runs button').count(),0)
+  assert.ok(await control.evaluate(n=>document.activeElement===n&&n.closest('details').open))
+  assert.equal(await page.locator('#query').inputValue(),'no-run-matches-this-filter')
+  await page.locator('#query').fill('');await page.locator('#filters button').click()
+  await page.setViewportSize({width:1440,height:1050})
+  assert.deepEqual(journal,urls.map(url=>['GET',true,url,true]))
+ }finally{page.off('request',collect)}
 }
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-pipeline-tasks-'));let server,browser
@@ -85,8 +145,9 @@ async function main(){
   // The earlier revision change published real timestamps in the same authorized
   // temporary store. Restore the original run dialog for the revocation tests.
   await page.keyboard.press('Escape');const readStart=requests.length
-  await checkFractionalRuns(page,origin,base)
+  const known=await checkFractionalRuns(page,origin,base)
   assert.deepEqual(requests.slice(readStart),['/runs','/durations','/runs/timing-02','/runs/timing-02/tasks'].map(suffix=>({path:base+suffix,method:'GET'})))
+  await fromDurationSample(page,origin,base,folder,known)
   await detail()
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status}),200);await page.locator('#task-next').click();await page.waitForFunction(()=>document.querySelector('#panel').hidden);assert.equal(await page.locator('#detail-body').textContent(),'')
   assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-session',{method:'POST'});return r.status}),200);await page.locator('#scope-form button').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#workspace').inputValue(),'')
@@ -98,7 +159,8 @@ async function main(){
   try{fs.rmSync(temp,{recursive:true,force:true})}catch(error){failures.push(error)}
   if(failures.length)throw new AggregateError(failures,'Synthetic pipeline cleanup failed')
  }
-  console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three screenshots. No raw logs or live provider.')
+  console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three regression screenshots, plus a separate duration-sample mobile screenshot. No raw logs or live provider.')
   console.log('PIPELINE_FRACTIONAL_MEAN_PASS revision 2: 3 distinct successful runs, 3 x 100 ms; exact minimum/mean/maximum 0.1 s; real Cookie GETs and visible trend, run detail and task. No live CI or execution.')
+  console.log('PIPELINE_DURATION_SAMPLE_COOKIE_PASS: Timing / Probe, non-latest timing-02, 390px focused sample and keyboard drilldown, zero matching list rows; only authorized run detail and revision-2 task GETs. Synthetic only.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})

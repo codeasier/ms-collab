@@ -174,7 +174,8 @@ ineffective, cancellation prevents an old list from starting its follow-up
 request or rendering after logout/recheck/Back. A new view requires explicit
 scope submission; no cached connection discovery or upstream acquisition occurs.
 The separate [cookie pipeline workflow](../../.github/workflows/pipeline-cookie-ui.yml)
-exercises synthetic HTTPS and writes only three synthetic screenshots.
+exercises synthetic HTTPS and uploads only the listed screenshots from the
+pipeline, task and discovery browser journeys.
 
 ### Artifact lifecycle verification
 
