@@ -35,12 +35,22 @@ class SyntheticObjects:
         self.calls.append((config.scope,binding));self.hook();r=Response(self.data,self.read_hook);self.responses.append(r);return r
 
 
-def setup_download(directory,*,origin='https://app.example.invalid',clock=lambda:NOW,authorization_endpoint=None,enabled=True):
+def setup_download(directory,*,origin='https://app.example.invalid',clock=lambda:NOW,authorization_endpoint=None,enabled=True,browser_wheel=False):
     original,policy,login,exchange=setup(directory,origin=origin,clock=clock,authorization_endpoint=authorization_endpoint)
-    initialize_downloads(policy,(GRANT,))
-    snapshot=Snapshot(SCOPE,'2026-01-01T00:00:00Z',(Artifact('builds/','2026-01-01T00:00:00Z',0,True),Artifact(KEY,BINDING.modified_at,len(DATA)),Artifact('builds/unbound.txt',BINDING.modified_at,7)))
-    seed_publication(policy,SCOPE,snapshot)
     objects=SyntheticObjects()
+    if browser_wheel:
+        # Independent browser-only store. The filename is a wheel candidate,
+        # but the bytes are inert text, not an archive or installable package.
+        key='wheels/'+'scopefixture'*7+'_demo-1.2-py3-none-any.whl'
+        objects.data=b'Synthetic inert sample for browser byte verification.\n'*7
+        binding=ContentBinding(key,len(objects.data),BINDING.modified_at,'"synthetic-wheel-v1"',sha256(objects.data).hexdigest())
+        grant=DownloadPolicy(SCOPE,('admin',),(binding,))
+        snapshot=Snapshot(SCOPE,binding.modified_at,(Artifact(key,binding.modified_at,binding.size),))
+    else:
+        grant=GRANT
+        snapshot=Snapshot(SCOPE,'2026-01-01T00:00:00Z',(Artifact('builds/','2026-01-01T00:00:00Z',0,True),Artifact(KEY,BINDING.modified_at,len(DATA)),Artifact('builds/unbound.txt',BINDING.modified_at,7)))
+    initialize_downloads(policy,(grant,))
+    seed_publication(policy,SCOPE,snapshot)
     config=replace(original._config,artifact_downloads=enabled)
     args=dict(exchange=exchange,authorization_endpoint=authorization_endpoint or 'https://identity.example.invalid/authorize',authorization_scopes=('synthetic_user',))
     host=ApplicationHost(config=config,sessions=original._boundary._sessions,clock=clock,directory_cursors=original._directory_cursors,

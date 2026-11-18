@@ -98,3 +98,106 @@ test('actual module generation stops a late read when even AbortController is in
   assert.equal(reads,1);assert.equal(canceled,1);assert.equal(element('download-panel').hidden,true);assert.equal(element('download-key').textContent,'')
  }finally{Object.assign(globalThis,saved)}
 })
+
+// Supply the known, legacy wire name separately; don't use the save-name implementation as the oracle.
+const attachment=name=>`attachment; filename="${name}"`
+const boundReply=(wireName,bytes=data)=>reply(bytes,{'Content-Disposition':attachment(wireName)})
+function readBoundKey(key,respond,extra={}){
+ return receiveArtifact(context({...extra,binding:{...binding,key},fetcher:async(path,options)=>{
+  assert.equal(path,'/api/workspaces/alpha/artifact-download/source/bucket/download')
+  assert.equal(options.method,'POST');assert.equal(options.headers['If-Match'],'"3"')
+  assert.deepEqual(JSON.parse(options.body),{key,expected_sha256:hash})
+  return respond()
+ }}))
+}
+
+test('verified wheel saves preserve the exact final key segment including version, build and compressed tags',async()=>{
+ for(const leaf of [
+  'example-1.0-py2.py3-none-any.whl',
+  'example_tools-1.2rc3.post4.dev5-4build-cp311-abi3-win_amd64.whl',
+  'demo-1.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl',
+  'demo-1.0-cp313-cp313t-macosx_11_0_arm64.whl',
+ ]){
+  const result=await readBoundKey('release/deep/'+leaf,()=>boundReply('artifact-'+leaf))
+  assert.equal(result.name,leaf);assert.deepEqual(result.bytes,data);assert.equal(result.sha256,hash)
+ }
+})
+
+test('wheel lookalikes, Unicode punctuation and reserved distribution names keep the legacy neutral name',async()=>{
+ for(const [leaf,wireLeaf=leaf] of [
+  ['demo.whl'],['demo-1.0-py3-none-any.WHL'],['demo-1.0-py3-none-any.whl.txt'],
+  ['demo-1.0-py3-none-any.exe.whl'],['demo-1.0-py3-none-any.whl.exe'],
+  ['demo__tools-1.0-py3-none-any.whl'],['Demo-1.0-py3-none-any.whl'],['-1.0-py3-none-any.whl'],
+  ['COM1-1.0-py3-none-any.whl'],['com1-1.0-py3-none-any.whl'],['nul-1.0-py3-none-any.whl'],
+  ['demo-1.0-py3-none-any．whl','demo-1.0-py3-none-any_whl'],
+  ['demo–tools-1.0-py3-none-any.whl','demo_tools-1.0-py3-none-any.whl'],
+  ['dir\\demo-1.0-py3-none-any.whl','dir_demo-1.0-py3-none-any.whl'],
+ ]){
+  const neutral='artifact-'+wireLeaf
+  assert.equal((await readBoundKey('objects/'+leaf,()=>boundReply(neutral))).name,neutral,leaf)
+ }
+})
+
+test('unsupported wheel version, build and incomplete or unknown tag fields keep the neutral name',async()=>{
+ for(const [leaf,wireLeaf=leaf] of [
+  ['demo-1!2-py3-none-any.whl','demo-1_2-py3-none-any.whl'],
+  ['demo-1.0+local-py3-none-any.whl','demo-1.0_local-py3-none-any.whl'],
+  ['demo-01.2-py3-none-any.whl'],['demo-1.2.dev5.post4-py3-none-any.whl'],
+  ['demo-1.2-build4-py3-none-any.whl'],['demo-1.2--py3-none-any.whl'],
+  ['demo-1.2-py3--any.whl'],['demo-1.2-py3..py2-none-any.whl'],
+  ['demo-1.2-py3.py2-none-any.whl'],['demo-1.2-py3.py3-none-any.whl'],
+  ['demo-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl'],
+  ['demo-1.2-js3-none-any.whl'],['demo-1.2-py3-none.unknown-any.whl'],
+  ['demo-1.2-cp311-cp311-win_amd64.unknown.whl'],['demo-1.2-py3-none-manylinux_2_x86_64.whl'],
+ ]){
+  const neutral='artifact-'+wireLeaf
+  assert.equal((await readBoundKey('objects/'+leaf,()=>boundReply(neutral))).name,neutral,leaf)
+ }
+})
+
+test('wheel save length uses the full ASCII basename through 200, while the wire name still stops at 80',async()=>{
+ const suffix='-1.0-py3-none-any.whl'
+ for(const length of [80,81,200,201]){
+  const leaf='s'.repeat(length-suffix.length)+suffix,neutral='artifact-'+leaf.slice(0,80)
+  const result=await readBoundKey('release/'+leaf,()=>boundReply(neutral))
+  assert.equal(result.name,length<=200?leaf:neutral,`basename length ${length}`)
+ }
+})
+
+test('overlapping downloads with identical first 80 characters return the wheel name of their own bound key',async()=>{
+ const prefix='s'.repeat(80),neutral='artifact-'+prefix,first=prefix+'-1.0-py3-none-any.whl',second=prefix+'-2.0-py3-none-any.whl'
+ const hold=deferred();let waiting=false
+ const pending=readBoundKey('older/'+first,async()=>{waiting=true;await hold.promise;return boundReply(neutral)})
+ try{
+  await flush();assert.equal(waiting,true)
+  assert.equal((await readBoundKey('newer/'+second,()=>boundReply(neutral))).name,second)
+ }finally{hold.resolve()}
+ assert.equal((await pending).name,first)
+})
+
+test('wheel transfers reject non-neutral, overlong or extended Content-Disposition before opening the stream',async()=>{
+ const prefix='s'.repeat(80),leaf=prefix+'-1.0-py3-none-any.whl',neutral='artifact-'+prefix
+ for(const disposition of [
+  attachment(leaf),attachment('artifact-'+leaf),attachment('artifact-other-1.0-py3-none-any.whl'),
+  `attachment; filename*=UTF-8''${leaf}`,attachment(neutral)+`; filename*=UTF-8''${leaf}`,
+ ]){
+  let opened=0,canceled=0,digests=0
+  const response={ok:true,status:200,headers:new Headers({...headers,'Content-Disposition':disposition}),
+   body:{getReader(){opened++;throw Error('unexpected reader')},async cancel(){canceled++}}}
+  await assert.rejects(readBoundKey('release/'+leaf,()=>response,{digest:async()=>{digests++;throw Error('unexpected digest')}}),/Invalid download headers/)
+  assert.deepEqual([opened,digests,canceled],[0,0,1],disposition)
+ }
+})
+
+test('a wheel name is delivered only after the complete received bytes pass the independent SHA-256 check',async()=>{
+ const leaf='demo-1.2-py3-none-any.whl',key='release/'+leaf,neutral='artifact-'+leaf
+ const hold=deferred();let started=false,settled=false
+ const pending=readBoundKey(key,()=>boundReply(neutral),{digest:async bytes=>{
+  assert.deepEqual(bytes,data);started=true;await hold.promise;return webcrypto.subtle.digest('SHA-256',bytes)
+ }})
+ pending.then(()=>{settled=true},()=>{settled=true})
+ try{await flush();assert.equal(started,true);assert.equal(settled,false)}finally{hold.resolve()}
+ const ok=await pending;assert.equal(ok.name,leaf);assert.equal(ok.sha256,hash);assert.deepEqual(ok.bytes,data)
+ const corrupt=data.slice();corrupt[0]^=1
+ await assert.rejects(readBoundKey(key,()=>boundReply(neutral,corrupt)),/checksum/)
+})

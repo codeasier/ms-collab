@@ -94,6 +94,52 @@ automatic retry or server filename/path forwarding exists. A successful click
 means only **handed to the browser**, not proof a file was saved. Already delivered
 bytes cannot be recalled. Synthetic HTTPS tests are not real cloud acceptance.
 
+### Saving a wheel from the unified browser
+
+A [wheel filename](https://peps.python.org/pep-0427/#file-name-convention)
+identifies the distribution, version and compatibility tags. Adding a prefix
+or cutting off the last tag can make a wheel unusable under that name. After
+the browser verifies the **entire** download, it therefore suggests the original
+basename for a conservative set of wheel names. For example, an authorized
+`packages/demo-1.0-py3-none-any.whl` is suggested as
+`demo-1.0-py3-none-any.whl`. The server still sends the neutral
+`artifact-…` attachment name and the browser still checks that header exactly.
+Other clients and direct HTTP downloads retain the old naming contract.
+
+Version 1 accepts only the complete, unchanged last segment of the bound key
+after a literal `/`. It must be at most 200 ASCII characters, end in lowercase
+`.whl`, and have the following fields separated by hyphens:
+
+- **Distribution:** nonempty lowercase alphanumeric parts joined by single
+  underscores. Device names `con`, `prn`, `aux`, `nul`, `com1`–`com9`
+  and `lpt1`–`lpt9` are excluded.
+- **Version:** decimal release components separated by dots, optionally followed
+  in order by `aN`, `bN` or `rcN`; `.postN`; and `.devN`. Each number is
+  zero or starts with a nonzero digit. An optional, separate **build** field
+  begins with a digit and contains only ASCII letters, digits or underscores.
+- **Python, ABI, platform:** each is required. Each dot-separated member must
+  itself match the allowed tags for that field. Within each field, tags must
+  already be in strictly increasing ASCII order, with no repeats. An unsorted
+  or repeated tag keeps the neutral browser save name; tags are never reordered.
+  Python uses `py` or `cp`
+  followed by digits. ABI accepts `none`, `abi3` or `cp` plus digits and
+  optionally one of `d, m, u, dm, du, mu, dmu, t, td`.
+- **Platform tags:** `any`; `win32`, `win_amd64`, `win_arm64`; `linux_ARCH`,
+  `manylinux_M_m_ARCH` or `musllinux_M_m_ARCH` for
+  `x86_64, i686, aarch64, armv7l, ppc64, ppc64le, s390x, riscv64, loongarch64`;
+  `manylinux1_ARCH` and `manylinux2010_ARCH` for x86_64/i686, or
+  `manylinux2014_ARCH` for the first seven Linux architectures above;
+  `macosx_M_m_ARCH` for x86_64, arm64 or universal2. Platform version
+  components `M` and `m` follow the same decimal rule.
+
+Everything else, including longer or Unicode names, epoch/local versions,
+unlisted tags and deceptive extra suffixes, uses the existing neutral name.
+No decoding, normalization, synthesis or truncation is used to *qualify* a
+wheel name. Recognition does not open or inspect an archive, install anything,
+verify the publisher, establish build provenance or promise compatibility with
+a particular machine. It changes neither byte-access rights nor hash checks.
+The browser or operating system can still choose a different final name.
+
 ## Integrity, limits and concurrent revocation
 
 - Fixed virtual-host OBS HTTPS endpoint from trusted bucket/region, public-only
