@@ -168,10 +168,18 @@ def main():
                 from packages.pipeline_api import resource_id
                 from packages.pipelines import PipelineScope
                 with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
-                    # Keep revision one (and its screenshots) unchanged. Publish
-                    # three equal subsecond observations with the revision bump.
-                    db.execute("UPDATE resources SET text=?, revision=revision+1 WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",
-                               (snapshot(fractional_runs=True), resource_id(PipelineScope('alpha','example-ci','build'))))
+                    # Revisions one and two, including their mobile/desktop evidence,
+                    # are unchanged. Only the second explicit advance selects Unicode.
+                    rid=resource_id(PipelineScope('alpha','example-ci','build'))
+                    row=db.execute("SELECT revision FROM resources WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(rid,)).fetchone()
+                    if row not in ((1,), (2,)):
+                        start('409 Conflict',[('Content-Length','0')]);return [b'']
+                    current=row[0]
+                    data=snapshot(fractional_runs=current==1,unicode_labels=current==2)
+                    if current==2 and len(data.encode('ascii'))!=9493:raise AssertionError('synthetic Unicode fixture byte budget changed')
+                    changed=db.execute("UPDATE resources SET text=?, revision=revision+1 WHERE workspace_id='alpha' AND module_key='pipelines' AND id=? AND revision=?",
+                                       (data,rid,current)).rowcount
+                    if changed!=1:raise AssertionError('synthetic task fixture publication changed')
                 start('200 OK',[('Content-Length','0')]);return [b'']
             if path=='/synthetic/advance-assets' and mode=='assets':
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:

@@ -306,6 +306,83 @@ class ApplicationTests(unittest.TestCase):
         self.error(503, "storage_unavailable")
 
 
+    def test_supplementary_labels_under_the_envelope_limit_survive_stored_duration_detail_and_tasks(self):
+        scalar = "\U00020000"
+        stage, job = scalar * 129, scalar * 255 + "\U00031350"  # CJK Extension H (Unicode 15)
+        row = run()
+        row["stages"][0]["name"] = stage
+        row["stages"][0]["jobs"][0]["name"] = job
+        text = encode_snapshots(SCOPE, [row])
+        self.assertLessEqual(len(text.encode("ascii")), 10000)
+        restored, = decode_snapshots(SCOPE, text)
+        self.assertEqual((restored["stages"][0]["name"], restored["stages"][0]["jobs"][0]["name"]), (stage, job))
+        self.update(text)
+
+        def get(path, query=""):
+            answer = self.request(path, query=query)
+            self.assertEqual(answer["status"], 200)
+            data = answer["body"]["data"]
+            self.assertEqual(data["scope"], SCOPE.as_dict())
+            self.assertEqual(data["source"]["revision"], 1)
+            return data
+
+        listed, = get("/runs")["items"]
+        self.assertEqual((listed["id"], listed["status"], listed["stage_count"], listed["job_count"]),
+                         ("run-1", "failure", 1, 1))
+        trend = get("/durations", "limit=100")
+        group, = trend["groups"]
+        self.assertEqual((group["stage_name"], group["job_name"]), (stage, job))
+        self.assertEqual(json.loads(group["key"]), [stage, job])
+        sample, = group["samples"]
+        self.assertEqual((sample["run_id"], sample["job_id"], sample["run_status"], sample["duration_seconds"]),
+                         ("run-1", "unit", "failure", 12))
+        self.assertEqual(get("/runs/run-1")["run"], restored)
+        tasks = get("/runs/run-1/tasks", "revision=1&offset=0&limit=10")
+        self.assertEqual((tasks["stages"][0]["name"], tasks["items"][0]["name"]), (stage, job))
+        self.assertEqual((tasks["items"][0]["stage_index"], tasks["items"][0]["job_index"]), (0, 0))
+
+    def test_non_sampled_failed_job_keeps_mixed_scalar_and_combining_labels_in_detail_and_tasks(self):
+        stage = "界" * 255 + "\U00020000"
+        job = "e\u0301" * 127 + "\U00020000!"
+        self.assertEqual((len(stage), len(job)), (256, 256))
+        row = run()
+        row["stages"][0]["name"] = stage
+        row["stages"][0]["jobs"][0].update(name=job, status="failure")
+        encoded = encode_snapshots(SCOPE, [row])
+        self.assertLessEqual(len(encoded.encode("ascii")), 10000)
+        self.update(encoded)
+        report = self.request("/durations", query="limit=100")
+        self.assertEqual(report["status"], 200)
+        data = report["body"]["data"]
+        self.assertEqual((data["groups"], data["coverage"]["excluded_jobs"], data["coverage"]["runs_with_samples"]),
+                         ([], 1, 0))
+        detail = self.request("/runs/run-1")
+        tasks = self.request("/runs/run-1/tasks", query="revision=1&offset=0&limit=10")
+        self.assertEqual((detail["status"], tasks["status"]), (200, 200))
+        stage_dto, = detail["body"]["data"]["run"]["stages"]
+        item, = tasks["body"]["data"]["items"]
+        self.assertEqual((stage_dto["name"], stage_dto["jobs"][0]["name"]), (stage, job))
+        self.assertEqual((tasks["body"]["data"]["stages"][0]["name"], item["name"], item["status"]),
+                         (stage, job, "failure"))
+
+    def test_overlong_and_surrogate_labels_fail_the_codec_and_do_not_look_like_empty_stored_history(self):
+        for field, value in (("stage", "\U00020000" * 257), ("job", "界" * 255 + "\U00020000!"),
+                             ("job", "text\udc00")):
+            with self.subTest(field=field, length=len(value)):
+                row = run()
+                stage = row["stages"][0]
+                (stage if field == "stage" else stage["jobs"][0])["name"] = value
+                with self.assertRaises(InvalidRecord):
+                    encode_snapshots(SCOPE, [row])
+                # Simulate corrupted stored V1 data using the fixture; it fits the
+                # whole-record byte budget, so an oversize envelope isn't the rejection.
+                raw = json.dumps({"version": 1, "scope": SCOPE.as_dict(), "runs": [row]},
+                                 ensure_ascii=True, separators=(",", ":"))
+                self.assertLess(len(raw), 10000)
+                self.update(raw)
+                self.error(503, "pipeline_data_unavailable", suffix="/durations")
+
+
 class CodecTests(unittest.TestCase):
     def test_roundtrip_and_key_stable_distinct_tuple(self):
         text = encode_snapshots(SCOPE, [run()])

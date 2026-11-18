@@ -106,6 +106,68 @@ async function fromDurationSample(page,origin,base,folder,known){
   assert.deepEqual(journal,urls.map(url=>['GET',true,url,true]))
  }finally{page.off('request',collect)}
 }
+// New evidence follows every original screenshot. Exact scalar sequences,
+// not font availability or screenshots, witness this real API -> DOM path.
+async function checkUnicodeLabels(page,origin,base){
+ const runID='unicode-labels',scope={workspace_id:'alpha',connection_id:'example-ci',pipeline_id:'build'}
+ const source={kind:'stored_snapshot',revision:3,full_history_complete:false,live_provider_verified:false}
+ const stage=String.fromCodePoint(0x20000).repeat(128)+String.fromCodePoint(0x20001)
+ const grouped=String.fromCodePoint(0x20002).repeat(255)+String.fromCodePoint(0x20003)
+ const detailOnly='d'.repeat(254)+String.fromCodePoint(0x20004,0x20005)
+ function exact(value,expected,points,units){
+  assert.equal(typeof value,'string');assert.ok(value===expected,'label did not exactly preserve its scalar sequence')
+  assert.equal([...value].length,points);assert.equal(value.length,units)
+ }
+ const urls=['/runs?limit=100','/durations?limit=100','/runs/'+runID,'/runs/'+runID+'/tasks?revision=3&offset=0&limit=10'].map(s=>base+s)
+ const read=async url=>{
+  const r=await page.waitForResponse(r=>r.url()===origin+url&&r.request().method()==='GET',{timeout:15000})
+  assert.equal(r.status(),200);assert.equal(await r.headerValue('cache-control'),'no-store')
+  assert.match(await r.headerValue('content-type'),/^application\/json(?:;|$)/)
+  const {data}=await r.json();assert.deepEqual(data.scope,scope);assert.deepEqual(data.source,source);return data
+ }
+ const journal=[],collect=r=>{const u=new URL(r.url());if(u.pathname.startsWith('/api/'))journal.push([r.method(),u.origin===origin,u.pathname+u.search,r.postData()===null])}
+ const published=await page.evaluate(async()=>(await fetch('/synthetic/advance-pipeline-tasks',{method:'POST'})).status)
+ assert.equal(published,200)
+ page.on('request',collect)
+ try{
+  const [list,report]=await Promise.all([read(urls[0]),read(urls[1]),page.locator('#reload').click()])
+  assert.deepEqual(list.items.map(r=>r.id).sort(),['run-tasks',runID])
+  const row=list.items.find(r=>r.id===runID);assert.ok(row.details_available)
+  assert.deepEqual([row.status,row.stage_count,row.job_count],['failure',1,2])
+  const matches=report.groups.filter(g=>g.samples.some(s=>s.run_id===runID));assert.equal(matches.length,1)
+  const [g]=matches,[sample]=g.samples;assert.equal(g.count,1);assert.equal(g.samples.length,1)
+  exact(g.stage_name,stage,129,258);exact(g.job_name,grouped,256,512)
+  const [keyStage,keyJob]=JSON.parse(g.key);exact(keyStage,stage,129,258);exact(keyJob,grouped,256,512)
+  assert.deepEqual([sample.run_id,sample.run_status,sample.job_id,sample.duration_seconds,sample.observed_at],[runID,'failure','sample',2,row.observed_at])
+  assert.ok(report.groups.every(group=>group.job_name!==detailOnly&&!group.samples.some(s=>s.run_id===runID&&s.job_id==='detail-only')))
+  await page.locator('#panel:not([hidden])').waitFor()
+  assert.equal(await page.locator('#scope-title').textContent(),'alpha / example-ci / build')
+  assert.match(await page.locator('#revision').textContent(),/Stored snapshot version 3/)
+  const card=page.locator('#runs li').filter({has:page.getByRole('heading',{name:runID,exact:true})})
+  assert.deepEqual(await card.locator('.record p').allTextContents(),['failure','Observed '+row.observed_at,'1 stages · 2 recorded jobs'])
+  const trend=page.locator('#durations article').filter({has:page.locator('.samples button[aria-label="View run unicode-labels"]')})
+  assert.equal(await trend.count(),1);assert.ok(await trend.locator('h3').textContent()===stage+' / '+grouped)
+  assert.ok(!(await page.locator('#durations').textContent()).includes(detailOnly))
+  await trend.locator('summary').click()
+  const [detail,taskPage]=await Promise.all([read(urls[2]),read(urls[3]),trend.getByRole('button',{name:'View run '+runID,exact:true}).click()])
+  assert.equal(detail.run.id,runID);assert.equal(detail.run.status,row.status);assert.equal(detail.run.observed_at,row.observed_at)
+  assert.deepEqual(taskPage.run,{id:runID,status:row.status,observed_at:row.observed_at,details_available:true})
+  assert.equal(detail.run.stages.length,1);assert.equal(taskPage.stages.length,1)
+  exact(detail.run.stages[0].name,stage,129,258);exact(taskPage.stages[0].name,stage,129,258)
+  assert.equal(taskPage.total,2);assert.deepEqual(taskPage.items.map(j=>[j.stage_index,j.job_index,j.id_occurrences]),[[0,0,1],[0,1,1]])
+  for(const jobs of [detail.run.stages[0].jobs,taskPage.items]){
+   assert.deepEqual(jobs.map(j=>[j.id,j.status]),[['sample','success'],['detail-only','failure']])
+   exact(jobs[0].name,grouped,256,512);exact(jobs[1].name,detailOnly,256,258)
+  }
+  await page.locator('#detail[open] #tasks article').first().waitFor()
+  assert.equal(await page.locator('#detail-title').textContent(),runID);assert.match(await page.locator('#detail-status').textContent(),/failure · snapshot version 3/)
+  assert.ok((await page.locator('#task-stages p').allTextContents()).includes('1. '+stage+' · 2 recorded tasks · success: 1 · failure: 1'))
+  const headings=await page.locator('#tasks article h4').allTextContents();assert.equal(headings.length,2)
+  exact(headings[0],grouped,256,512);exact(headings[1],detailOnly,256,258)
+  assert.equal(page.url(),origin+'/pipelines/');await page.keyboard.press('Escape')
+  assert.equal(await page.locator('#detail-body').textContent(),'');assert.deepEqual(journal,urls.map(u=>['GET',true,u,true]))
+ }finally{page.off('request',collect)}
+}
 async function main(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-pipeline-tasks-'));let server,browser
  try{
@@ -148,9 +210,22 @@ async function main(){
   const known=await checkFractionalRuns(page,origin,base)
   assert.deepEqual(requests.slice(readStart),['/runs','/durations','/runs/timing-02','/runs/timing-02/tasks'].map(suffix=>({path:base+suffix,method:'GET'})))
   await fromDurationSample(page,origin,base,folder,known)
-  await detail()
-  assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status}),200);await page.locator('#task-next').click();await page.waitForFunction(()=>document.querySelector('#panel').hidden);assert.equal(await page.locator('#detail-body').textContent(),'')
-  assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-session',{method:'POST'});return r.status}),200);await page.locator('#scope-form button').click();await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#workspace').inputValue(),'')
+  await checkUnicodeLabels(page,origin,base)
+  // Restore the same ordinary 23-task run from the CURRENT publication. A
+  // stale 412 must not masquerade as either real withdrawal of authority.
+  const reply=suffix=>page.waitForResponse(r=>r.url()===origin+base+suffix&&r.request().method()==='GET',{timeout:15000})
+  const taskRoute='/runs/run-tasks/tasks?revision=3&offset='
+  const [runReply,pageOne]=await Promise.all([reply('/runs/run-tasks'),reply(taskRoute+'0&limit=10'),detail()])
+  assert.equal(runReply.status(),200);assert.equal(pageOne.status(),200)
+  const runData=(await runReply.json()).data,pageData=(await pageOne.json()).data
+  assert.deepEqual([runData.run.id,runData.source.revision,pageData.run.id,pageData.source.revision,pageData.total,pageData.offset],
+   ['run-tasks',3,'run-tasks',3,23,0]);assert.ok(await page.locator('#task-next').isEnabled())
+  assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-membership',{method:'POST'});return r.status}),200)
+  const [membershipDenied]=await Promise.all([reply(taskRoute+'10&limit=10'),page.locator('#task-next').click()])
+  assert.equal(membershipDenied.status(),404);await page.waitForFunction(()=>document.querySelector('#panel').hidden);assert.equal(await page.locator('#detail-body').textContent(),'')
+  assert.equal(await page.evaluate(async()=>{const r=await fetch('/synthetic/revoke-session',{method:'POST'});return r.status}),200)
+  const [sessionDenied]=await Promise.all([reply('/runs?limit=100'),page.locator('#scope-form button').click()])
+  assert.equal(sessionDenied.status(),401);await page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='Not verified');assert.equal(await page.locator('#workspace').inputValue(),'')
   assert.deepEqual(requests.filter(r=>r.path.includes('/pipelines/')&&(r.method!=='GET'||r.path.includes('/logs'))),[]);assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
  }finally{
   const failures=[]
@@ -162,5 +237,6 @@ async function main(){
   console.log('Pipeline task HTTPS acceptance passed: stage counts without invented results, duplicate IDs, pinned pagination/filtering, missing/empty, unsafe-field rejection, stale detail/scope/revision, current revocation, XSS and three regression screenshots, plus a separate duration-sample mobile screenshot. No raw logs or live provider.')
   console.log('PIPELINE_FRACTIONAL_MEAN_PASS revision 2: 3 distinct successful runs, 3 x 100 ms; exact minimum/mean/maximum 0.1 s; real Cookie GETs and visible trend, run detail and task. No live CI or execution.')
   console.log('PIPELINE_DURATION_SAMPLE_COOKIE_PASS: Timing / Probe, non-latest timing-02, 390px focused sample and keyboard drilldown, zero matching list rows; only authorized run detail and revision-2 task GETs. Synthetic only.')
+  console.log('PIPELINE_UNICODE_LABEL_COOKIE_PASS: revision 3, 9493 canonical ASCII bytes, four scoped GETs; exact stage 129 and successful job 256 supplementary CJK scalars, distinct 256-scalar failed job detail only; verified response and DOM, not glyph appearance; current membership 404 and session 401.')
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1})
