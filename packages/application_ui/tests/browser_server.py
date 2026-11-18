@@ -168,7 +168,10 @@ def main():
                 from packages.pipeline_api import resource_id
                 from packages.pipelines import PipelineScope
                 with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
-                    db.execute("UPDATE resources SET revision=revision+1 WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",(resource_id(PipelineScope('alpha','example-ci','build')),))
+                    # Keep revision one (and its screenshots) unchanged. Publish
+                    # three equal subsecond observations with the revision bump.
+                    db.execute("UPDATE resources SET text=?, revision=revision+1 WHERE workspace_id='alpha' AND module_key='pipelines' AND id=?",
+                               (snapshot(fractional_runs=True), resource_id(PipelineScope('alpha','example-ci','build'))))
                 start('200 OK',[('Content-Length','0')]);return [b'']
             if path=='/synthetic/advance-assets' and mode=='assets':
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:

@@ -61,6 +61,8 @@ codes, implicit epoch units and timezone-free dates are not guessed.
   names remain separate; failed siblings do not add success-duration ambiguity.
 - Samples are chronological by job start time and run ID. `latest_seconds` means
   latest **sample start**, not newest observation or fastest successful run.
+- `average_seconds` is the arithmetic mean of the reported sample durations,
+  rounded once to a float. It stays between `min_seconds` and `max_seconds`, inclusive.
 - Coverage reports selected/supplied counts, missing details, malformed entries,
   excluded jobs and ambiguity. Counts are diagnostics and can overlap.
   `full_history_complete` is always false: a finite supplied dataset cannot prove

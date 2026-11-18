@@ -30,3 +30,15 @@ test('ineffective transport abort still fences chained reads and delayed duratio
   assert.deepEqual(calls,kind==='runs'?['runs']:['runs','durations'])
  }
 })
+
+test('duration mean accepts 0.1 at both bounds and rejects its finite neighbors',()=>{
+ const data=report(),group=data.groups[0]
+ Object.assign(group,{average_seconds:0.1,min_seconds:0.1,max_seconds:0.1,latest_seconds:0.1})
+ Object.assign(group.samples[0],{finished_at:'2026-01-01T10:00:00.100Z',duration_seconds:0.1})
+ assert.doesNotThrow(()=>validateDurations(data,scope,2,[run]))
+ // Adjacent binary64 values: every other field stays identical to the valid response.
+ for(const average_seconds of [0.09999999999999999,0.10000000000000002]){
+  const invalid={...data,groups:[{...group,average_seconds}]}
+  assert.throws(()=>validateDurations(invalid,scope,2,[run]))
+ }
+})
