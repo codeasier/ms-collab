@@ -34,3 +34,32 @@ isolates a future explicit regrant, which ordinary membership edits cannot do.
 Neither fixture is imported by runtime code. Tests explicitly retain both service
 and SQL identity-mutation denial. This is not real-provider, production or
 whole-backup-rollback validation.
+
+## Interactive replacement gate (Linux CI, fabricated observations only)
+
+The same unittest discovery command also runs the opt-in reviewed path:
+
+- `test_reviewed_terminal.py` launches a disposable subprocess in a new POSIX
+  session with its own owner-only Unix98 slave as its foreground controlling
+  terminal. The test reads a size/time-bounded synthetic preview **only in
+  memory**. It checks the complete projected bytes, old/removal counts, source,
+  audience and redaction before replying. A separate viewer calls the unchanged
+  PipelineApplication against the temporary SQLite file while the decision is
+  pending and after commit. An outsider stays denied. Wrong or prior challenges
+  and a child with no controlling TTY leave the old snapshot unchanged. An
+  unsafe-mode PTY (group-writable permissions or character transformations)
+  receives no preview bytes.
+  No terminal transcript, decision, source payload, screenshot or credential
+  goes to the runner log or an artifact. This demonstrates a kernel TTY path,
+  not real human review, confidentiality of an arbitrary terminal, or permission
+  to publish any real source. No test connects to an adapter or a provider.
+- `test_reviewed_refresh.py` holds the decision at service boundaries to check
+  denied roles, scope/identity/revision fences, no implicit network, empty or
+  invalid observations, an independent competing write, monotonic expiry and
+  snapshot/audit rollback. It injects separate post-persistence storage faults
+  to prove both exact record bytes and audit are reread before commit. A
+  mocked confirmation is **not** TTY acceptance.
+- `test_review_decision.py` checks candidate byte identity and the fields bound
+  to one decision with a fixed nonce. The independent PTY replay check uses two
+  real fresh challenges. `_review_fixture.py` is fixture setup only; the
+  synthetic operator grant does not come from the refresh caller.
