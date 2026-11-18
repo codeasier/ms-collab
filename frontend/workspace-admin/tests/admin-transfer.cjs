@@ -14,6 +14,45 @@ const settle=page=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(
 const state=(page,value)=>page.waitForFunction(value=>document.querySelector('#transfer-dialog')?.dataset.state===value,value)
 const empty=async page=>{assert.equal(await page.locator('#transfer-dialog').isVisible(),false);for(const id of ['transfer-selection','transfer-reference'])assert.equal(await page.locator('#'+id).textContent(),'')}
 
+// Sample the actual styled warning on its own composited dialog surface. A
+// gradient, group opacity or non-opaque backing requires a new measurement,
+// not an assumed white background. This probe neither scrolls nor clicks.
+async function checkUnknownMobile(page,transport){
+ const evidence=await page.locator('#transfer-status').evaluate(warning=>{
+  const dialog=warning.closest('dialog'),layers=[]
+  if(!dialog?.open||dialog.dataset.state!=='unknown'||!warning.getClientRects().length)throw Error('Unknown warning is not rendered.')
+  for(let node=warning;node;node=node.parentElement){
+   const style=getComputedStyle(node)
+   if(style.visibility!=='visible'||style.backgroundImage!=='none'||Number(style.opacity)!==1||style.filter!=='none'||style.mixBlendMode!=='normal')throw Error('Unsupported warning paint; inspect the actual rendered colors.')
+   layers.push(style.backgroundColor)
+   if(node===dialog)break
+  }
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=1
+  const ctx=canvas.getContext('2d',{willReadFrequently:true})
+  const paint=color=>{ctx.fillStyle=color;ctx.fillRect(0,0,1,1)}
+  const pixel=()=>Array.from(ctx.getImageData(0,0,1,1).data)
+  layers.reverse().forEach(paint)
+  const background=pixel()
+  if(background[3]!==255)throw Error('Warning backing is not opaque within the dialog.')
+  paint(getComputedStyle(warning).color);const foreground=pixel()
+  const luminance=rgba=>rgba.slice(0,3).reduce((sum,v,i)=>{const c=v/255;return sum+[.2126,.7152,.0722][i]*(c<=.04045?c/12.92:((c+.055)/1.055)**2.4)},0)
+  const [dark,light]=[luminance(background),luminance(foreground)].sort((a,b)=>a-b)
+  const box=dialog.getBoundingClientRect(),left=box.left+dialog.clientLeft,top=box.top+dialog.clientTop
+  const clip={left:Math.max(0,left),top:Math.max(0,top),right:Math.min(innerWidth,left+dialog.clientWidth),bottom:Math.min(innerHeight,top+dialog.clientHeight)}
+  const inside=r=>r.left>=clip.left&&r.right<=clip.right&&r.top>=clip.top&&r.bottom<=clip.bottom
+  const buttons=['transfer-confirm','transfer-close'].map(id=>{
+   const el=document.getElementById(id),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)
+   return {id,left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height,inside:inside(r),actionable:!el.disabled&&el.contains(hit)}
+  })
+  return {width:innerWidth,height:innerHeight,scrollTop:dialog.scrollTop,clip,warningInside:inside(warning.getBoundingClientRect()),foreground,background,contrast:(light+.05)/(dark+.05),buttons}
+ })
+ const detail=JSON.stringify(evidence)
+ assert.deepEqual([evidence.width,evidence.height,evidence.scrollTop],[390,844,0],detail)
+ assert.ok(evidence.warningInside&&evidence.contrast>=4.5,'Unknown warning must be fully visible with at least 4.5:1 contrast: '+detail)
+ for(const button of evidence.buttons)assert.ok(button.inside&&button.actionable&&button.width>=44&&button.height>=44,'Retry and Close must be fully on screen and hit-testable at 44px or larger: '+detail)
+ console.log(`Admin transfer ${transport} mobile visual measurements: ${detail}`)
+}
+
 async function exerciseAdminTransfer({browser,transport,folder}){
  assert.ok(['bearer','cookie'].includes(transport));assert.equal(Array.from(ACTOR).length,200)
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ms-collab-transfer-cert-'))
@@ -250,6 +289,7 @@ async function exerciseAdminTransfer({browser,transport,folder}){
   assert.ok(await lost.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('#transfer-dialog').scrollWidth<=document.querySelector('#transfer-dialog').clientWidth))
   await lost.page.evaluate(()=>{document.querySelector('#transfer-dialog').scrollTop=0});await settle(lost.page)
   assert.equal(await lost.page.locator('#transfer-confirm').textContent(),'Retry original request')
+  await checkUnknownMobile(lost.page,transport)
   await lost.page.screenshot({path:path.join(folder,'admin-transfer-unknown-mobile.png'),fullPage:true})
   // Permission setup in this TEST ONLY: fixed new-admin policy edit. Neither UI
   // nor product API recommends re-granting privileges to recover an unknown key.

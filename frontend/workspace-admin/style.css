@@ -8,3 +8,13 @@
 
 #transfer-dialog form{min-width:0}#transfer-selection,#transfer-reference,#transfer-status,#transfer-outcome{overflow-wrap:anywhere;white-space:pre-wrap}#transfer-selection:empty,#transfer-reference:empty,#transfer-outcome:empty{display:none}#transfer-selection{border-left:3px solid #e1b95d;padding-left:14px}#transfer-reference{font-family:ui-monospace,monospace;font-size:.88rem}#transfer-outcome{border:1px solid #627b99;border-radius:10px;padding:16px}#transfer-dialog[data-state="unknown"] #transfer-status{color:#f2cd7b}#transfer-target{width:100%;min-width:0}#members li>span{min-width:0}#members .member-controls{display:flex;flex-direction:column;gap:8px;flex-shrink:0}#members small{max-width:220px;overflow-wrap:anywhere}@media(max-width:480px){#transfer-dialog{padding:18px}#transfer-dialog button{width:100%;white-space:normal}#members .member-controls{width:100%}}
 #transfer-dialog[data-state="unknown"] #transfer-selection,#transfer-dialog[data-state="unknown"] .transfer-intro,#transfer-dialog[data-state="unknown"] #transfer-review{display:none}#transfer-dialog[data-state="unknown"] #transfer-title{order:-4}#transfer-dialog[data-state="unknown"] #transfer-status{order:-3;margin:0}#transfer-dialog[data-state="unknown"] #transfer-reference{order:-2;margin:0;line-height:1.4}#transfer-dialog[data-state="unknown"] .transfer-actions{order:-1}
+
+/* Standalone keeps the amber-on-navy warning. The Cookie shell's dialog is white. */
+body[data-page="manage"] #transfer-dialog[data-state="unknown"] #transfer-status{color:#704600}
+@media(max-width:480px){
+  #transfer-dialog[data-state="unknown"] #transfer-title{margin:0;line-height:1.2}
+  #transfer-dialog[data-state="unknown"] .transfer-actions{flex-flow:row wrap;align-items:stretch;gap:8px}
+  #transfer-dialog[data-state="unknown"] .transfer-actions button{min-height:44px}
+  #transfer-dialog[data-state="unknown"] #transfer-confirm{flex:2 1 11rem}
+  #transfer-dialog[data-state="unknown"] #transfer-close{flex:1 1 5rem}
+}
