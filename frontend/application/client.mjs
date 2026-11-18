@@ -13,6 +13,68 @@ function initialAdminSelectionRequest(path,method,precondition){
  }
  if(precondition!==undefined&&(path!=='/api/control/workspaces'||method!=='POST'||typeof precondition!=='string'||precondition.length!==69||!/^ias1-[a-f0-9]{64}$/.test(precondition)))throw Error('Invalid initial administrator precondition.')
 }
+const validId=value=>typeof value==='string'&&!/[\u0000-\u0020\u007f]/.test(value)&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)
+const invitationURL=workspace=>`/api/workspaces/${encodeURIComponent(workspace)}/invitations`
+const validateInvitations=(items,workspace)=>{if(items.some(i=>!i||!validId(i.id)||i.workspace_id!==workspace||!validId(i.principal_id)||typeof i.workspace_name!=='string'||i.workspace_name.length>200||!['viewer','developer'].includes(i.role)||!['pending','accepted','declined','revoked','expired','invalidated'].includes(i.state)||!Number.isSafeInteger(i.created)||!Number.isSafeInteger(i.expires)||i.expires<=i.created||!integer(i.revision)))throw Error('Invalid invitation response.')}
+// Invitation-only codecs mirror the standalone transport. Their asset roots are
+// /app and /manage (not the filesystem names); shared Node contract cases keep
+// the exact wire rules aligned without opening a new static route.
+const exactFields = (value, fields) => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',')
+const validInvitationRecipientPrecondition = value => typeof value === 'string' && value.length === 69 && /^irs1-[a-f0-9]{64}$/.test(value)
+function invitationSelectionURL(workspace, principal, role) {
+  if (!validId(workspace) || !validId(principal) || !['viewer','developer'].includes(role)) throw new Error('Invalid invitation selection.')
+  return `${invitationURL(workspace)}/selections/${encodeURIComponent(principal)}/${role}`
+}
+function validateInvitationSelection(data, workspace, principal, role) {
+  invitationSelectionURL(workspace, principal, role)
+  if (!exactFields(data, ['workspace_id','principal_id','role','precondition']) || data.workspace_id !== workspace || data.principal_id !== principal || data.role !== role || !validInvitationRecipientPrecondition(data.precondition)) throw new Error('Invalid invitation selection response.')
+  return data
+}
+function invitationSelectionRequest(path, method, body, precondition, isCurrent) {
+  let review, workspace
+  const parts = path.split('/')
+  if (parts[1] === 'api' && parts[2] === 'workspaces' && parts[4] === 'invitations' && (parts[5]?.startsWith('selections') || (method === 'POST' && parts.length === 5))) {
+    try { workspace = decodeURIComponent(parts[3]) } catch { throw new Error('Invalid invitation path.') }
+    if (!validId(workspace) || parts[3] !== encodeURIComponent(workspace)) throw new Error('Invalid invitation path.')
+    if (parts[5]?.startsWith('selections')) {
+      let principal
+      try { principal = decodeURIComponent(parts[6]) } catch { throw new Error('Invalid invitation selection path.') }
+      if (method !== 'GET' || body !== undefined || path !== invitationSelectionURL(workspace, principal, parts[7])) throw new Error('Invalid invitation selection path.')
+      review = {workspace, principal, role:parts[7]}
+    }
+  }
+  const creation = validId(workspace) && method === 'POST' && path === invitationURL(workspace)
+  if (creation && (!exactFields(body,['principal_id','role']) || !validId(body.principal_id) || !['viewer','developer'].includes(body.role))) throw new Error('Invalid invitation body.')
+  if (precondition !== undefined && (!creation || !validInvitationRecipientPrecondition(precondition))) throw new Error('Invalid invitation recipient precondition.')
+  if (isCurrent !== undefined && ((!creation && !review) || typeof isCurrent !== 'function')) throw new Error('Invalid invitation response guard.')
+  return {review, creation, workspace, recipient:creation ? {principal_id:body.principal_id,role:body.role} : undefined}
+}
+function assertCurrentInvitation(isCurrent) {
+  if (isCurrent !== undefined && !isCurrent()) { const error = new Error('Stale invitation response discarded.'); error.name = 'AbortError'; throw error }
+}
+function validateInvitationResult(payload, request) {
+  if (!exactFields(payload,['data'])) throw new Error('Invalid invitation response.')
+  if (request.review) {
+    const {workspace,principal,role} = request.review
+    return validateInvitationSelection(payload.data,workspace,principal,role)
+  }
+  const item = payload.data
+  if (!exactFields(item,['id','workspace_id','workspace_name','principal_id','role','state','created','expires','revision'])) throw new Error('Invalid invitation response.')
+  validateInvitations([item],request.workspace)
+  if (item.principal_id !== request.recipient.principal_id || item.role !== request.recipient.role) throw new Error('Invalid invitation response.')
+  return item
+}
+async function invitationSelectionRejected(response) {
+  // A post-read bound is not a streaming memory limit. Never expose raw errors.
+  try {
+    const raw = await response.text()
+    if (raw.length > 128) return false
+    const payload = JSON.parse(raw)
+    return exactFields(payload,['error']) && payload.error === 'invitation_recipient_selection_changed'
+  } catch { return false }
+}
+
+
 const messages={401:'Your session expired or was rejected. Sign in or explicitly recheck the session.',403:'Your current permissions do not allow this change.',404:'This scope or capability is unavailable to your identity.',409:'The current lifecycle or request conflicts with this change.',412:'The revision changed. Nothing was retried. Reload and review current state.',428:'A current revision is required.',503:'The configured service is unavailable. No login or result is assumed.'}
 export function csrfCookie(raw){
  if(typeof raw!=='string'||raw.length>8192||/[\u0000-\u001f\u007f]/.test(raw))throw new Error('CSRF proof unavailable.')
@@ -41,27 +103,38 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  let active=false,epoch=0
  const transfers=new Set()
  const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
- async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,signal,login=false,authenticated=false}={}){
+ async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={}){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
   initialAdminSelectionRequest(path,method,initialAdminPrecondition)
+  const invitation=invitationSelectionRequest(path,method,body,invitationRecipientPrecondition,invitationIsCurrent)
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
   if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
   if(revision!==undefined){if(!integer(revision))throw new Error('Current revision required.');headers['If-Match']=`"${revision}"`}
   if(requestKey!==undefined){if(typeof requestKey!=='string'||requestKey.match(/^[A-Za-z0-9_-]{1,200}$/)?.[0]!==requestKey)throw new Error('Invalid retry key.');headers['Idempotency-Key']=requestKey}
   if(initialAdminPrecondition!==undefined)headers['If-Initial-Admin-Match']=initialAdminPrecondition
+  if(invitationRecipientPrecondition!==undefined)headers['If-Invitation-Recipient-Match']=invitationRecipientPrecondition
   if(method!=='GET'){
    // A fresh cookie is read for each mutation. A missing/duplicate token fails locally.
    if(login){headers['X-MS-Collab-Login']='1';const raw=cookie();if(raw.split(';').some(x=>x.trim().startsWith('__Host-ms-collab-csrf=')))headers['X-CSRF-Token']=csrfCookie(raw)}
    else headers['X-CSRF-Token']=csrfCookie(cookie())
   }
   const response=await fetcher(path,{method,headers,body,signal,credentials:'same-origin',cache:'no-store',redirect:'error'})
-  if(turn!==epoch)throw new Error('Stale session response discarded.')
-  if(!response.ok){const error=new Error(messages[response.status]||'The request could not be verified. Nothing was retried.');error.status=response.status;if(response.status===401){clear();onInvalid(error.message)}throw error}
-  const raw=await response.text();if(raw.length>2097152)throw new Error('Invalid service response.')
+  const current=()=>{assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch)throw new Error('Stale session response discarded.')}
+  current() // Before 401 can clear the current session or call onInvalid.
+  if(!response.ok){
+   const error=new Error(messages[response.status]||'The request could not be verified. Nothing was retried.');error.status=response.status
+   if(invitation.creation&&response.status===412)error.invitationSelectionRejected=await invitationSelectionRejected(response)
+   current()
+   if(response.status===401){clear();onInvalid(error.message)}throw error
+  }
+  if((invitation.review||invitation.creation)&&response.status!==200)throw new Error('Invalid invitation response.')
+  let raw;try{raw=await response.text()}finally{current()}
+  if(raw.length>2097152)throw new Error('Invalid service response.')
   const payload=JSON.parse(raw);if(!own(payload,['data']))throw new Error('Invalid service response.')
-  if(turn!==epoch)throw new Error('Stale session response discarded.')
+  current()
+  if(invitation.review||invitation.creation)return validateInvitationResult(payload,invitation)
   return payload.data
  }
  return {

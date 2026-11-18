@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
 from packages.workspaces.model import MAX_REVISION, revision
+from .selection import _MISSING, require_recipient_selection
 
 _TABLE = 'workspace_invitations_v1'
 _CREATE = f"""CREATE TABLE {_TABLE} (
@@ -96,7 +97,8 @@ def view(policy, item, now):
         'workspace_name':space.name, 'state':effective_state(policy,item,now)}
 
 
-def create(connection, policy, actor, workspace, body, key, now):
+def create(connection, policy, actor, workspace, body, key, now, *,
+           expected_recipient_selection=_MISSING):
     admin = policy._admin(actor, workspace)
     prior = records(connection, 'workspace_id=? AND inviter=? AND request_key=?', (workspace, actor, key))
     if prior:
@@ -109,6 +111,11 @@ def create(connection, policy, actor, workspace, body, key, now):
         raise PolicyError(400, 'invalid_invitee')
     if body['role'] not in {'viewer','developer'}:
         raise PolicyError(400, 'invalid_invitation_role')
+    # A historical exact-key result above never interprets this new value. Only
+    # a first write compares the retained review in this same writer transaction,
+    # before any invitation/policy mutation and without repinning old authority.
+    require_recipient_selection(policy, actor, workspace, principal.id, body['role'],
+                                expected_recipient_selection)
     member = policy._memberships.get((workspace, principal.id))
     if member is not None and member.state == 'active':
         raise PolicyError(409, 'already_member')

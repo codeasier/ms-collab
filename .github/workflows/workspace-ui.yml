@@ -66,6 +66,8 @@ jobs:
             ${{ runner.temp }}/ms-collab-admin/mobile.png
             ${{ runner.temp }}/ms-collab-admin/invitations-desktop.png
             ${{ runner.temp }}/ms-collab-admin/invitations-mobile.png
+            ${{ runner.temp }}/ms-collab-admin/invitation-review-desktop.png
+            ${{ runner.temp }}/ms-collab-admin/invitation-review-mobile.png
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 3

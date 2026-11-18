@@ -24,6 +24,9 @@ rechecked. A synthetic fixture is never imported by the production factory.
   lifecycle controller with a cookie-only request client. New workspace creation
   uses separate initial-admin Review and Create actions, preserving the
   [identity precondition and unresolved-retry contract](../workspace_admin_api/README.md#initial-admin-identity-selection).
+  New invitations separately require [recipient Review](../workspace_invitations/README.md#explicit-recipient-identity-review)
+  for one workspace/role/identity, not a directory search or enrollment. Historical
+  invitation replay remains distinct from administrative creation retries.
 - `/responsibility/` reuses reviewed exact-scope configuration/CAS and candidate
   controls. It exists only when the host enables responsibility/community.
 - `/community/` reuses the explicit-content sharing board with exact-scope
@@ -80,7 +83,11 @@ client-selected return URL or fetch redirect is followed. Logout clears private
 page state immediately and sends one CSRF-protected server revoke. A failed or
 lost logout is reported as unconfirmed, never as a successful logout.
 
-Every 401 clears module/account state. Pagehide invalidates both controller and
+Current 401 responses clear module/account state. Invitation Review/POST requests
+add a narrow current-request guard before this transport side effect, so a delayed
+response after dialog/scope invalidation cannot sign out the newer interaction.
+This does not suppress a genuinely current 401 or change unrelated requests.
+Pagehide invalidates both controller and
 session epochs, aborting/dropping old replies even when AbortSignal is ineffective.
 A restored page requires an explicit session recheck. Cancellation never promises
 that an already committed mutation was undone. No automatic login or write retry
@@ -89,6 +96,12 @@ remain page-memory-only and clear with the lifecycle. An unresolved workspace
 creation also retains its original selection value; reviewing again alone cannot
 replace it. Only an explicit 412 permits a later user review to update that value
 while keeping the key, and a 409 never rotates the pair.
+Unresolved invitation requests retain their original key/body/recipient-proof
+pair. Identical inputs offer an explicit original-request retry without a new
+Review; only the exact no-write recipient-selection 412 permits a fresh explicit
+Review to update its proof. Dialog cancellation, scope changes and the mounted
+page's Reload control preserve that pair; full document reload, sign-out or
+pagehide loses it. No durable recovery or cross-tab retry-key sharing is claimed.
 
 This slice does not add module/repository discovery, real GitCode login evidence,
 real-provider compatibility, execution, production TLS setup or deployment acceptance.

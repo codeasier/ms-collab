@@ -55,11 +55,13 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
         for boundary in f.BOUNDARIES:
             with self.subTest(boundary=boundary), f.RetryNamespaceFixture(boundary) as case:
                 key = str(uuid4())
-                admin = self.invitation(case, case.invite('alpha', key=key), 'alpha')
+                admin = self.invitation(case, case.invite('alpha', key=key,
+                    proof=case.invitation_selection('alpha')), 'alpha')
                 before = case.snapshot()
                 # No row exists for the second inviter yet: business uniqueness,
                 # not a request-key collision, blocks the identical target/body.
-                self.response(case, case.invite('alpha', key=key, actor='other'),
+                self.response(case, case.invite('alpha', key=key, actor='other',
+                    proof=case.invitation_selection('alpha', actor='other')),
                               409, 'already_invited')
                 self.assertEqual(case.snapshot(), before)
                 self.records(case, [('alpha', 'admin', key, admin)])
@@ -69,7 +71,8 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
                 # The actor-axis success needs a different target to satisfy the
                 # workspace/target business rule; this is not an identical body.
                 other = self.invitation(case,
-                    case.invite('alpha', key=key, actor='other', target='viewer'),
+                    case.invite('alpha', key=key, actor='other', target='viewer',
+                        proof=case.invitation_selection('alpha', actor='other', target='viewer')),
                     'alpha', target='viewer')
                 self.assertNotEqual(admin['id'], other['id'])
                 expected = [('alpha', 'admin', key, admin), ('alpha', 'other', key, other)]
@@ -97,7 +100,8 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
         for boundary in f.BOUNDARIES:
             with self.subTest(boundary=boundary), f.RetryNamespaceFixture(boundary) as case:
                 key = str(uuid4())
-                items = {workspace: self.invitation(case, case.invite(workspace, key=key), workspace)
+                items = {workspace: self.invitation(case, case.invite(workspace, key=key,
+                        proof=case.invitation_selection(workspace)), workspace)
                          for workspace in ('alpha', 'beta', 'commons')}
                 self.assertEqual(len({item['id'] for item in items.values()}), 3)
                 expected = [(workspace, 'admin', key, item) for workspace, item in items.items()]
@@ -122,7 +126,8 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, member_state=member_state), \
                         f.RetryNamespaceFixture(boundary) as case:
                     key = str(uuid4())
-                    items = {workspace: self.invitation(case, case.invite(workspace, key=key), workspace)
+                    items = {workspace: self.invitation(case, case.invite(workspace, key=key,
+                        proof=case.invitation_selection(workspace)), workspace)
                              for workspace in ('alpha', 'beta')}
                     self.assertNotEqual(items['alpha']['id'], items['beta']['id'])
                     expected = [(workspace, 'admin', key, item) for workspace, item in items.items()]
@@ -159,7 +164,8 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, history=history), \
                         f.RetryNamespaceFixture(boundary) as case:
                     key = str(uuid4())
-                    items = {workspace: self.invitation(case, case.invite(workspace, key=key), workspace)
+                    items = {workspace: self.invitation(case, case.invite(workspace, key=key,
+                        proof=case.invitation_selection(workspace)), workspace)
                              for workspace in ('alpha', 'beta')}
                     self.assertNotEqual(items['alpha']['id'], items['beta']['id'])
                     self.assertEqual(self.target_memberships(case), [])
@@ -201,10 +207,12 @@ class InvitationRetryNamespaceTests(unittest.TestCase):
                     before = case.snapshot()
                     # Both historical states are valid metadata, not admin
                     # provenance conflicts. POST replay never grants membership.
-                    self.assertEqual(self.response(case, case.invite('alpha', key=key)), historical)
-                    self.assertEqual(case.snapshot(), before)
-                    self.assertEqual(self.response(case, case.invite('beta', key=key)), items['beta'])
-                    self.assertEqual(case.snapshot(), before)
+                    for proof in (f.ABSENT, None, 'malformed', 'irs1-' + '0' * 64):
+                        with self.subTest(proof=repr(proof)):
+                            self.assertEqual(self.response(case, case.invite('alpha', key=key, proof=proof)), historical)
+                            self.assertEqual(case.snapshot(), before)
+                            self.assertEqual(self.response(case, case.invite('beta', key=key, proof=proof)), items['beta'])
+                            self.assertEqual(case.snapshot(), before)
                     if history == 'invalidated':
                         self.response(case,
                             case.call('/api/invitations/' + items['alpha']['id'], actor='outsider',

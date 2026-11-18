@@ -115,7 +115,8 @@ class RetryNamespaceTests(unittest.TestCase):
                 key, proof = str(uuid4()), case.selection()
                 created = self.response(case, case.create(key=key, proof=proof))
                 installed = self.response(case, case.install('platform', key=key))
-                invited = self.response(case, case.invite('platform', key=key))
+                invited = self.response(case, case.invite('platform', key=key,
+                    proof=case.invitation_selection('platform')))
                 self.assertEqual(len(case.admin_rows()), 2)
                 self.assertEqual({row[:4] for row in case.admin_rows()}, {
                     ('admin', 'workspace.create', 'platform', key),

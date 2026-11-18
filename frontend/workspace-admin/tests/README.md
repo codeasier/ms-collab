@@ -61,3 +61,45 @@ as a regression gate, not retries: any failed run fails the job.
 This addresses the overlapping page/context route lifecycle failure observed on
 main `63196b3` (run `43706014212`); application authorization checks and every
 existing invitation assertion remain unchanged. See [Playwright routing lifecycle](https://playwright.dev/docs/api/class-page#page-unroute-all).
+
+## Invitation recipient Review acceptance
+
+These additions are pending exact-head remote CI execution, not local test or
+visual-acceptance claims. Both existing Node roots register seven named cases
+from `invitation-client-cases.mjs`: exact wire tuple/body/header; canonical paths
+and option isolation; full response binding; exact-code 412 recognition; stale
+GET/POST outcomes before invalidation; stale decoded bodies; current 401 behavior.
+The Cookie registration also asserts no clear/onInvalid for stale 401 and current
+session invalidation for a current one. Unreadable/extra-field/other-code 412 does
+not authorize selection replacement. Non-invitation behavior remains unchanged.
+
+`invitations.cjs` and `frontend/application/tests/browser.cjs` both invoke
+`exerciseInvitationReview` from `invitation-review.cjs`. The invoked real-page
+scenarios retain the original assertions and add:
+
+- No-review submit is a no-op; Review alone never writes. Input/role change-back,
+  Cancel/Escape, in-page reload/scope changes, pagehide and supported Back clear
+  current selection. Wrong tuples/extra fields cannot enable Send.
+- A real 200-character synthetic principal is reviewed at desktop and 390px.
+  Wrapped status, visible actions and no overflow are asserted; Cookie checks
+  computed contrast. Exact added images are `invitation-review-desktop.png` and
+  `invitation-review-mobile.png` in each existing UI artifact, with every old
+  screenshot retained.
+- A shaped stale value reaches actual SQLite/API 412; state reads verify no
+  invitation/grant and no automatic retry. Explicit Review/Send retains key/body.
+  Its committed response is then lost; Cancel, edit-back, in-page reload/scope
+  roundtrip and explicit retry retain the original key/body/proof without Review.
+  The recovered row retains the same ID/expiry, remains unique and grants nothing.
+- 400/409/428/unknown or extra-field 412/malformed or wrong-target 200 keep the
+  original pair. Old GET success/error/401 released while a newer GET is held,
+  and old POST success/error/401/exact412 released while a newer POST is held,
+  cannot disconnect, replace selection, mark the newer pair rejected or unlock
+  newer busy controls. Abort is deliberately ineffective. A current 401 clears.
+- Page departure clears all private UI and browser retry memory; no localStorage
+  or sessionStorage is introduced. Mocked adverse replies test races, not server
+  business acceptance. The actual supported paths are standalone Bearer HTTP and
+  unified Cookie HTTPS; real-provider/production acceptance remains outside scope.
+
+The original standalone invitation create/Join/revoke and late-real-write journey
+still runs independently three times under the unchanged workflow gate. A helper
+file existing on disk is not counted as evidence without these executed callers.

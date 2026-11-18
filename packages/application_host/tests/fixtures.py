@@ -52,11 +52,11 @@ class SyntheticExchange:
 
 
 def initialize(path):
-    people=('admin','reader','second','outsider'); spaces=('alpha','beta','commons')
+    people=('admin','reader','second','outsider','p' * 200); spaces=('alpha','beta','commons')
     scopes=tuple(PipelineScope(w,'example-ci','build') for w in spaces)
     policy_keys=tuple('research_assets' if k=='research-assets' else k for k in MODULES)
     store=SQLiteWorkspaceService.initialize(path,
-        principals=tuple(Principal(p,ISSUER,p+'-sub') for p in people),
+        principals=tuple(Principal(p,ISSUER,'long-recipient-sub' if p == 'p' * 200 else p+'-sub') for p in people),
         workspaces=tuple(Workspace(w,w,'shared' if w=='commons' else 'product') for w in spaces),
         memberships=(Membership('alpha','admin','admin'),Membership('alpha','reader','viewer'),
                      Membership('alpha','second','admin'),Membership('beta','second','admin'),Membership('commons','second','admin')),

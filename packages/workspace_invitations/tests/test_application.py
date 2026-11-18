@@ -14,6 +14,7 @@ from packages.workspace_invitations.store import _CREATE
 from packages.workspaces import StorageError, SQLiteWorkspaceService
 
 LIST = '/api/workspaces/alpha/invitations'
+ABSENT = object()
 
 
 class InvitationTests(unittest.TestCase):
@@ -27,9 +28,16 @@ class InvitationTests(unittest.TestCase):
     def request(self,path=LIST,**kwargs):
         return fixtures.call(self.app,path,**kwargs)
 
-    def invite(self,target='outsider',role='developer',key=None,**kwargs):
-        return self.request(method='POST',body={'principal_id':target,'role':role},
-                            extra={'HTTP_IDEMPOTENCY_KEY':key or str(uuid4())},**kwargs)
+    def selection(self,target='outsider',role='developer',workspace='alpha',**kwargs):
+        result=self.request(f'/api/workspaces/{workspace}/invitations/selections/{target}/{role}',**kwargs)
+        self.assertEqual(result['status'],200,result)
+        return result['body']['data']['precondition']
+
+    def invite(self,target='outsider',role='developer',key=None,proof=ABSENT,**kwargs):
+        # Explicit selection belongs at each fresh setup call, never in a retry helper.
+        extra={'HTTP_IDEMPOTENCY_KEY':key or str(uuid4())}
+        if proof is not ABSENT:extra['HTTP_IF_INVITATION_RECIPIENT_MATCH']=proof
+        return self.request(method='POST',body={'principal_id':target,'role':role},extra=extra,**kwargs)
 
     def respond(self,item,state='accepted',token='test-outsider',revision=None):
         return self.request('/api/invitations/'+item['id'],method='PATCH',token=token,
@@ -50,7 +58,7 @@ class InvitationTests(unittest.TestCase):
                          for table in ('workspace_invitations_v1','memberships','audit'))
 
     def test_acceptance_creates_one_current_membership_pin(self):
-        item = self.item()
+        item = self.item(proof=self.selection())
         self.assertEqual(self.respond(item)['status'],200)
         def verify(policy):
             self.assertTrue(policy._membership_current('outsider','alpha'))
@@ -60,7 +68,7 @@ class InvitationTests(unittest.TestCase):
         self.store._transaction(verify,write=False)
 
     def test_pending_invitation_rejects_unbound_inviter_membership(self):
-        item = self.item()
+        item = self.item(proof=self.selection())
         with sqlite3.connect(self.path) as db:
             db.execute("UPDATE membership_authority SET realm=NULL,issuer=NULL,subject=NULL,generation=NULL WHERE workspace_id='alpha' AND principal_id='admin'")
         before = self.counts()
@@ -68,7 +76,7 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(self.counts(),before)
 
     def test_invitation_cannot_rebind_revoked_legacy_or_stale_membership(self):
-        item = self.item()
+        item = self.item(proof=self.selection())
         self.assertEqual(self.respond(item)['status'],200)
         self.store.set_membership('admin','alpha','outsider',role='developer',state='revoked',expected_revision=1)
         for assignment in ('generation=2','realm=NULL,issuer=NULL,subject=NULL,generation=NULL'):
@@ -76,13 +84,13 @@ class InvitationTests(unittest.TestCase):
                 with sqlite3.connect(self.path) as db:
                     db.execute("UPDATE membership_authority SET "+assignment+" WHERE workspace_id='alpha' AND principal_id='outsider'")
                 before = self.counts()
-                result = self.invite()
+                result = self.invite(proof=self.selection())
                 self.assertEqual((result['status'],result['body']), (409,{'error':'membership_authority_unavailable'}))
                 self.assertEqual(self.counts(),before)
 
     def test_invitee_aba_and_reactivation_do_not_restore_invitation(self):
         for first, second in [("subject='replacement'", "subject='outsider-sub'"), ("active=0", "active=1")]:
-            item = self.item()
+            item = self.item(proof=self.selection())
             with sqlite3.connect(self.path) as db:
                 simulate_identity(db, "UPDATE principals SET " + first + " WHERE id='outsider'")
                 simulate_identity(db, "UPDATE principals SET " + second + " WHERE id='outsider'")
@@ -91,7 +99,7 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(self.request()['body']['data'][-1]['state'],'invalidated')
 
     def test_inviter_aba_keeps_old_grant_invalidated(self):
-        item = self.item()
+        item = self.item(proof=self.selection())
         with sqlite3.connect(self.path) as db:
             simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='admin'")
             simulate_identity(db, "UPDATE principals SET subject='admin-sub' WHERE id='admin'")
@@ -100,7 +108,7 @@ class InvitationTests(unittest.TestCase):
     def test_legacy_identity_digest_is_invalidated_not_backfilled(self):
         from hashlib import sha256
         import json
-        item = self.item()
+        item = self.item(proof=self.selection())
         digest = sha256(json.dumps([fixtures.ISSUER, 'outsider-sub'], ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest()
         with sqlite3.connect(self.path) as db:
             db.execute('UPDATE workspace_invitations_v1 SET binding=? WHERE id=?',(digest,item['id']))
@@ -117,7 +125,7 @@ class InvitationTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:db.execute('DROP TABLE workspace_invitations_v1')
         self.assertEqual(self.invite()['status'],503)
         initialize_invitations(self.store)
-        self.assertEqual(self.invite()['status'],200)
+        self.assertEqual(self.invite(proof=self.selection())['status'],200)
 
     def test_wrong_schema_rejected_without_weak_compatibility(self):
         for definition in [_CREATE.replace(' STRICT',''),_CREATE.replace(' NOT NULL',''),
@@ -141,11 +149,11 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(self.invite(target=target)['status'],400)
         for role in ['admin','owner','', 'Admin']:
             self.assertEqual(self.invite(role=role)['status'],400)
-        self.assertEqual(self.invite(target='viewer')['status'],409)
-        self.assertEqual(self.invite(target='admin')['status'],409)
+        self.assertEqual(self.invite(target='viewer',proof=self.selection(target='viewer'))['status'],409)
+        self.assertEqual(self.invite(target='admin',proof=self.selection(target='admin'))['status'],409)
 
     def test_no_membership_before_explicit_target_acceptance(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         self.assertEqual(self.request(fixtures.BASE+'/same',token='test-outsider')['status'],404)
         self.assertEqual(self.request('/api/workspaces',token='test-outsider')['body']['data'],[])
         inbox=self.request('/api/invitations',token='test-outsider')['body']['data']
@@ -164,69 +172,70 @@ class InvitationTests(unittest.TestCase):
                          ['invitation.create','membership.join','invitation.accepted'])
 
     def test_viewer_membership_cannot_write_and_shared_is_explicit(self):
-        item=self.item(role='viewer');self.respond(item)
+        item=self.item(role='viewer',proof=self.selection(role='viewer'));self.respond(item)
         result=self.request(fixtures.BASE+'/same',token='test-outsider',method='PUT',body={'text':'no'},revision='"1"')
         self.assertEqual(result['status'],403)
         self.assertEqual(self.request('/api/workspaces/commons/modules/board/resources/shared',token='test-outsider')['status'],404)
         item=self.request('/api/workspaces/commons/invitations',token='test-other',method='POST',
-             body={'principal_id':'outsider','role':'viewer'},extra={'HTTP_IDEMPOTENCY_KEY':str(uuid4())})['body']['data']
+             body={'principal_id':'outsider','role':'viewer'},extra={'HTTP_IDEMPOTENCY_KEY':str(uuid4()),
+                 'HTTP_IF_INVITATION_RECIPIENT_MATCH':self.selection(role='viewer',workspace='commons',token='test-other')})['body']['data']
         self.assertEqual(self.respond(item)['status'],200)
         self.assertEqual(self.request('/api/workspaces/commons/modules/board/resources/shared',token='test-outsider')['status'],200)
 
     def test_duplicate_creation_replay_does_not_extend_expiry_or_audit(self):
-        key=str(uuid4());item=self.item(key=key);count=self.counts()
+        key=str(uuid4());item=self.item(key=key,proof=self.selection());count=self.counts()
         self.invitation_now+=timedelta(hours=1)
         self.assertEqual(self.item(key=key),item);self.assertEqual(self.counts(),count)
         self.assertEqual(self.invite(key=key,role='viewer')['status'],409)
-        self.assertEqual(self.invite()['status'],409)
+        self.assertEqual(self.invite(proof=self.selection())['status'],409)
         self.respond(item);self.assertEqual(self.item(key=key)['state'],'accepted')
         self.assertEqual(len(self.store.audit_events('admin','alpha')),3)
 
     def test_expiry_strict_at_boundary_and_new_invite_allowed(self):
-        item=self.item();self.invitation_now+=timedelta(days=1)
+        item=self.item(proof=self.selection());self.invitation_now+=timedelta(days=1)
         self.assertEqual(self.respond(item)['status'],409)
         self.assertEqual(self.request()['body']['data'][0]['state'],'expired')
         self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])
-        self.assertNotEqual(self.item()['id'],item['id'])
+        self.assertNotEqual(self.item(proof=self.selection())['id'],item['id'])
 
     def test_revoke_and_decline_are_terminal(self):
-        item=self.item();self.assertEqual(self.revoke(item)['status'],200)
+        item=self.item(proof=self.selection());self.assertEqual(self.revoke(item)['status'],200)
         self.assertEqual(self.respond(item)['status'],412)
         self.assertEqual(self.respond(item,revision='"2"')['status'],409)
-        other=self.item();self.assertEqual(self.respond(other,'declined')['status'],200)
+        other=self.item(proof=self.selection());self.assertEqual(self.respond(other,'declined')['status'],200)
         self.assertEqual(self.respond(other,revision='"2"')['status'],409)
         self.assertNotIn('outsider',{m.principal_id for m in self.store.list_memberships('admin','alpha')})
 
     def test_membership_revocation_requires_new_invite_and_never_replays_old_accept(self):
-        item=self.item();self.respond(item)
+        item=self.item(proof=self.selection());self.respond(item)
         self.store.set_membership('admin','alpha','outsider',role='viewer',state='revoked',expected_revision=1)
         self.assertEqual(self.respond(item,revision='"2"')['status'],409)
-        next_item=self.item(role='viewer');self.assertEqual(self.respond(next_item)['status'],200)
+        next_item=self.item(role='viewer',proof=self.selection(role='viewer'));self.assertEqual(self.respond(next_item)['status'],200)
         member=next(m for m in self.store.list_memberships('admin','alpha') if m.principal_id=='outsider')
         self.assertEqual((member.role,member.state,member.revision),('viewer','active',3))
 
     def test_inviter_demotion_and_restoration_invalidates_old_grant(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         self.store.set_membership('admin','alpha','viewer',role='admin',state='active',expected_revision=1)
         self.store.set_membership('viewer','alpha','admin',role='developer',state='active',expected_revision=1)
         self.assertEqual(self.respond(item)['status'],409)
         self.store.set_membership('viewer','alpha','admin',role='admin',state='active',expected_revision=2)
         self.assertEqual(self.respond(item)['status'],409)
         self.assertEqual(self.request()['body']['data'][0]['state'],'invalidated')
-        self.assertEqual(self.respond(self.item())['status'],200)
+        self.assertEqual(self.respond(self.item(proof=self.selection()))['status'],200)
 
     def test_lifecycle_change_invalidates_even_after_reactivation(self):
-        item=self.item();self.store.set_workspace_state('admin','alpha',state='suspended',expected_revision=1)
+        item=self.item(proof=self.selection());self.store.set_workspace_state('admin','alpha',state='suspended',expected_revision=1)
         self.assertEqual(self.respond(item)['status'],409)
         self.assertEqual(self.invite()['status'],409)
         self.store.set_workspace_state('admin','alpha',state='active',expected_revision=2)
         self.assertEqual(self.respond(item)['status'],409)
-        item2=self.item();self.store.set_workspace_state('admin','alpha',state='archived',expected_revision=3)
+        item2=self.item(proof=self.selection());self.store.set_workspace_state('admin','alpha',state='archived',expected_revision=3)
         self.assertEqual(self.respond(item2)['status'],409)
         self.assertEqual(self.revoke(item2)['status'],200)
 
     def test_identity_rebind_cannot_inherit_invitation(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='outsider'")
         self.assertEqual(self.respond(item)['status'],401)
         # A fully verified replacement subject still cannot inherit old grant.
@@ -237,21 +246,21 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])
 
     def test_inactive_target_is_denied(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET active=0 WHERE id='outsider'")
         self.assertEqual(self.respond(item)['status'],401)
         self.assertEqual(self.request()['body']['data'][0]['state'],'invalidated')
 
     def test_replayed_create_rechecks_admin(self):
-        key=str(uuid4());self.item(key=key)
+        key=str(uuid4());self.item(key=key,proof=self.selection())
         self.store.set_membership('admin','alpha','viewer',role='admin',state='active',expected_revision=1)
         self.store.set_membership('viewer','alpha','admin',role='viewer',state='active',expected_revision=1)
         self.assertEqual(self.invite(key=key)['status'],403)
 
     def test_concurrent_creation_and_acceptance_are_single_mutations(self):
-        key=str(uuid4())
+        key=str(uuid4());proof=self.selection()
         with ThreadPoolExecutor(max_workers=2) as pool:
-            responses=list(pool.map(lambda _:self.invite(key=key),range(2)))
+            responses=list(pool.map(lambda _:self.invite(key=key,proof=proof),range(2)))
         self.assertEqual([r['status'] for r in responses],[200,200])
         self.assertEqual(responses[0]['body'],responses[1]['body'])
         item=responses[0]['body']['data']
@@ -260,7 +269,7 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(statuses,[200,412]);self.assertEqual(self.counts(),(1,6,3))
 
     def test_concurrent_accept_and_revoke_has_one_winner(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         with ThreadPoolExecutor(max_workers=2) as pool:
             a=pool.submit(self.respond,item);b=pool.submit(self.revoke,item)
             self.assertEqual(sorted([a.result()['status'],b.result()['status']]),[200,412])
@@ -268,7 +277,7 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(self.request(fixtures.BASE+'/same',token='test-outsider')['status'],200 if state=='accepted' else 404)
 
     def test_durable_restart_and_no_plaintext_secrets(self):
-        key=str(uuid4());item=self.item(key=key)
+        key=str(uuid4());item=self.item(key=key,proof=self.selection())
         self.store=SQLiteWorkspaceService(self.path)
         base=fixtures.WorkspaceApplication(store=self.store,providers=(self.provider,),provider_key='test',clock=lambda:self.now)
         self.app=WorkspaceInvitationApplication(api=base,clock=lambda:self.invitation_now)
@@ -277,7 +286,7 @@ class InvitationTests(unittest.TestCase):
         for value in (b'test-admin',b'test-outsider',b'Bearer '):self.assertNotIn(value,raw)
 
     def test_invitation_expiry_during_persistence_rolls_everything_back(self):
-        item=self.item();counts=self.counts();persist=self.store._persist
+        item=self.item(proof=self.selection());counts=self.counts();persist=self.store._persist
         def slow(*args,**kwargs):
             persist(*args,**kwargs);self.invitation_now+=timedelta(days=1)
         with patch.object(self.store,'_persist',side_effect=slow):
@@ -286,13 +295,13 @@ class InvitationTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT state FROM workspace_invitations_v1').fetchone()[0],'pending')
 
     def test_assertion_expiry_during_persistence_rolls_everything_back(self):
-        item=self.item();counts=self.counts();persist=self.store._persist
+        item=self.item(proof=self.selection());counts=self.counts();persist=self.store._persist
         def slow(*args,**kwargs):persist(*args,**kwargs);self.now+=timedelta(minutes=1)
         with patch.object(self.store,'_persist',side_effect=slow):self.assertEqual(self.respond(item)['status'],401)
         self.assertEqual(self.counts(),counts)
 
     def test_audit_failure_rolls_back_invitation_and_membership(self):
-        item=self.item();counts=self.counts()
+        item=self.item(proof=self.selection());counts=self.counts()
         with sqlite3.connect(self.path) as db:db.execute("CREATE TRIGGER reject_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT,'synthetic'); END")
         self.assertEqual(self.respond(item)['status'],503);self.assertEqual(self.counts(),counts)
         with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT state FROM workspace_invitations_v1').fetchone()[0],'pending')
@@ -300,10 +309,10 @@ class InvitationTests(unittest.TestCase):
     def test_create_audit_failure_rolls_back_pending_record(self):
         counts=self.counts()
         with sqlite3.connect(self.path) as db:db.execute("CREATE TRIGGER reject_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-        self.assertEqual(self.invite()['status'],503);self.assertEqual(self.counts(),counts)
+        self.assertEqual(self.invite(proof=self.selection())['status'],503);self.assertEqual(self.counts(),counts)
 
     def test_input_routes_preconditions_and_duplicate_fields_fail_closed(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         for path,kwargs,status in [
             (LIST,{'method':'POST','body':{'principal_id':'other','role':'viewer'}},400),
             (LIST,{'method':'POST','body':{'principal_id':'other','role':'viewer','state':'accepted'},'extra':{'HTTP_IDEMPOTENCY_KEY':str(uuid4())}},400),
@@ -319,7 +328,7 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(result['status'],400)
 
     def test_added_commit_guard_cannot_extend_credential_validity(self):
-        item=self.item();counts=self.counts();calls=0
+        item=self.item(proof=self.selection());counts=self.counts();calls=0
         def advancing_clock():
             nonlocal calls
             calls+=1
@@ -331,7 +340,7 @@ class InvitationTests(unittest.TestCase):
         with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT state FROM workspace_invitations_v1').fetchone()[0],'pending')
 
     def test_inviter_binding_replacement_invalidates_old_grant(self):
-        item=self.item()
+        item=self.item(proof=self.selection())
         with sqlite3.connect(self.path) as db:simulate_identity(db, "UPDATE principals SET subject='replacement' WHERE id='admin'")
         self.assertEqual(self.respond(item)['status'],409)
         self.assertEqual(self.request('/api/invitations',token='test-outsider')['body']['data'],[])

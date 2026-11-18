@@ -113,3 +113,14 @@ bounded synthetic-fixture stderr tail; success is printed only after every
 cleanup succeeds. The five catalog/approval and four scope-picker screenshots,
 product assertions and existing 15-minute workflow gate are unchanged. This is
 test-infrastructure cleanup, not a product behavior or migration change.
+
+Invitation recipient Review: `invitation-client.test.mjs` registers the seven
+shared invitation transport contracts against the Cookie client. Existing
+`browser.cjs` invokes the same [Review/retry/race scenarios](../../workspace-admin/tests/README.md#invitation-recipient-review-acceptance)
+as the standalone invitation entry, using actual synthetic HTTPS/session/API and
+SQLite. It adds only `invitation-review-desktop.png` and
+`invitation-review-mobile.png` to the existing nine-image artifact. The 200-character
+invitation recipient is a real synthetic fixture principal (unlike the pre-existing
+initial-admin layout-only interception). This is an exact-head CI acceptance plan;
+local work used syntax/text checks only. No real login/provider or production
+acceptance is implied.

@@ -48,3 +48,12 @@ The `/community/` page mounts the reviewed community board with `createCommunity
   validation and visible cursor. Discovery workspace stays separate from manual
   exact IDs. It reuses the existing run/detail/task/duration controller and clears
   it on selection, page changes and manual edits. See [directory boundaries](../../packages/pipeline_api/DISCOVERY.md).
+
+The shared invitation dialog requires explicit recipient Review then Send, with
+[original-request recovery](../workspace-admin/README.md#invitation-recipient-review)
+in memory only. Its Cookie client accepts `invitationIsCurrent` only on the exact
+Review GET or invitation-collection POST. It checks ownership plus the session
+epoch before any 401 clear/onInvalid side effect, and after reading a response.
+A current 401 still invalidates the session. `invitationRecipientPrecondition`
+is valid only on the exact POST, never a URL/body field. CSRF is freshly read for
+each mutation; no Bearer fallback, login enablement or new static route is added.

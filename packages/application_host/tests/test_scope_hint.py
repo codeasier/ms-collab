@@ -144,8 +144,11 @@ class HostScopeHintTests(unittest.TestCase):
         for path in ('/api/workspaces/alpha/unknown/items', '/api/workspaces/alpha/modules/pipelines/resources/raw',
                      '/api/workspaces/alpha/artifact-download/source/bucket/download'):
             self.rejected(self.request(path, extra=HINT), 404, 'not_found')
+        proof = self.request('/api/workspaces/alpha/invitations/selections/outsider/viewer')
+        self.assertEqual(proof['status'], 200, proof)
         created = self.write('/api/workspaces/alpha/invitations', body={'principal_id': 'outsider', 'role': 'viewer'},
-            extra={'HTTP_IDEMPOTENCY_KEY': '11111111-1111-4111-8111-111111111111'})
+            extra={'HTTP_IDEMPOTENCY_KEY': '11111111-1111-4111-8111-111111111111',
+                   'HTTP_IF_INVITATION_RECIPIENT_MATCH': proof['body']['data']['precondition']})
         self.assertEqual(created['status'], 200, created)
         self.sign_in('outsider-sub')
         result = self.write('/api/invitations/' + created['body']['data']['id'], method='PATCH',

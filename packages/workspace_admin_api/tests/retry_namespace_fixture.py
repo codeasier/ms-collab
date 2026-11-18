@@ -30,6 +30,7 @@ ACTORS = ('admin', 'other')
 CREATE_BODY = {'name': 'Namespace fixture', 'kind': 'product', 'initial_admin': 'viewer'}
 ADMIN_TABLE = 'workspace_admin_requests_v2'
 INVITATION_TABLE = 'workspace_invitations_v1'
+ABSENT = object()
 
 
 class RetryNamespaceFixture:
@@ -94,12 +95,14 @@ class RetryNamespaceFixture:
         self.temp.cleanup()
 
     def call(self, path, *, actor='admin', method='GET', body=None, key=None,
-             proof=None, revision=None):
+             proof=None, revision=None, invitation_proof=ABSENT):
         extra = {}
         if key is not None:
             extra['HTTP_IDEMPOTENCY_KEY'] = key
         if proof is not None:
             extra['HTTP_IF_INITIAL_ADMIN_MATCH'] = proof
+        if invitation_proof is not ABSENT:
+            extra['HTTP_IF_INVITATION_RECIPIENT_MATCH'] = invitation_proof
         options = dict(method=method, body=body, extra=extra,
                        revision=None if revision is None else f'"{revision}"')
         if self.boundary == 'bearer':
@@ -125,9 +128,15 @@ class RetryNamespaceFixture:
         return self.call(f'/api/workspaces/{workspace}/modules', method='POST', actor=actor,
                          key=key, body={'key': module})
 
-    def invite(self, workspace, *, key, actor='admin', target='outsider', role='viewer'):
+    def invitation_selection(self, workspace, *, actor='admin', target='outsider', role='viewer'):
+        response = self.call(f'/api/workspaces/{workspace}/invitations/selections/{target}/{role}', actor=actor)
+        if response['status'] != 200:
+            raise AssertionError(response)
+        return response['body']['data']['precondition']
+
+    def invite(self, workspace, *, key, actor='admin', target='outsider', role='viewer', proof=ABSENT):
         return self.call(f'/api/workspaces/{workspace}/invitations', method='POST', actor=actor,
-                         key=key, body={'principal_id': target, 'role': role})
+                         key=key, invitation_proof=proof, body={'principal_id': target, 'role': role})
 
     def member(self, workspace, target, *, actor='other', role='viewer', state='revoked', revision=1):
         return self.call(f'/api/workspaces/{workspace}/members/{target}', method='PATCH',
