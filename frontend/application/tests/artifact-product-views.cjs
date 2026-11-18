@@ -5,7 +5,6 @@ const {isDeepStrictEqual} = require('node:util')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path')
 const {createHash} = require('node:crypto'), {spawn, execFileSync} = require('node:child_process')
 const readline = require('node:readline'), {chromium} = require('playwright')
-const {createScenarioRouter} = require('../../workspace-admin/tests/scenario-router.cjs')
 const {stopSyntheticFixture} = require('./fixture-process.cjs')
 
 const catalog = '/artifacts/', product = '/artifacts/product-views/'
@@ -24,9 +23,18 @@ const rangeRows = ['pkg/ab/KIT_two.zip',directLeaf,deepLeaf]
 const body = (diff={}) => ({format:1,quarter:q2,path:'',mode:'tree',page:1,page_size:10,...diff})
 const files = (diff={}) => ({path:layer,mode:'files',recursive:false,...diff})
 const privateIds = ['workspace','connection','bucket','view','quarter','keyword','start','end']
-const frames = page => page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))
+const frames = page => bounded(page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))),'two real animation frames')
 function defer(){let resolve,reject;const promise=new Promise((ok,no)=>{resolve=ok;reject=no});return {resolve,reject,promise}}
-function bounded(p,label){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(Error('Timed out: '+label)),15000)})]).finally(()=>clearTimeout(t))}
+function bounded(p,label,ms=15000){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(Error('Timed out: '+label)),ms)})]).finally(()=>clearTimeout(t))}
+let currentCheckpoint=''
+class FixtureFailure extends Error{}
+function failure(label,e){
+  if(e instanceof FixtureFailure)return e
+  const line=/artifact-product-views[.]cjs:(\d+):\d+/.exec(String(e?.stack))?.[1]
+  const kind=e?.name==='TimeoutError'||String(e?.message).startsWith('Timed out: ')?'timeout':e?.code==='ERR_ASSERTION'?'assertion':'error'
+  return new FixtureFailure('Product-view '+kind+' in '+label+' / '+currentCheckpoint+(line?' at harness line '+line:''))
+}
+function checkpoint(label){currentCheckpoint=label;console.log('PRODUCT_VIEW_STEP '+label)}
 const isProduct = p => p.startsWith('/api/')&&p.includes('/product-views/')
 const visible = (page,id) => page.locator('#'+id).waitFor({state:'visible'})
 const enter = async (page,id) => {const control=page.locator('#'+id);await control.focus();await page.keyboard.press('Enter')}
@@ -56,39 +64,96 @@ async function fixture(enabled,test){
     assert.match(info.origin,/^https:\/\/127\.0\.0\.1:\d+$/)
     assert.equal(info.provider,info.origin.replace('127.0.0.1','localhost')+'/synthetic-provider')
     browser=await chromium.launch({headless:true,ignoreDefaultArgs:['--disable-back-forward-cache']})
-    await test({info,browser,contexts,releaseAll})
-  }catch(e){failures.push(e)}
+    await bounded(test({info,browser,contexts,releaseAll}),'synthetic fixture journey',240000)
+  }catch(e){failures.push(failure('fixture journey',e))}
   finally{
-    for(const release of releaseAll){try{release()}catch(e){failures.push(e)}}
-    for(const {ctx,router} of contexts){
-      if(router){
-        try{await bounded(router.drain(),'owned routes drained')}catch(e){failures.push(e)}
-        try{await bounded(ctx.unrouteAll({behavior:'wait'}),'owned routes removed')}catch(e){failures.push(e)}
-      }
-      try{await bounded(ctx.close(),'context closed')}catch(e){failures.push(e)}
+    checkpoint('cleanup: release barriers')
+    for(const release of releaseAll){try{release()}catch(e){failures.push(failure('fixture cleanup',e))}}
+    for(const owner of contexts){
+      if(owner.closed)continue
+      if(owner.gate)try{await bounded(owner.gate.close(),'response interception stopped')}catch(e){failures.push(failure('fixture cleanup',e))}
+      try{await bounded(owner.ctx.close(),'context closed');owner.closed=true}catch(e){failures.push(failure('fixture cleanup',e))}
     }
-    try{if(browser)await bounded(browser.close(),'browser closed')}catch(e){failures.push(e)}
-    try{await stopSyntheticFixture(child)}catch(e){failures.push(e)}
-    try{fs.rmSync(temp,{recursive:true,force:true})}catch(e){failures.push(e)}
+    checkpoint('cleanup: close Chromium and stop TLS fixture')
+    try{if(browser)await bounded(browser.close(),'browser closed')}catch(e){failures.push(failure('fixture cleanup',e))}
+    try{await stopSyntheticFixture(child)}catch(e){failures.push(failure('fixture cleanup',e))}
+    try{fs.rmSync(temp,{recursive:true,force:true})}catch(e){failures.push(failure('fixture cleanup',e))}
   }
   if(failures.length&&fixtureFailure)console.error('Synthetic fixture exception class: '+fixtureFailure)
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Product fixture or cleanup failed')
 }
+// Only the three named synthetic HTTPS responses are intercepted, after the
+// real browser request has been served by the single-threaded WSGI fixture.
+// No route.fetch() replay/second TLS client; no auth/header/body collection.
+async function syntheticGate(ctx,page,info,errors){
+  const cdp=await ctx.newCDPSession(page),armed=new Map(),active=new Set()
+  const script='/app/artifact-product-view.mjs',allowed=new Map([[kit,'POST'],[s1+'/quarters','GET'],[script,'GET']])
+  let closing=false
+  const send=(method,args)=>bounded(cdp.send(method,args),'fixture '+method)
+  // Ordered absolute URLPatterns: fail closed before networking, without a
+  // second Fetch request owner. Fail rather than falling back if unsupported.
+  await send('Network.enable',{})
+  await send('Network.setBlockedURLs',{urlPatterns:[
+    {urlPattern:info.origin+'/*',block:false},{urlPattern:info.provider+'?*',block:false},
+    {urlPattern:'*://*:*/*',block:true}
+  ],urls:['*']})
+  const handle=async e=>{
+    const requestId=e.requestId,url=new URL(e.request.url),path=url.pathname
+    const owner=armed.get(path)
+    if(!owner)return send('Fetch.continueResponse',{requestId})
+    armed.delete(path)
+    try{
+      assert.ok(!closing&&allowed.get(path)===e.request.method&&url.href===info.origin+path,'unexpected fixture target')
+      assert.equal(e.responseStatusCode,200,'fault injection requires a real successful response')
+      const {body:raw,base64Encoded}=await send('Fetch.getResponseBody',{requestId})
+      const original=Buffer.from(raw,base64Encoded?'base64':'utf8')
+      assert.ok(original.length>0&&original.length<=2097152,'invalid synthetic fixture body')
+      // Forward policy/MIME only: no challenge, authentication or cookie header.
+      const headers=e.responseHeaders.filter(h=>['cache-control','pragma','referrer-policy','vary','content-security-policy','x-content-type-options','content-type'].includes(h.name.toLowerCase()))
+      assert.ok(headers.some(h=>h.name.toLowerCase()==='cache-control'&&h.value==='no-store'))
+      const mime=headers.find(h=>h.name.toLowerCase()==='content-type')?.value
+      assert.ok(path===script?/^text\/javascript/.test(mime):/^application\/json/.test(mime))
+      const changed=await bounded(owner.change(original),'explicit synthetic reply release')
+      const bytes=changed?Buffer.from(JSON.stringify(changed.dto)):original,status=changed?.status??200
+      assert.ok([200,401,403,409,412,503].includes(status))
+      await send('Fetch.fulfillRequest',{requestId,responseCode:status,
+        responseHeaders:[...headers,{name:'Content-Length',value:String(bytes.length)}],body:bytes.toString('base64')})
+      owner.done.resolve()
+    }catch(e){owner.done.reject(e);throw e}
+  }
+  const onPaused=e=>{
+    const op=handle(e).catch(async()=>{
+      errors.push('fixture response interception failed')
+      await send('Fetch.failRequest',{requestId:e.requestId,errorReason:'Failed'}).catch(()=>{})
+    })
+    active.add(op);op.finally(()=>active.delete(op))
+  }
+  cdp.on('Fetch.requestPaused',onPaused)
+  await send('Fetch.enable',{patterns:[...allowed.keys()].map(path=>({urlPattern:info.origin+path,requestStage:'Response'}))})
+  return {
+    once(path,change){
+      assert.ok(!closing&&allowed.has(path)&&!armed.has(path),'only one fixed response may be armed')
+      const done=defer();done.promise.catch(()=>{});armed.set(path,{change,done});return done.promise
+    },
+    async close(){
+      closing=true
+      for(const owner of armed.values())owner.done.reject(Error('Fixture closed before response'))
+      armed.clear()
+      try{
+        while(active.size)await bounded(Promise.all([...active]),'finish active CDP responses')
+      }finally{
+        try{await send('Fetch.disable',{})}finally{cdp.off('Fetch.requestPaused',onPaused);await bounded(cdp.detach(),'fixture session detached')}
+        assert.equal(errors.length,0,'fixture failed before or during teardown')
+      }
+    }
+  }
+}
 async function surface(env,{clean=false}={}){
   const {info,browser,contexts}=env
   const ctx=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1100},timezoneId:'Pacific/Honolulu'})
   const errors=[],journal=[],allowedProvider=new URL(info.provider)
-  const router=clean?null:createScenarioRouter({origin:info.origin,onExternal:()=>errors.push('unexpected origin')})
-  contexts.push({ctx,router})
-  if(router)await ctx.route('**/*',async route=>{
-    const u=new URL(route.request().url())
-    if(u.origin===info.origin){
-      try{return await router.handle(route)}catch{errors.push('scenario router failed: '+(isProduct(u.pathname)?'product':u.pathname.endsWith('.mjs')?'module':'other'));await route.abort().catch(()=>{});return}
-    }
-    if(u.origin===allowedProvider.origin&&u.pathname===allowedProvider.pathname)return route.continue()
-    errors.push('unexpected external resource');await route.abort()
-  })
+  const owner={ctx,closed:false};contexts.push(owner)
   await ctx.addInitScript(()=>{
     // New on each document. Do not use browser storage, copied cookies or history
     // to retain observations. A BFCache restore reuses the original array.
@@ -101,6 +166,9 @@ async function surface(env,{clean=false}={}){
     // body uses exactly the bytes actually read from the server.
     const original=window.fetch
     window.__pvNet={product:[],bodyStarted:0,bodyDone:0,transportDone:0,invalidations:0}
+    // Once leaving, do not strand held promises in a cached document. The
+    // synchronous navigation/pagehide guards still run before any continuation.
+    addEventListener('pagehide',()=>{window.__pvNet.releaseBody?.();window.__releaseOldNamed?.()})
     window.fetch=async function(input,options={}){
       const requestPath=new URL(typeof input==='string'?input:input.url,location.origin).pathname
       const {signal,...rest}=options
@@ -133,6 +201,7 @@ async function surface(env,{clean=false}={}){
   })
   const page=await ctx.newPage()
   page.setDefaultTimeout(9000)
+  if(!clean)owner.gate=await syntheticGate(ctx,page,info,errors)
   page.on('dialog',async d=>{errors.push('unexpected dialog');await d.dismiss()})
   page.on('pageerror',()=>errors.push('uncaught page error'))
   page.on('download',()=>errors.push('unexpected download'))
@@ -160,13 +229,25 @@ async function surface(env,{clean=false}={}){
     }
     journal.push({p:u.pathname,m:r.method(),...(pv?{body:known}:{}),hasQuery:Boolean(u.search)})
   })
-  return {page,ctx,router,journal,errors,...env}
+  return {page,ctx,gate:owner.gate,owner,journal,errors,...env}
 }
 async function login(s,enabled){
   const {page,info,journal}=s
   const ready=page.waitForResponse(r=>new URL(r.url()).pathname==='/app/bootstrap')
   await page.goto(info.origin+catalog)
   const boot=await (await ready).json()
+  if(s.gate){
+    // Check URLPattern semantics in the pinned Chromium without sending probes
+    // to another site. A CDP without urlPatterns receives the deny-all legacy
+    // urls rule and cannot even load this trusted bootstrap.
+    assert.equal(await page.evaluate(([origin,provider])=>{
+      const rules=[new URLPattern(origin+'/*'),new URLPattern(provider+'?*'),new URLPattern('*://*:*/*')]
+      const allowed=u=>rules.findIndex(p=>p.test(u))<2&&rules.some(p=>p.test(u))
+      return allowed(origin+'/artifacts/')&&allowed(origin+'/api/x?x=1')&&allowed(provider+'?synthetic=test')
+          &&[origin.replace('https:','http:')+'/',new URL(provider).origin+'/wrong','https://external.invalid/','https://external.invalid:8443/']
+              .every(u=>rules[2].test(u)&&!allowed(u))
+    },[info.origin,info.provider]),true)
+  }
   assert.deepEqual(Object.keys(boot),['data'])
   assert.deepEqual(Object.keys(boot.data).sort(),['authorization_endpoint','login_configured','service','ui_modules'])
   assert.equal(boot.data.authorization_endpoint,info.provider);assert.equal(boot.data.service,'ms-collab')
@@ -259,7 +340,7 @@ async function wire(s,action,target,expected,statusCode=200){
   return response
 }
 async function read(s,action,target,expected,keys,total,available=true){
-  const before=countApi(s.journal),res=await wire(s,action,target,expected),data=(await res.json()).data
+  const before=countApi(s.journal),res=await wire(s,action,target,expected),data=(await bounded(res.json(),'browser decoded real product response')).data
   assert.deepEqual(data.scope,{workspace_id:'alpha',connection_id:'source',bucket_id:target===other?'second-bucket':'bucket'})
   assert.equal(data.view_id,target.split('/').at(-1));assert.equal(data.kind,'product-view')
   for(const k of ['quarter','mode','path','page','page_size'])assert.equal(data[k],expected[k])
@@ -321,29 +402,34 @@ async function ctrl(s,name){
     return r.status===200&&(await r.json()).ok===true
   },name),true,'Fixture control failed: '+name)
 }
-// route.fetch returned a genuine 200. When substituting a fault do not inherit
-// its old Content-Length: a truncated document is a different failure case.
-function substituted(route,response,status,dto){
-  const content=JSON.stringify(dto)
-  return route.fulfill({status,headers:{...response.headers(),'content-type':'application/json; charset=utf-8',
-    'content-length':String(Buffer.byteLength(content))},body:content})
-}
 function held(s,target,injected){
-  const started=defer(),gate=defer(),done=defer()
-  s.releaseAll.push(gate.resolve)
-  s.router.set(target,async route=>{
-    // Always reach the real HTTPS backend first; only the optional final status
-    // on this obsolete response is injected. Never invent a successful row.
-    try{
-      const real=await route.fetch();assert.equal(real.status(),200)
-      s.router.remove(target);started.resolve()
-      await gate.promise
-      if(injected)await substituted(route,real,injected,{error:'synthetic_protocol_fault'})
-      else await route.fulfill({response:real})
-      done.resolve()
-    }catch(e){started.reject(e);done.resolve();throw e}
+  const reached=defer(),gate=defer(),script='/app/artifact-product-view.mjs'
+  // Bind the old Playwright Request *before* the click; another same-URL
+  // request in the ABA exercise may have completed before this reply.
+  const req=s.page.waitForRequest(r=>r.url()===s.info.origin+target&&r.method()===(target===kit?'POST':'GET'))
+  req.catch(()=>{});s.releaseAll.push(gate.resolve)
+  let originalHash
+  const done=s.gate.once(target,async bytes=>{
+    originalHash=createHash('sha256').update(bytes).digest('hex')
+    reached.resolve();await gate.promise
+    return injected?{status:injected,dto:{error:'synthetic_protocol_fault'}}:null
   })
-  return {started:bounded(started.promise,'held real response'),release:async()=>{gate.resolve();await bounded(done.promise,'released response');await frames(s.page)}}
+  const started=Promise.race([reached.promise,done]).then(()=>{});started.catch(()=>{})
+  return {started,release:async()=>{
+    gate.resolve()
+    await bounded(done,'held response delivered')
+    const response=await bounded((await req).response(),'old Chromium request received response')
+    assert.equal(response?.status(),injected||200)
+    assert.ok(await response.headerValue('www-authenticate')===null&&await response.headerValue('set-cookie')===null,'no challenge or cookie')
+    const final=await bounded(response.body(),'old Chromium request received the full body')
+    if(injected)assert.ok(isDeepStrictEqual(JSON.parse(final),{error:'synthetic_protocol_fault'}),'expected obsolete error')
+    else assert.ok(createHash('sha256').update(final).digest('hex')===originalHash,'unmodified response bytes')
+    if(target===script){
+      assert.ok(/^text\/javascript/.test(response.headers()['content-type']))
+      assert.ok(final.equals(fs.readFileSync(path.join(__dirname,'../artifact-product-view.mjs'))),'original module only')
+    }
+    await frames(s.page)
+  }}
 }
 async function recheck(s,id){await enter(s.page,'app-recheck');await principal(s.page,'admin');await visible(s.page,id);await frames(s.page)}
 async function preventThisNavigation(s,id){
@@ -410,12 +496,20 @@ async function happy(s){
     assert.ok((await p.locator('#pv-status').textContent()).length>0)
   }
   // Clock affects page Date only, never TLS, the IdP exchange or server/session.
-  await p.clock.setFixedTime(new Date('2026-04-03T03:02:01Z'))
   await p.setViewportSize({width:390,height:844})
-  await read(s,keypress(s,'range7'),kit,pinned(files({recursive:true,...quick})),rangeRows,3)
+  // Freeze only zero-argument Date construction for this single shortcut.
+  // Playwright polling, Chromium timers and real animation frames keep running.
+  await p.evaluate(()=>{
+    const systemDate=window.Date,fixed=systemDate.parse('2026-04-03T03:02:01Z')
+    window.Date=new Proxy(systemDate,{construct:(target,args)=>Reflect.construct(target,args.length?args:[fixed])})
+    window.__restoreProductDate=()=>{window.Date=systemDate;delete window.__restoreProductDate}
+  })
+  try{await read(s,keypress(s,'range7'),kit,pinned(files({recursive:true,...quick})),rangeRows,3)}
+  finally{await bounded(p.evaluate(()=>window.__restoreProductDate()),'restore browser date')}
   assert.equal(await p.locator('#pv-range7').getAttribute('aria-pressed'),'true')
   assert.equal(await p.locator('#pv-start').inputValue(),quick.start_time);assert.equal(await p.locator('#pv-end').inputValue(),quick.end_time)
   await screenshot(s,'product-view-range-mobile.png',390,844,{contrast:['#pv-location','#pv-range7','#pv-results .pv-key','#pv-start','#pv-end'],hit:['#pv-range7','#pv-apply','#pv-tree']})
+  checkpoint('range: manual override and quarter transitions')
   await p.locator('#pv-end').fill(z);assert.equal(await p.locator('#pv-range7').getAttribute('aria-pressed'),'false')
   await read(s,keypress(s,'tree'),kit,pinned({path:layer}),tree.slice(0,10),16)
   assert.deepEqual(await p.evaluate(()=>['start','end','keyword'].map(x=>document.getElementById('pv-'+x).value)),['','',''])
@@ -425,6 +519,7 @@ async function happy(s){
     await read(s,keypress(s,'open'),kit,pinned({quarter}),quarter==='2027Q1'?[]:root,quarter==='2027Q1'?0:1,quarter!=='2027Q1')
     if(children.length)await read(s,()=>directory(s,'pkg'),kit,pinned({path:layer,quarter}),children,quarter===q1?1:16)
   }
+  checkpoint('range: recursive aggregate and page two')
   // Aggregate fixtures are checked independently of the DOM and returned totals.
   await p.locator('#pv-recursive').check()
   const allFiles=['pkg/a//KiT_one.zip','pkg/ab/KIT_three.zip','pkg/ab/KIT_two.zip','pkg/'+label+'/KiT_safe.zip',deepLeaf,...direct].sort((a,b)=>{
@@ -470,16 +565,16 @@ async function faults(s){
   for(const fault of [...Object.keys(mutations),403,409,503]){
     const injected=typeof fault==='number',n=countApi(s.journal)
     let altered
-    s.router.set(kit,async route=>{
-      const actual=await route.fetch();assert.equal(actual.status(),200)
+    checkpoint('protocol fault: '+fault)
+    const delivered=s.gate.once(kit,original=>{
       if(injected)altered={error:'synthetic_protocol_fault'}
-      else{altered=await actual.json();mutations[fault](altered.data)}
-      return substituted(route,actual,injected?fault:200,altered)
+      else{altered=JSON.parse(original);mutations[fault](altered.data)}
+      return {status:injected?fault:200,dto:altered}
     })
     const received=await wire(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:result.observation}),injected?fault:200)
-    assert.ok(altered&&isDeepStrictEqual(await received.json(),altered),'Intact injected DTO: '+fault)
+    await bounded(delivered,'injected response delivered')
+    assert.ok(altered&&isDeepStrictEqual(await bounded(received.json(),'Chromium decoded injected body'),altered),'Intact injected DTO: '+fault)
     await waitFailed(s,injected&&fault!==503?'unavailable|inaccessible':'could not verify')
-    s.router.remove(kit)
     assert.equal(await p.locator('#app-principal').textContent(),'admin')
     assert.doesNotMatch(await p.locator('#pv-status').textContent(),/synthetic_protocol_fault|synthetic-never-follow/i)
     await frames(p);assert.equal(countApi(s.journal),n+1)
@@ -487,15 +582,15 @@ async function faults(s){
   }
   await read(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:result.observation}),tree.slice(0,10),16)
   await p.locator('#pv-start').fill(z);await p.locator('#pv-end').fill(z)
-  s.router.set(kit,async route=>{
-    const actual=await route.fetch();assert.equal(actual.status(),200)
-    const dto=await actual.json();assert.equal(dto.data.items.length,1)
+  checkpoint('protocol fault: file outside time bound')
+  const delivered=s.gate.once(kit,original=>{
+    const dto=JSON.parse(original);assert.equal(dto.data.items.length,1)
     dto.data.items[0].modified_at=micro
-    return substituted(route,actual,200,dto)
+    return {status:200,dto}
   })
   const received=await wire(s,keypress(s,'apply'),kit,body(files({if_observation:result.observation,start_time:z,end_time:z})))
-  assert.equal((await received.json()).data.items[0].modified_at,micro)
-  await waitFailed(s,'could not verify');s.router.remove(kit)
+  await bounded(delivered,'time fault delivered');assert.equal((await bounded(received.json(),'Chromium decoded time fault')).data.items[0].modified_at,micro)
+  await waitFailed(s,'could not verify')
 }
 async function stale(s){
   const p=s.page
@@ -503,14 +598,15 @@ async function stale(s){
   // to the obsolete request's view, but not the same request owner.
   for(const fault of [null,401,412]){
     await fields(s)
+    checkpoint('ABA: hold '+(fault||200))
     const hold=held(s,kit,fault)
-    await enter(p,'pv-open');await hold.started
+    await enter(p,'pv-open');await bounded(hold.started,'ABA began with real response')
     await p.locator('#pv-view').fill('sensor');await read(s,keypress(s,'open'),sensor,body(),root,1)
     await p.locator('#pv-view').fill('kit')
     const current=await read(s,keypress(s,'open'),kit,body(),root,1)
     await read(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:current.observation}),tree.slice(0,10),16)
     const before=countApi(s.journal),[invalid,done]=await p.evaluate(()=>[__pvNet.invalidations,__pvNet.transportDone])
-    await hold.release();await p.waitForFunction(n=>__pvNet.transportDone>n,done);await frames(p)
+    checkpoint('ABA: release '+(fault||200));await hold.release();await p.waitForFunction(n=>__pvNet.transportDone>n,done);await frames(p)
     assert.equal(await p.evaluate(()=>__pvNet.invalidations),invalid)
     assert.equal(await p.locator('#app-principal').textContent(),'admin');assert.equal(countApi(s.journal),before)
     await rendered(p,tree.slice(0,10))
@@ -529,7 +625,8 @@ async function cross(s){
   // Observe the old realm after a departure intent on BOTH native return links.
   for(const id of ['pv-return','app-artifacts-link']){
     await fields(s)
-    const h=held(s,kit,401);await enter(p,'pv-open');await h.started
+    checkpoint('departure guard: '+id)
+    const h=held(s,kit,401);await enter(p,'pv-open');await bounded(h.started,'real response before navigation')
     await preventThisNavigation(s,id);await empty(s,product)
     await recheck(s,'pv-controls');await fields(s,{bucket:'second-bucket'})
     await read(s,keypress(s,'open'),other,body(),['other/'],1)
@@ -547,7 +644,7 @@ async function cross(s){
   // Hold a REAL old quarters read and inject a late 401 over it. The old shell
   // remains observable in this separate, prevented-navigation test.
   const quarters=s1+'/quarters',old=held(s,quarters,401)
-  await p.locator('#reload').click();await old.started
+  await p.locator('#reload').click();await bounded(old.started,'real quarters read before navigation')
   await preventThisNavigation(s,'app-product-view-entry');await empty(s,catalog)
   await recheck(s,'session');await ordinary(s)
   const n=countApi(s.journal),invalid=await p.evaluate(()=>__pvNet.invalidations)
@@ -569,18 +666,17 @@ async function cross(s){
   await entry(s);await fields(s);await read(s,keypress(s,'open'),kit,body(),root,1)
 }
 async function bootRace(s){
-  const {page:p,router}=s
+  const {page:p}=s
   // Delay the enabled page's actual module response. A stale dynamic mount
   // must not inspect the current cookie or reconstruct an already-cleared page.
   const h=held(s,'/app/artifact-product-view.mjs')
   const idx=s.journal.length
-  await p.goto(s.info.origin+product,{waitUntil:'commit'});await h.started
+  await p.goto(s.info.origin+product,{waitUntil:'commit'});await bounded(h.started,'real response before navigation')
   await p.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')))
   await h.release()
-  await p.evaluate(async()=>{await import('/app/artifact-product-view.mjs')});await frames(p)
+  assert.equal(await bounded(p.evaluate(async()=>typeof (await import('/app/artifact-product-view.mjs')).mountArtifactProductView),'real product module export'),'function');await frames(p)
   assert.equal(s.journal.slice(idx).filter(r=>r.p==='/auth/session').length,0)
   assert.equal(await p.locator('#pv-controls').isVisible(),false);assert.equal(await p.locator('#app-principal').textContent(),'Not verified')
-  router.remove('/app/artifact-product-view.mjs')
 }
 async function recheckSignedOut(s){
   const p=s.page
@@ -627,6 +723,7 @@ async function nativeHistory(env){
   await empty(s,catalog);await frames(p);assert.equal(countApi(s.journal),n)
   await recheckSignedOut(s);assert.equal(s.journal.filter(x=>x.p==='/auth/start').length,1)
   assert.deepEqual(s.errors,[])
+  await bounded(s.ctx.close(),'close isolated history context before next cookie journey');s.owner.closed=true
   console.log('PRODUCT_VIEW_NATIVE_HISTORY '+JSON.stringify({native:history,injectedPersistedBranch:true,observedNativeBFCache:history.some(x=>x.persisted)}))
 }
 async function authority(s){
@@ -635,7 +732,7 @@ async function authority(s){
   // proof even when the approved publication behind it has changed.
   await fields(s);const first=await read(s,keypress(s,'open'),kit,body(),root,1)
   await read(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:first.observation}),tree.slice(0,10),16)
-  await ctrl(s,'republish');let n=countApi(s.journal)
+  checkpoint('authority: real republish and pinned read');await ctrl(s,'republish');let n=countApi(s.journal)
   await wire(s,keypress(s,'next'),kit,body({path:layer,page:2,if_observation:first.observation}),412)
   await waitFailed(s,'publication or view changed');await frames(p);assert.equal(countApi(s.journal),n+1)
   await p.setViewportSize({width:390,height:844})
@@ -645,13 +742,13 @@ async function authority(s){
   assert.ok(fresh.catalog_revision>first.catalog_revision,'publication revision must advance')
   const replacement=[...dirs,'pkg/KIT_after-republish.txt',...direct]
   await read(s,()=>directory(s,'pkg'),kit,body({path:layer,if_observation:fresh.observation}),replacement.slice(0,10),17)
-  await ctrl(s,'revoke-read');n=countApi(s.journal)
+  checkpoint('authority: real reader withdrawal');await ctrl(s,'revoke-read');n=countApi(s.journal)
   await wire(s,keypress(s,'next'),kit,body({path:layer,page:2,if_observation:fresh.observation}),404)
   await waitFailed(s,'unavailable|inaccessible');await frames(p);assert.equal(countApi(s.journal),n+1)
   assert.equal(await p.locator('#app-principal').textContent(),'admin')
   await fields(s,{bucket:'second-bucket'})
   const second=await read(s,keypress(s,'open'),other,body(),['other/'],1)
-  await ctrl(s,'expire-session');n=countApi(s.journal)
+  checkpoint('authority: real cookie expiry');await ctrl(s,'expire-session');n=countApi(s.journal)
   const auth=s.journal.filter(r=>r.p==='/auth/start').length
   // Same cookie and selected reader, but the actual session clock has now elapsed.
   await wire(s,()=>directory(s,'other'),other,body({path:'other/',if_observation:second.observation}),401)
@@ -664,10 +761,17 @@ async function authority(s){
   await recheckSignedOut(s);assert.equal(s.journal.filter(x=>x.p==='/auth/start').length,1)
   assert.deepEqual(s.errors,[])
 }
-async function step(label,fn){try{return await fn()}catch(e){throw new Error('Product-view acceptance stage: '+label,{cause:e})}}
+async function step(label,fn){
+  checkpoint(label)
+  try{return await bounded(Promise.resolve().then(fn),label,60000)}catch(e){
+    // Do not pass a raw Playwright exception, which can contain callback URLs
+    // or wire values, into the enclosing legacy runner's recursive reporter.
+    throw failure(label,e)
+  }
+}
 async function run(){
   await fixture(false,async env=>{
-    const s=await surface(env);await step('default host',async()=>{
+    const s=await step('default loopback surface',()=>surface(env));await step('default host',async()=>{
       await login(s,false)
       // Existing named view on the actual vanilla fixture remains usable and
       // does not cause any probing of optional product assets/endpoints.
@@ -681,7 +785,7 @@ async function run(){
   })
   await fixture(true,async env=>{
     await step('clean-context native history',()=>nativeHistory(env))
-    const s=await surface(env)
+    const s=await step('configured loopback surface',()=>surface(env))
     await step('mounted host and legacy same-name view',async()=>{await login(s,true);await ordinary(s,{named:true});await entry(s)})
     await step('actual product tree, pages and file/date filters',()=>happy(s))
     await step('same-ID second scope, different product and exact denied scope',()=>selection(s))
@@ -691,7 +795,7 @@ async function run(){
     await step('late module loading',()=>bootRace(s))
     // Recreate a neutral document after the controlled boot race. Use real
     // navigation so expire-session followed by Back returns to ordinary.
-    await s.page.goto(env.info.origin+catalog);await visible(s.page,'session');await entry(s)
+    await step('recreate neutral document',async()=>{await s.page.goto(env.info.origin+catalog);await visible(s.page,'session');await entry(s)})
     await step('current republish, withdrawn reader and server-side expiry',()=>authority(s))
     console.log('PRODUCT_VIEW_REQUESTS '+JSON.stringify({productMetadataPOSTs:s.journal.filter(r=>isProduct(r.p)).length,
       sameOriginContract:true,realReturnedCounts:{level:16,direct:12,recursive:17,instantDirect:1,instantRecursive:2,sevenDates:3},
