@@ -65,7 +65,9 @@ async function main(){
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
   await page.getByRole('button',{name:'Edit reader',exact:true}).click();await readable(page,['#editing','#role','#member-state','#save','#cancel']);await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
-  const managementReady=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#operator-panel').hidden&&document.querySelector('#members').children.length===3&&!document.querySelector('#status').textContent.startsWith('Loading'))
+  // Members/status are rendered before modules and invitations. Wait for the
+  // current alpha invitation projection, not just its earlier member projection.
+  const managementReady=()=>page.waitForFunction(()=>document.querySelector('#app-principal').textContent==='admin'&&!document.querySelector('#operator-panel').hidden&&document.querySelector('#workspace').value==='alpha'&&document.querySelector('#members').children.length===3&&!document.querySelector('#status').textContent.startsWith('Loading')&&!document.querySelector('#invitation-panel').hidden&&!document.querySelector('#invite-open').hidden&&/^\d+ recent invitations \(/.test(document.querySelector('#invitation-status').textContent))
   const reconnectManagement=async()=>{
    if((await page.locator('#app-status').textContent()).includes('server session is revoked')){
     await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden);await page.locator('nav a[href="/manage/"]').click()
