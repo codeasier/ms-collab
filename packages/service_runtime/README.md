@@ -68,6 +68,16 @@ Errors return exit 2 with a fixed input-free code. No CLI prints configuration,
 SQL, credentials or a traceback. Partial initialization is retained for private
 operator diagnosis; retry does not overwrite or delete it.
 
+The installed `installation.json` must have exactly `format`, `binding`,
+`policy_schema` and `login_schema`, with integer `format: 1` and the expected
+binding and schema values. Boolean `true` and floating-point `1.0` are not
+version 1. Valid JSON whitespace and key ordering remain accepted; checking,
+startup and backup do not rewrite the manifest into canonical form. Initialization
+and restore still produce the same canonical manifest. An invalid installed
+manifest is rejected before a backup destination is allocated, although the
+source lease and SQLite transactions have already been opened. This validation
+does not add schema migration, receipt support or identity/provider enablement.
+
 ## Fixed TLS process, not a public deployment command
 
 Supply your separately provisioned certificate and unencrypted private key from

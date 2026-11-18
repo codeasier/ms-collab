@@ -108,7 +108,10 @@ def connection(directory, *, writable=False):
 
 def inspect(config, db):
     stored = decode(read_private(config.directory / MANIFEST, 4096))
-    if stored != manifest(config): raise RuntimeFailure('unsupported_layout')
+    expected = manifest(config)
+    if (type(stored) is not dict or set(stored) != set(expected)
+            or type(stored['format']) is not int or stored != expected):
+        raise RuntimeFailure('unsupported_layout')
     for name, app, version, expected in (('main',_APPLICATION_ID,_SCHEMA_VERSION,POLICY_DIGEST),('login',_APP,_VERSION,LOGIN_DIGEST)):
         # Recheck the snapshot size under SQLite locks, not only an earlier stat.
         size = db.execute(f'PRAGMA {name}.page_count').fetchone()[0] * db.execute(f'PRAGMA {name}.page_size').fetchone()[0]

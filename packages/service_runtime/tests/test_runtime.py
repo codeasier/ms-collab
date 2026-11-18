@@ -350,5 +350,99 @@ class RuntimeTests(unittest.TestCase):
         self.init();app=self.app();lock=self.directory/'.runtime.lock';lock.unlink();lock.write_bytes(b'');lock.chmod(0o600)
         self.assertEqual(request(app,'/')['status'],503)
 
+    def _installed_manifest_source(self):
+        # Compare every source entry, including the lease file, not just DB hashes.
+        return (self.config.read_bytes(),
+                {p.name: p.read_bytes() for p in self.directory.iterdir()})
+
+    def _installed_manifest_application(self):
+        app = create_application(self.config)
+        try:
+            self.assertTrue(app.lease.valid())
+        finally:
+            app.close()
+
+    def _assert_installed_manifest_entrypoints(self, raw, *, case, error=None):
+        (self.directory/'installation.json').write_bytes(raw)
+        destination = self.root/('manifest-backup-' + case)
+        operations = (
+            ('check', lambda: check(self.config)),
+            ('factory', self._installed_manifest_application),
+            ('backup', lambda: backup(self.config, destination)),
+        )
+        for name, operation in operations:
+            with self.subTest(case=case, entrypoint=name):
+                before = self._installed_manifest_source()
+                root_entries = {p.name for p in self.root.iterdir()}
+                self.assertFalse(destination.exists())
+                if error is None:
+                    result = operation()
+                    if name != 'factory':
+                        self.assertTrue(result['installation_valid' if name == 'check' else 'backup_valid'])
+                else:
+                    # Patch the function as resolved by backup, not its runtime alias.
+                    with patch('packages.service_runtime.backup.allocate_directory') as allocator:
+                        with self.assertRaises(RuntimeFailure) as raised:
+                            operation()
+                        code = 'runtime_unavailable' if name == 'factory' else error
+                        self.assertEqual(raised.exception.code, code)
+                        self.assertEqual(str(raised.exception), code)
+                        allocator.assert_not_called()
+                self.assertEqual(before, self._installed_manifest_source())
+                if error is None and name == 'backup':
+                    self.assertEqual({p.name for p in destination.iterdir()}, {'policy.sqlite', 'backup.json'})
+                    root_entries.add(destination.name)
+                else:
+                    self.assertFalse(destination.exists())
+                self.assertEqual(root_entries, {p.name for p in self.root.iterdir()})
+                # A fresh real exclusive lease must work after either successful
+                # factory close or a rejected factory/check/backup. No lock mocks.
+                with Lease(self.directory, exclusive=True) as lease:
+                    self.assertTrue(lease.valid())
+                self.assertEqual(before, self._installed_manifest_source())
+
+    def test_installed_manifest_integer_one_preserves_canonical_and_noncanonical_bytes(self):
+        self.init()
+        original = (self.directory/'installation.json').read_bytes()
+        expected = manifest(load_config(self.config))
+        self.assertIs(type(expected['format']), int)
+        self.assertEqual(original, canonical(expected))
+        reordered = dict(reversed(list(expected.items())))
+        noncanonical = ('\n' + json.dumps(reordered, indent=2) + '\n').encode('ascii')
+        self.assertNotEqual(noncanonical, original)
+        for case, raw in (('canonical', original), ('noncanonical', noncanonical)):
+            self._assert_installed_manifest_entrypoints(raw, case=case)
+
+    def test_installed_manifest_format_types_and_versions_reject_all_entrypoints(self):
+        self.init()
+        expected = manifest(load_config(self.config))
+        for case, value in (('boolean', True), ('float', 1.0), ('string', '1'),
+                            ('null', None), ('zero-version', 0), ('future-version', 2)):
+            raw = canonical(dict(expected, format=value))
+            self._assert_installed_manifest_entrypoints(raw, case=case, error='unsupported_layout')
+
+    def test_installed_manifest_exact_shape_and_values_reject_all_entrypoints(self):
+        self.init()
+        expected = manifest(load_config(self.config))
+        cases = [('missing-' + key, {k: v for k, v in expected.items() if k != key}) for key in expected]
+        cases.append(('extra-field', dict(expected, extra='PRIVATE_MANIFEST_MARKER')))
+        cases.extend(('wrong-' + key, dict(expected, **{key: 'PRIVATE_MANIFEST_MARKER'}))
+                     for key in ('binding', 'policy_schema', 'login_schema'))
+        cases.extend((('top-list', []), ('top-string', 'PRIVATE_MANIFEST_MARKER'),
+                      ('top-number', 1), ('top-null', None)))
+        for case, value in cases:
+            self._assert_installed_manifest_entrypoints(canonical(value), case=case, error='unsupported_layout')
+
+    def test_installed_manifest_decode_failures_keep_existing_entrypoint_errors(self):
+        self.init()
+        original = (self.directory/'installation.json').read_bytes()
+        # A real duplicate in raw JSON: constructing a Python dict would lose it.
+        duplicate = original[:-1] + b',"format":1}'
+        cases = (('invalid-json', b'{"PRIVATE_MANIFEST_MARKER":'),
+                 ('duplicate-key', duplicate), ('invalid-utf8', b'\xff'),
+                 ('nonfinite-constant', original.replace(b'"format":1', b'"format":NaN')))
+        for case, raw in cases:
+            self._assert_installed_manifest_entrypoints(raw, case=case, error='invalid_configuration')
+
 
 if __name__=='__main__':unittest.main()
