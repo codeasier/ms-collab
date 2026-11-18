@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from packages.service_runtime import initialize, check, create_application, backup, restore, verify_backup, load_config, RuntimeFailure
 from packages.service_runtime.__main__ import main
-from packages.service_runtime.runtime import connection, Lease, manifest, canonical
+from packages.service_runtime.runtime import connection, Lease, manifest, canonical, now_micros
 from packages.service_runtime.schema import POLICY_DIGEST, LOGIN_DIGEST, schema_digest
 from packages.application_ui.tests.test_application import request
 
@@ -349,6 +349,143 @@ class RuntimeTests(unittest.TestCase):
     def test_deleted_or_replaced_lease_does_not_keep_application_serving(self):
         self.init();app=self.app();lock=self.directory/'.runtime.lock';lock.unlink();lock.write_bytes(b'');lock.chmod(0o600)
         self.assertEqual(request(app,'/')['status'],503)
+
+    def _installed_manifest_source(self):
+        # Compare every source entry, including the lease file, not just DB hashes.
+        return (self.config.read_bytes(),
+                {p.name: p.read_bytes() for p in self.directory.iterdir()})
+
+    def _installed_manifest_login(self):
+        # Observe real committed state without running a store constructor or
+        # opening a writable connection. SELECT * retains every stored column.
+        uri = (self.directory/'login.sqlite').as_uri() + '?mode=ro'
+        with closing(sqlite3.connect(uri, uri=True, isolation_level=None)) as db:
+            db.execute('BEGIN')
+            metadata = db.execute('SELECT * FROM metadata ORDER BY id').fetchall()
+            self.assertEqual(len(metadata), 1)
+            self.assertEqual(len(metadata[0]), 3)
+            identifier, binding, clock = metadata[0]
+            self.assertIs(type(clock), int)
+            state = {
+                'schema': db.execute('SELECT * FROM sqlite_schema ORDER BY type,name,tbl_name').fetchall(),
+                'application_id': db.execute('PRAGMA application_id').fetchone(),
+                'user_version': db.execute('PRAGMA user_version').fetchone(),
+                'journal_mode': db.execute('PRAGMA journal_mode').fetchone(),
+                'metadata': (identifier, binding),
+                'attempts': db.execute('SELECT * FROM attempts ORDER BY state').fetchall(),
+                'sessions': db.execute('SELECT * FROM sessions ORDER BY token').fetchall(),
+            }
+        return state, clock
+
+    def _installed_manifest_application(self):
+        app = create_application(self.config)
+        try:
+            self.assertTrue(app.lease.valid())
+        finally:
+            app.close()
+
+    def _assert_installed_manifest_entrypoints(self, raw, *, case, error=None):
+        (self.directory/'installation.json').write_bytes(raw)
+        destination = self.root/('manifest-backup-' + case)
+        operations = (
+            ('check', lambda: check(self.config)),
+            ('factory', self._installed_manifest_application),
+            ('backup', lambda: backup(self.config, destination)),
+        )
+        for name, operation in operations:
+            with self.subTest(case=case, entrypoint=name):
+                before = self._installed_manifest_source()
+                root_entries = {p.name for p in self.root.iterdir()}
+                self.assertFalse(destination.exists())
+                successful_factory = error is None and name == 'factory'
+                if successful_factory:
+                    login_before, clock_before = self._installed_manifest_login()
+                    self.assertEqual(before, self._installed_manifest_source())
+                if error is None:
+                    result = operation()
+                    if successful_factory:
+                        finished = now_micros()
+                    if name != 'factory':
+                        self.assertTrue(result['installation_valid' if name == 'check' else 'backup_valid'])
+                else:
+                    # Patch the function as resolved by backup, not its runtime alias.
+                    with patch('packages.service_runtime.backup.allocate_directory') as allocator:
+                        with self.assertRaises(RuntimeFailure) as raised:
+                            operation()
+                        code = 'runtime_unavailable' if name == 'factory' else error
+                        self.assertEqual(raised.exception.code, code)
+                        self.assertEqual(str(raised.exception), code)
+                        allocator.assert_not_called()
+                if successful_factory:
+                    # Existing SQLiteLoginStore construction maintains its safety
+                    # clock. No other logical login state may change on success.
+                    login_after, clock_after = self._installed_manifest_login()
+                    self.assertEqual(login_before, login_after)
+                    self.assertLessEqual(clock_before, clock_after)
+                    self.assertLessEqual(clock_after, finished)
+                    after = self._installed_manifest_source()
+                    self.assertEqual(before[0], after[0])
+                    self.assertEqual(set(before[1]), set(after[1]))
+                    self.assertEqual({k: v for k, v in before[1].items() if k != 'login.sqlite'},
+                                     {k: v for k, v in after[1].items() if k != 'login.sqlite'})
+                    lease_baseline = after
+                else:
+                    self.assertEqual(before, self._installed_manifest_source())
+                    lease_baseline = before
+                if error is None and name == 'backup':
+                    self.assertEqual({p.name for p in destination.iterdir()}, {'policy.sqlite', 'backup.json'})
+                    root_entries.add(destination.name)
+                else:
+                    self.assertFalse(destination.exists())
+                self.assertEqual(root_entries, {p.name for p in self.root.iterdir()})
+                # A fresh real exclusive lease must work after either successful
+                # factory close or a rejected factory/check/backup. No lock mocks.
+                with Lease(self.directory, exclusive=True) as lease:
+                    self.assertTrue(lease.valid())
+                self.assertEqual(lease_baseline, self._installed_manifest_source())
+
+    def test_installed_manifest_integer_one_preserves_canonical_and_noncanonical_bytes(self):
+        self.init()
+        original = (self.directory/'installation.json').read_bytes()
+        expected = manifest(load_config(self.config))
+        self.assertIs(type(expected['format']), int)
+        self.assertEqual(original, canonical(expected))
+        reordered = dict(reversed(list(expected.items())))
+        noncanonical = ('\n' + json.dumps(reordered, indent=2) + '\n').encode('ascii')
+        self.assertNotEqual(noncanonical, original)
+        for case, raw in (('canonical', original), ('noncanonical', noncanonical)):
+            self._assert_installed_manifest_entrypoints(raw, case=case)
+
+    def test_installed_manifest_format_types_and_versions_reject_all_entrypoints(self):
+        self.init()
+        expected = manifest(load_config(self.config))
+        for case, value in (('boolean', True), ('float', 1.0), ('string', '1'),
+                            ('null', None), ('zero-version', 0), ('future-version', 2)):
+            raw = canonical(dict(expected, format=value))
+            self._assert_installed_manifest_entrypoints(raw, case=case, error='unsupported_layout')
+
+    def test_installed_manifest_exact_shape_and_values_reject_all_entrypoints(self):
+        self.init()
+        expected = manifest(load_config(self.config))
+        cases = [('missing-' + key, {k: v for k, v in expected.items() if k != key}) for key in expected]
+        cases.append(('extra-field', dict(expected, extra='PRIVATE_MANIFEST_MARKER')))
+        cases.extend(('wrong-' + key, dict(expected, **{key: 'PRIVATE_MANIFEST_MARKER'}))
+                     for key in ('binding', 'policy_schema', 'login_schema'))
+        cases.extend((('top-list', []), ('top-string', 'PRIVATE_MANIFEST_MARKER'),
+                      ('top-number', 1), ('top-null', None)))
+        for case, value in cases:
+            self._assert_installed_manifest_entrypoints(canonical(value), case=case, error='unsupported_layout')
+
+    def test_installed_manifest_decode_failures_keep_existing_entrypoint_errors(self):
+        self.init()
+        original = (self.directory/'installation.json').read_bytes()
+        # A real duplicate in raw JSON: constructing a Python dict would lose it.
+        duplicate = original[:-1] + b',"format":1}'
+        cases = (('invalid-json', b'{"PRIVATE_MANIFEST_MARKER":'),
+                 ('duplicate-key', duplicate), ('invalid-utf8', b'\xff'),
+                 ('nonfinite-constant', original.replace(b'"format":1', b'"format":NaN')))
+        for case, raw in cases:
+            self._assert_installed_manifest_entrypoints(raw, case=case, error='invalid_configuration')
 
 
 if __name__=='__main__':unittest.main()
