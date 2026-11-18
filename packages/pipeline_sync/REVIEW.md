@@ -107,3 +107,7 @@ trusted caller's authority. The five-minute decision window starts at the
 pre-display authorization check and is checked again on the final write. Neither
 terminal output nor a dispatched provider request can be made atomic with a
 separate revocation. Already authorized or visible bytes cannot be taken back.
+
+For the separate, unimplemented multi-user design, see [web review: authority
+and release gates](WEB-REVIEW.md). Reloading a stored run is not a candidate
+acquisition or a publication request.

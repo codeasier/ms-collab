@@ -17,9 +17,9 @@ import secrets
 import stat
 import sys
 
-from packages.pipeline_api import decode_snapshots, encode_snapshots
 from packages.workspaces.model import identifier, revision
 from .provider import Connection, ProviderError
+from .replacement import describe_replacement
 
 REVIEW_AUDIENCE = "current-and-future-workspace-pipeline-readers/v1"
 _PROJECTION = "pipeline-snapshot-content-and-audience-review/v1"
@@ -61,37 +61,28 @@ def _digest(text):
 def _review(connection, policy, version, old_text, new_text):
     if type(connection) is not Connection or type(policy) is not PipelineReviewPolicy or connection != policy.connection:
         raise ValueError("invalid_pipeline_review_policy")
-    revision(version)
-    scope = connection.scope
-    old = decode_snapshots(scope, old_text)
-    new = decode_snapshots(scope, new_text)
-    if not new:
-        raise ProviderError("empty_observation")
-    # Never show a normalized approximation of different bytes about to be
-    # written. Only the exact canonical projection produced by the V1 collector.
-    candidate = encode_snapshots(scope, new)
-    if candidate != new_text:
-        raise ProviderError("invalid_review_candidate")
+    replacement = describe_replacement(connection.scope, version, old_text, new_text)
+    scope = replacement.scope.as_dict()
     source = {"origin": connection.origin, "run_limit": connection.run_limit,
               "timeout": connection.timeout, "max_response_bytes": connection.max_response_bytes}
-    removed = sorted({r["id"] for r in old} - {r["id"] for r in new})
     digest = _digest(_json({
         "projection": _PROJECTION, "nonce": secrets.token_hex(32), "audience": policy.audience,
-        "scope": scope.as_dict(), "source": source, "expected_revision": version,
-        "previous_utf8_sha256": _digest(old_text), "candidate_utf8_sha256": _digest(candidate),
+        "scope": scope, "source": source, "expected_revision": replacement.expected_revision,
+        "previous_utf8_sha256": replacement.previous_utf8_sha256,
+        "candidate_utf8_sha256": replacement.candidate_utf8_sha256,
         "reviewer_pin": policy.reviewer_pin, "reviewer_epoch": policy.reviewer_epoch,
         "membership_revision": policy.membership_revision,
     }))
     # Only formatter-owned newlines and spaces add layout. JSON escapes every
     # user-controlled control or non-ASCII character, retaining the exact keys,
     # order and values of the canonical bytes bound above.
-    formatted = json.dumps(json.loads(candidate), ensure_ascii=True, indent=2, allow_nan=False)
+    formatted = json.dumps(json.loads(new_text), ensure_ascii=True, indent=2, allow_nan=False)
     # Do not show issuer/subject, credentials, errors or unprojected provider material.
     preview = "\n".join((
         "Review proposed replacement of the stored pipeline subset.",
-        "Scope: " + _json(scope.as_dict()), "Source connection: " + _json(source),
-        f"Replace published revision: {version}", f"Old run count: {len(old)}",
-        f"New run count: {len(new)}", "Removed run IDs: " + _json(removed),
+        "Scope: " + _json(scope), "Source connection: " + _json(source),
+        f"Replace published revision: {replacement.expected_revision}", f"Old run count: {replacement.old_count}",
+        f"New run count: {replacement.new_count}", "Removed run IDs: " + _json(replacement.removed_ids),
         "This replaces the current local subset. Omission does not mean deletion from provider history.",
         "An empty replacement is not publishable in this review flow.",
         "Audience: " + policy.audience,
