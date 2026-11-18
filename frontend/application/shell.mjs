@@ -22,12 +22,26 @@ import {mountArtifactAdministrationPage} from '/artifact-admin/browser.mjs'
 const el=id=>document.getElementById(id)
 let generation=0,bootstrap,page,overviewStatus,busy=false,principal,ready=false,initializing=false
 const session=createSessionClient({onInvalid:clear})
+const productEntry=el('app-product-view-entry')
+const onProductPage=document.body.dataset.page==='artifact-product-views'
+// Retire this document's authority at same-tab navigation intent, before a late
+// response can invalidate a newer session. Native navigation still owns the link.
+function onDeparture(event){
+ if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return
+ clear('Leaving this page. Private page state has been cleared.')
+}
+productEntry?.addEventListener('click',onDeparture)
+if(onProductPage){
+ el('pv-return').addEventListener('click',onDeparture)
+ el('app-artifacts-link').addEventListener('click',onDeparture)
+}
 function controls(){
  el('app-sign-in').disabled=busy||!ready||!bootstrap?.login_configured||Boolean(principal)
  el('app-sign-out').disabled=!principal
  el('app-recheck').disabled=busy||initializing
 }
 function clear(message='Session needs an explicit recheck. Any interrupted change may already have completed.',workspaceListSignal){
+ if(productEntry)productEntry.hidden=true
  generation++;principal=undefined;busy=false;initializing=false;session.clear();page?.clear(message,workspaceListSignal);overviewStatus?.clear()
  el('app-principal').textContent='Not verified';el('app-workspaces')?.replaceChildren();el('app-data')?.setAttribute('hidden','')
  el('app-status').textContent=message;controls()
@@ -38,6 +52,7 @@ async function inspect(){
  try{
   const identity=await session.inspect();if(turn!==generation)return
   principal=identity.principal_id;el('app-principal').textContent=displayPolicyId(principal);controls()
+  if(productEntry)productEntry.hidden=!bootstrap.ui_modules.includes('artifact-product-views')
   if(page)await page.activate()
   else{
    const spaces=validateWorkspaces(await session.request('/api/workspaces'));if(turn!==generation)return
@@ -110,6 +125,12 @@ async function start(){
    const board=mountPipelinePage({client:createPipelineSessionClient(session),sessionMode:true,onSignOut:signOut,onBusyChange:()=>picker?.sync()})
    picker=mountPipelineScopePicker({session,isOpening:()=>board.loading});let activation=0
    page={clear:message=>{activation++;picker.clear();board.clear(message)},activate:async()=>{const turn=activation;await picker.activate();if(turn===activation)await board.activate()}}
+  }
+  else if(onProductPage){
+   if(!bootstrap.ui_modules.includes('artifact-product-views'))throw new Error('Product views are not configured on this service.')
+   const {mountArtifactProductView}=await import('./artifact-product-view.mjs')
+   if(turn!==generation)return
+   page=mountArtifactProductView({session})
   }
   else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
    const module=document.body.dataset.page;if(!bootstrap.ui_modules.includes(module))throw new Error('This artifact page is not configured on this service.')

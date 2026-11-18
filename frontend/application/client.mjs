@@ -182,7 +182,8 @@ export function csrfCookie(raw){
  return value
 }
 export function validateBootstrap(data,origin){
- if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','pipelines','community','artifacts','artifact-admin','assistant','research-assets','gui-smoke','artifact-downloads','connections'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
+ if(!own(data,['service','ui_modules','login_configured','authorization_endpoint'])||data.service!=='ms-collab'||!Array.isArray(data.ui_modules)||data.ui_modules.some(x=>!['workspaces','responsibility','pipelines','community','artifacts','artifact-admin','assistant','research-assets','gui-smoke','artifact-downloads','artifact-product-views','connections'].includes(x))||new Set(data.ui_modules).size!==data.ui_modules.length||!data.ui_modules.includes('workspaces')||typeof data.login_configured!=='boolean')throw new Error('Invalid application configuration.')
+ if(data.ui_modules.includes('artifact-product-views')&&!data.ui_modules.includes('artifacts'))throw new Error('Invalid product view configuration.')
  if(data.ui_modules.includes('connections')&&!data.ui_modules.includes('community'))throw new Error('Invalid connection configuration.')
  if(data.login_configured){const target=new URL(data.authorization_endpoint);if(target.protocol!=='https:'||target.username||target.password||target.search||target.hash||target.href!==data.authorization_endpoint)throw new Error('Invalid login configuration.')}
  else if(data.authorization_endpoint!==null)throw new Error('Invalid login configuration.')
@@ -195,6 +196,32 @@ export function authorizationTarget(data,bootstrap,origin){
  const params=target.searchParams,keys=['response_type','client_id','redirect_uri','state','code_challenge','code_challenge_method','scope']
  if(target.origin!==endpoint.origin||target.pathname!==endpoint.pathname||target.username||target.password||target.hash||[...params.keys()].length!==keys.length||keys.some(k=>params.getAll(k).length!==1)||params.get('response_type')!=='code'||params.get('code_challenge_method')!=='S256'||params.get('redirect_uri')!==origin+'/auth/callback'||!exactToken(params.get('state'))||!exactToken(params.get('code_challenge'))||!params.get('client_id')||!params.get('scope'))throw new Error('Invalid login destination.')
  return target.href
+}
+// Capture the primitive arguments *before* loading the optional codec. Do not
+// call object getters/toJSON, silently drop unknown fields or borrow mutable
+// form objects across the dynamic import. Full wire validation is in the codec.
+function captureProductFields(value, limit) {
+ const invalid=()=>new Error('Invalid product view request.')
+ if(value===null||typeof value!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(value)))throw invalid()
+ const keys=Reflect.ownKeys(value),copy=Object.create(null)
+ if(keys.length>limit)throw invalid()
+ for(const k of keys){
+  const d=Object.getOwnPropertyDescriptor(value,k)
+  if(typeof k!=='string'||!d.enumerable||!Object.hasOwn(d,'value')||!['number','string','boolean'].includes(typeof d.value))throw invalid()
+  copy[k]=d.value
+ }
+ return Object.freeze(copy)
+}
+function staleProductView() {
+ const error=new Error('Stale product view request discarded.')
+ error.name='AbortError'
+ return error
+}
+const productReadErrors={
+ 400:'Invalid product view request. Check the scope and filters.',
+ 401:messages[401],403:'This product view is unavailable.',404:'This product view is unavailable.',
+ 409:'This workspace or module is unavailable.',
+ 412:'The publication or view changed. Reopen the product view.',
 }
 export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,onInvalid=()=>{}}={}){
  let active=false,epoch=0
@@ -257,8 +284,68 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    return payload.data
   }catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{if(moduleStatus||transfer)current()}
  }
+ // Only this method has a product owner. Generic request(), ordinary 401s
+ // and all other routes cannot accept or install this response guard.
+ async function readArtifactProductView(scope,viewId,body,options) {
+  const turn=epoch
+  if(options==null)throw staleProductView()
+  if(typeof options!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(options))||
+     Reflect.ownKeys(options).some(k=>!['signal','isCurrent'].includes(k)||!Object.hasOwn(Object.getOwnPropertyDescriptor(options,k),'value')))throw new Error('Invalid product view options.')
+  const {signal,isCurrent}=options
+  if(!Object.hasOwn(options,'isCurrent')||typeof isCurrent!=='function'||signal?.aborted)throw staleProductView()
+  if(signal!==undefined&&!(signal instanceof AbortSignal))throw new Error('Invalid product view signal.')
+  if(!active)throw new Error('Session recheck required.')
+  const guard=()=>{
+   try{if(active&&turn===epoch&&!signal?.aborted&&isCurrent()===true&&active&&turn===epoch&&!signal?.aborted)return}catch{}
+   throw staleProductView()
+  }
+  const unverified=()=>new Error('The product view response could not be verified.')
+  guard()
+  const selection=captureProductFields(scope,3),criteria=captureProductFields(body,11)
+  guard()
+  let codec
+  try{codec=await import('./artifact-product-codec.mjs')}catch{guard();throw unverified()}
+  guard()
+  const request=codec.makeProductRequest(selection,viewId,criteria),wire=JSON.stringify(request.body)
+  if(new TextEncoder().encode(wire).length>16384)throw new Error('Product view request is too large.')
+  const headers={'Content-Type':'application/json','X-CSRF-Token':csrfCookie(cookie())}
+  let response
+  guard()
+  try{
+   response=await fetcher(request.path,{method:'POST',headers,body:wire,signal,mode:'same-origin',
+    credentials:'same-origin',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error'})
+  }catch{guard();throw unverified()}
+  guard()
+  const status=response?.status
+  if(status!==200||response?.ok!==true){
+   const error=unverified()
+   if(Number.isInteger(status)&&status>=400&&status<=599){
+    error.status=status
+    if(Object.hasOwn(productReadErrors,status))error.message=productReadErrors[status]
+   }
+   // Delayed headers (particularly a stale 401) must not touch the current
+   // session. A current 401 still uses the real shell invalidation path.
+   guard()
+   if(status===401){clear();onInvalid(error.message)}
+   throw error
+  }
+  let raw
+  try{raw=await response.text()}catch{guard();throw unverified()}
+  guard()
+  let payload,data
+  try{
+   // Existing post-read ceiling, not a streaming memory limit.
+   if(typeof raw!=='string'||raw.length>2097152||new TextEncoder().encode(raw).length>2097152)throw unverified()
+   payload=JSON.parse(raw)
+   if(payload===null||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).length!==1||!Object.hasOwn(payload,'data'))throw unverified()
+  }catch{guard();throw unverified()}
+  guard()
+  try{data=codec.validateProductResult(payload.data,request)}catch{guard();throw unverified()}
+  guard()
+  return data
+ }
  return {
-  clear,
+  clear,readArtifactProductView,
   bootstrap:()=>send('/app/bootstrap'),
   async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||!validPolicyId(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Product view · MS-COLLAB</title>
+  <link rel="stylesheet" href="/app/style.css">
+  <link rel="stylesheet" href="/app/artifacts.css">
+  <script type="module" src="/app/shell.mjs"></script>
+</head>
+<body data-page="artifact-product-views">
+<header class="app-shell"><a class="app-brand" href="/">MS-COLLAB</a><nav aria-label="Application"><a href="/">Overview</a><a href="/manage/">Workspaces</a><a id="app-connections-link" href="/connections/" hidden>Connections</a><a id="app-responsibility-link" href="/responsibility/" hidden>Responsibility</a><a id="app-community-link" href="/community/" hidden>Community</a><a id="app-pipelines-link" href="/pipelines/" hidden>Pipelines</a><a id="app-artifacts-link" href="/artifacts/" hidden>Artifacts</a><a id="app-artifact-admin-link" href="/artifact-admin/" hidden>Artifact approval</a><a id="app-assistant-link" href="/assistant/" hidden>Saved history</a><a id="app-research-assets-link" href="/research-assets/" hidden>Research assets</a><a id="app-gui-smoke-link" href="/gui-smoke/" hidden>GUI observations</a></nav><div class="app-account"><span>Current principal: <strong id="app-principal">Not verified</strong></span><button id="app-sign-in" type="button" disabled>Sign in</button><button id="app-sign-out" type="button" disabled>Sign out</button><button id="app-recheck" type="button" disabled>Recheck session</button></div><p id="app-login-note">Loading configured service boundary…</p><p id="app-status" role="status" aria-live="polite">No private data loaded.</p></header>
+<main class="pv-main">
+  <header class="pv-heading">
+    <p class="pv-kicker">ARTIFACTS / STORED INDEX</p>
+    <h1>Product view</h1>
+    <p>Browse one approved quarterly snapshot by matching stored relative keys.
+       The product match ignores ASCII letter case. A match is not proof of product ownership or download permission.</p>
+    <a id="pv-return" href="/artifacts/" rel="noreferrer">Return to artifact catalog</a>
+  </header>
+
+  <div id="pv-controls" hidden>
+    <section class="pv-surface" aria-labelledby="pv-choose">
+      <h2 id="pv-choose">Choose a product view</h2>
+      <p class="pv-note">Use exact IDs from your administrator. No scopes, views or quarters are looked up as you type.</p>
+      <form id="pv-setup" autocomplete="off" novalidate>
+        <label>Workspace ID<input id="pv-workspace" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>
+        <label>Connection ID<input id="pv-connection" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>
+        <label>Internal bucket ID<input id="pv-bucket" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>
+        <label>Product view ID<input id="pv-view" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>
+        <label>Quarter<input id="pv-quarter" required placeholder="YYYYQ1–YYYYQ4" spellcheck="false" autocapitalize="none" autocomplete="off"></label>
+        <button id="pv-open" class="pv-primary" type="submit">Open product view</button>
+      </form>
+    </section>
+
+    <p id="pv-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <button id="pv-reopen" class="pv-primary" type="button" hidden>Reopen product view</button>
+
+    <section id="pv-browse" class="pv-surface" aria-labelledby="pv-location" hidden>
+      <div class="pv-layout">
+        <div class="pv-title">
+          <p class="pv-kicker">SELECTED LOCATION</p>
+          <h2 id="pv-location" tabindex="-1" dir="auto"></h2>
+          <nav id="pv-crumbs" aria-label="Product folders"></nav>
+        </div>
+        <button id="pv-up" type="button" disabled>Up one folder</button>
+      </div>
+      <form id="pv-filters" autocomplete="off" novalidate>
+        <h3>Find files here</h3>
+        <p class="pv-note">All filters apply together, within this folder and quarter. Times are inclusive: use UTC (Z) or an explicit offset, with up to six fractional digits.</p>
+        <div class="pv-fields">
+          <label>Key contains (case-sensitive)<input id="pv-keyword" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
+          <label>Start time (inclusive)<input id="pv-start" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
+          <label>End time (inclusive)<input id="pv-end" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
+        </div>
+        <div class="pv-actions">
+          <label class="pv-check"><input id="pv-recursive" type="checkbox" autocomplete="off">Include subfolders</label>
+          <button id="pv-apply" class="pv-primary" type="submit">Apply file filters</button>
+          <button id="pv-range7" type="button" aria-pressed="false">Last 7 UTC dates (including today)</button>
+          <button id="pv-tree" type="button">Clear filters and browse folders</button>
+        </div>
+      </form>
+      <div class="pv-layout pv-list-heading">
+        <div class="pv-title">
+          <h3>Results</h3>
+          <p id="pv-evidence" class="pv-note"></p>
+        </div>
+        <label>Rows per page<select id="pv-page-size" autocomplete="off" disabled><option>10</option><option>20</option><option>50</option></select></label>
+      </div>
+      <div id="pv-results"></div>
+      <nav class="pv-pages" aria-label="Product view pages">
+        <button id="pv-prev" type="button" disabled>Previous</button>
+        <span id="pv-page"></span>
+        <button id="pv-next" type="button" disabled>Next</button>
+      </nav>
+    </section>
+  </div>
+</main>
+<footer class="app-footer">Stored metadata only · No live provider verification · Not a complete bucket inventory</footer>
+</body>
+</html>

@@ -64,6 +64,15 @@ _FILES = {
     '/artifact-admin/style.css': ('artifact-admin/style.css', 'text/css'),
 }
 
+# Public, inert assets for a configured indexed host only. Never derive a
+# filename from a requested path, product ID, bucket, or configuration value.
+_PRODUCT_DOCUMENT = '/artifacts/product-views/'
+_PRODUCT_FILES = {
+    _PRODUCT_DOCUMENT: ('application/artifact-product-view.html', 'text/html'),
+    '/app/artifact-product-view.mjs': ('application/artifact-product-view.mjs', 'text/javascript'),
+    '/app/artifact-product-codec.mjs': ('application/artifact-product-codec.mjs', 'text/javascript'),
+}
+
 
 class ApplicationUI:
     """Explicit static wrapper, not a listener, provider, verifier or deployment.
@@ -82,6 +91,7 @@ class ApplicationUI:
         path = environ.get('PATH_INFO', '')
         if type(path) is str and (path.startswith('/api/') or path.startswith('/auth/')):
             return self._host(environ, start_response)
+        product_views = self._host.artifact_product_views_enabled
         headers = [('Cache-Control', 'no-store'), ('Pragma', 'no-cache'),
                    ('Referrer-Policy', 'no-referrer'), ('X-Content-Type-Options', 'nosniff'),
                    ('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"),
@@ -94,7 +104,8 @@ class ApplicationUI:
             # Metadata. Only fixed, public top-level HTML may be that landing
             # page; no API, bootstrap, script, query or embedded document gets
             # this exception. HTML contains no identity or private scope data.
-            navigation = (type(path) is str and path in {'/', '/manage/', '/connections/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/', '/research-assets/', '/gui-smoke/'}
+            navigation = (type(path) is str and (path in {'/', '/manage/', '/connections/', '/responsibility/', '/pipelines/', '/community/', '/artifacts/', '/artifact-admin/', '/assistant/', '/research-assets/', '/gui-smoke/'}
+                    or (product_views and path == _PRODUCT_DOCUMENT))
                 and environ.get('REQUEST_METHOD') == 'GET'
                 and not environ.get('QUERY_STRING')
                 and environ.get('HTTP_SEC_FETCH_MODE') == 'navigate'
@@ -108,6 +119,8 @@ class ApplicationUI:
         enabled = 'responsibility' in self._host._config.modules
         pipelines = 'pipelines' in self._host._config.modules
         artifact_pages = (['artifacts'] if 'artifacts' in self._host._config.modules else []) + (['artifact-admin'] if self._host._config.artifact_administration else [])
+        if product_views:
+            artifact_pages.append('artifact-product-views')
         if path == '/app/bootstrap':
             endpoint = self._host._boundary._authorization_endpoint
             body = {'data': {'service': 'ms-collab',
@@ -118,7 +131,8 @@ class ApplicationUI:
             return respond('404 Not Found', b'not_found')
         if type(path) is str and path in {'/artifacts/', '/artifact-admin/'} and path.strip('/') not in artifact_pages:
             return respond('404 Not Found', b'not_found')
-        if type(path) is not str or path not in _FILES or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/assistant/' and 'assistant' not in self._host._config.modules) or (path == '/community/' and 'community' not in self._host._config.modules) or (path == '/research-assets/' and 'research-assets' not in self._host._config.modules) or (path == '/gui-smoke/' and 'gui-smoke' not in self._host._config.modules):
+        files = _PRODUCT_FILES if product_views and type(path) is str and path in _PRODUCT_FILES else _FILES
+        if type(path) is not str or path not in files or (path == '/responsibility/' and not enabled) or (path == '/pipelines/' and not pipelines) or (path == '/assistant/' and 'assistant' not in self._host._config.modules) or (path == '/community/' and 'community' not in self._host._config.modules) or (path == '/research-assets/' and 'research-assets' not in self._host._config.modules) or (path == '/gui-smoke/' and 'gui-smoke' not in self._host._config.modules):
             return respond('404 Not Found', b'not_found')
-        filename, media = _FILES[path]
+        filename, media = files[path]
         return respond('200 OK', (_ROOT / filename).read_bytes(), media)

@@ -12,7 +12,8 @@ Only `IndexedArtifactApplication(..., product_views=definitions)` and the cookie
 module mounted support this endpoint. No configuration or an empty list/tuple
 leaves it unmounted. The generic resource-backed `ArtifactApplication`, normal
 demo, runtime manifest, and old named views do not gain product-view behavior.
-This slice has no product-view UI or management/listing endpoint.
+A host with the Cookie application UI can also serve the browser described below.
+There is no management or listing endpoint for these definitions.
 
 Supply a list or tuple of at most 128 exact descriptors. The registry copies and
 validates the entire input; duplicate (workspace, connection, bucket, view ID)
@@ -136,7 +137,7 @@ This is **not full OBS equivalence**. Compared with the behavior reviewed at
 [#345](https://github.com/codeasier/msinsight-obs-web-browser/pull/345), no match
 can come from a provider bucket name, no aggregate bucket root is shown, a
 same-named file does not hide a folder, and time input never assumes +08:00.
-There are no shortcuts, share links or implicit recursive searches. Existing
+There are no API shortcuts, share links or implicit recursive searches. Existing
 `SavedView`, `Definition`, `GET /views/{id}` and ordinary `POST /query` keep their
 own behavior, including legacy sort/condition rules, markers and checksum rows.
 
@@ -149,3 +150,53 @@ A bound metadata read neither calls a provider nor grants availability/download,
 refresh, administration, or sharing. Actual product ownership, recall/false
 positives, source mappings, production data, deployments and live-provider
 compatibility require independent decisions/evidence.
+
+## Browse with a verified Cookie session
+
+On an opted-in host, open **Artifacts → Open a product view**. This link is a
+host capability, not evidence that your account or the current bucket has a
+view. No configuration or an empty registry leaves the entry hidden and the
+dedicated page and its two modules unmounted. Reload the document to pick up a
+new host configuration; the hint is not a live configuration monitor.
+
+The separate page at `/artifacts/product-views/` starts empty. Enter the exact
+workspace, connection, **internal bucket ID**, product view ID and quarter. Use
+**Open product view** to read the root. Editing the IDs does not discover
+anything; editing just the quarter and opening again reads that quarter’s root
+under the same confirmed observation. Folder buttons follow verified children.
+Breadcrumbs and **Up one folder** follow literal ancestors, including empty
+segments; a file and a folder with the same name remain separate. Tree totals
+count this level’s rows, not a product’s inventory.
+
+**Apply file filters** returns only files at this location. The optional,
+case-sensitive keyword is literal; spaces in a nonblank keyword count.
+Start/end times are independently optional and inclusive. Use a real calendar
+date, uppercase T, seconds, at most six fractional digits, and Z or a numeric
+offset. Bounds do not select subfolders or change the quarter. **Last 7 UTC
+dates (including today)** applies immediately, from 00:00:00Z six calendar
+dates before today through today at 23:59:59.999999Z. The concrete bounds
+remain visible and editable. This is not a rolling 168-hour window or a local
+timezone shortcut. **Clear filters and browse folders** stays in the same
+view, quarter and directory. Pagination offers 10, 20 or 50 rows per page.
+
+Follow-up reads carry the publication observation; it is an equality hint, not
+permission. If it changes (412), the old results, location, counts and evidence
+are removed. **Reopen product view** explicitly reads a fresh root. An absent
+quarter is different from a present quarter without matches or an inaccessible
+view. An unverified or denied response never becomes an empty list, a broader
+catalog or an automatic retry. Historical timestamps outside the browser’s
+strict timestamp representation cannot be verified on this page. This does not
+diagnose bad stored data. Neither the private product token nor the quarterly
+index offset is supplied to the browser to recompute the server’s match.
+
+Only the exact product POST carries scope and view IDs in its API path.
+Directory, query, time and observation are sent only in its body. No shared
+link, page URL, history state or browser storage carries your selection. The
+page does not query the ordinary catalog, enumerate scopes or views, contact a
+provider or offer byte downloads. Return to the ordinary catalog explicitly
+and open a new scope there if needed. Recheck, sign-out and leaving the
+document clear private page state; Back does not reopen a query. Other tabs
+keep separate unsaved selections and recheck shared Cookie authority on their
+next request. Late results cannot replace a newer selection or expire its
+session; a current 401 clears the page and requires explicit re-verification.
+Previously viewed metadata cannot be recalled.
