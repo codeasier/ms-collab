@@ -1,4 +1,5 @@
-import {validId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations, initialAdminSelectionURL, validateInitialAdminSelection, invitationSelectionURL, validateInvitationSelection} from './client.mjs'
+import {mountAdminTransfer} from './admin-transfer.mjs'
+import {validId, displayPolicyId, validateWorkspaces, validateMembers, validateModules, validateCatalog, membershipURL, moduleURL, invitationURL, validateInvitations, initialAdminSelectionURL, validateInitialAdminSelection, invitationSelectionURL, validateInvitationSelection} from './client.mjs'
 export function mountWorkspacePage({client,sessionMode=false,onSignOut=()=>{}}) {
 if (!client || typeof client.request !== 'function' || typeof client.clear !== 'function') throw new Error('Explicit request client required.')
 const el = id => document.getElementById(id)
@@ -6,6 +7,9 @@ const pendingCreations = new Map(), pendingInvitations = new Map()
 let generation = 0, controller, workspaces = [], selection, editing, action, saving = false
 let managementAvailable = false, saveGeneration = 0
 let createSelection, selectionGeneration = 0, selectionController, reviewing = false
+const confirmedExpiry = 'Your session expired. The administrator transfer was already confirmed committed.'
+let confirmedRefreshSignal
+const transfer = mountAdminTransfer({client,clearAdministration,refreshWorkspaces:refreshOrdinaryWorkspaces,onUnauthorized:disconnect})
 let inviteSelection, inviteGeneration = 0, inviteController, inviteReviewing = false, inviteSaveTicket
 const inviteBody = () => ({principal_id:el('invite-principal').value.trim(),role:el('invite-role').value})
 const inviteSignature = () => JSON.stringify([selection,inviteBody()])
@@ -40,7 +44,7 @@ function clearCreateSelection() {
   createSelection = undefined; reviewing = false
   el('initial-admin-selection').textContent = ''; createControls()
 }
-function cancelRequests() { generation++; clearInviteSelection(); controller?.abort(); controller = new AbortController(); return generation }
+function cancelRequests(preserveTransfer=false) { confirmedRefreshSignal = undefined; if (!preserveTransfer) transfer.clear(); generation++; clearInviteSelection(); controller?.abort(); controller = new AbortController(); return generation }
 function closeEditor() {
   editing = undefined; el('editor').close()
   for (const id of ['editing','edit-status']) el(id).textContent = ''
@@ -64,11 +68,14 @@ function busy(value, ticket) {
   if (!value && ticket !== undefined && ticket !== saveGeneration) return
   saveGeneration++
   saving = value
-  for (const control of document.querySelectorAll('dialog button,dialog input,dialog select')) control.disabled = value
+  for (const control of document.querySelectorAll('dialog button,dialog input,dialog select')) if (!control.closest('#transfer-dialog')) control.disabled = value
   createControls(); inviteControls()
   return saveGeneration
 }
-function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.') {
+function disconnect(message='Disconnected. Any already accepted change may have completed; reload after reconnecting to verify.', workspaceListSignal) {
+  // Cookie onInvalid enters here synchronously via the shell, before the
+  // list promise rejects. Only this still-owned 401 may use the history copy.
+  if (workspaceListSignal && workspaceListSignal === confirmedRefreshSignal) message = confirmedExpiry
   cancelRequests(); client.clear(); clearPanel(); busy(false); workspaces = []; selection = undefined
   managementAvailable = false; pendingCreations.clear(); pendingInvitations.clear()
   el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
@@ -208,16 +215,56 @@ async function loadMembers(id, notice='') {
     el('state').textContent = `${space.kind === 'shared' ? 'Shared · explicit membership' : 'Product workspace'} · ${space.state}`
     for (const member of members) {
       const row = document.createElement('li'), label = document.createElement('span'), button = document.createElement('button')
-      label.textContent = `${member.principal_id} · ${member.role} · ${member.state} · revision ${member.revision}`
-      button.type = 'button'; button.textContent = 'Edit'; button.disabled = member.state !== 'active'; button.setAttribute('aria-label', `Edit ${member.principal_id}`)
-      button.addEventListener('click', () => {editing = {...member}; el('editing').textContent = `${member.principal_id} in ${space.name}`; el('role').value = member.role; el('member-state').value = member.state; el('editor').showModal()})
-      row.append(label,button); el('members').append(row)
+      const display = displayPolicyId(member.principal_id), routeable = validId(member.principal_id)
+      label.textContent = `${display} · ${member.role} · ${member.state} · revision ${member.revision}`
+      button.type = 'button'; button.textContent = 'Edit'; button.disabled = member.state !== 'active' || !routeable; button.setAttribute('aria-label', `Edit ${display}`)
+      button.addEventListener('click', () => {
+        if (current !== generation || selection !== id || member.state !== 'active' || !validId(member.principal_id)) return
+        editing = {...member}; el('editing').textContent = `${display} in ${space.name}`; el('role').value = member.role; el('member-state').value = member.state; el('editor').showModal()
+      })
+      const controls = document.createElement('div'); controls.className = 'member-controls'; controls.append(button)
+      if (!routeable) { const note = document.createElement('small'); note.textContent = 'Visible identity; editing and transfer targeting are unavailable for non-route IDs.'; controls.append(note) }
+      row.append(label,controls); el('members').append(row)
     }
     el('panel').hidden = false; el('status').textContent = notice || `${members.length} memberships. Only server-authorized operations are available.`
+    await transfer.setMembers(space,members)
+    if (current !== generation) return
     await loadModules(space,current)
     if (current !== generation) return
     await loadInvitations(space,current)
   } catch (error) { failed(error,current) }
+}
+// Internal loss of admin authority invalidates every old management response,
+// but deliberately leaves the separate unknown transfer attempt untouched.
+function clearAdministration(scope) {
+  if (scope !== selection) return
+  cancelRequests(true); clearPanel(); busy(false)
+  // Extension availability is not this workspace's administrator grant. Keep
+  // the observed extension so a later explicit scope selection can reauthorize.
+  pendingCreations.clear(); pendingInvitations.clear()
+  el('operator-panel').hidden = true; el('control-spaces').replaceChildren()
+  el('inbox-panel').hidden = true; el('inbox').replaceChildren(); el('inbox-status').textContent = ''
+  el('status').textContent = 'Workspace management data cleared. Select a workspace explicitly to check current access.'
+}
+async function refreshOrdinaryWorkspaces() {
+  const current = generation, signal = controller.signal
+  confirmedRefreshSignal = signal
+  el('workspace').disabled = true
+  try {
+    const result = validateWorkspaces(await client.request('/api/workspaces',{signal}))
+    if (current !== generation) return
+    workspaces = result; selection = undefined; el('workspace').replaceChildren()
+    const prompt = document.createElement('option'); prompt.value = ''; prompt.textContent = 'Select a workspace to check access'; el('workspace').append(prompt)
+    for (const space of result) { const option = document.createElement('option'); option.value = space.id; option.textContent = space.name; el('workspace').append(option) }
+    el('workspace').value = ''
+  } catch (error) {
+    if (current !== generation) return
+    if (error.status === 401) { disconnect(confirmedExpiry); return }
+    el('status').textContent = 'Transfer committed. The ordinary workspace list could not be refreshed. Recheck explicitly before selecting a scope.'
+  } finally {
+    if (confirmedRefreshSignal === signal) confirmedRefreshSignal = undefined
+    if (current === generation) el('workspace').disabled = !workspaces.length
+  }
 }
 async function reload(notice='') {
   const current = cancelRequests(); clearPanel(); el('workspace').disabled = true
@@ -270,7 +317,7 @@ for (const [dialog,button,close] of [['editor','cancel',closeEditor],['create-di
   el(dialog).addEventListener('cancel', event => { if (saving) event.preventDefault(); else close() })
 }
 el('edit-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (!editing || saving) return
+  event.preventDefault(); if (!editing || saving || !validId(selection) || !validId(editing.principal_id)) return
   const member = {...editing}, current = generation, scope = selection
   const body = {role:el('role').value,state:el('member-state').value}
   const saveTurn = busy(true); el('edit-status').textContent = 'Saving… Do not close the page until the result is known.'
@@ -411,7 +458,8 @@ el('invite-form').addEventListener('submit',async event=>{
     } else await mutationError(error,current,'invite-status',scope)
   } finally { if (inviteSaveTicket === saveTurn) inviteSaveTicket = undefined; busy(false,saveTurn) }
 })
-window.addEventListener('pagehide', () => disconnect('Disconnected. Reconnect and verify any uncertain creation before submitting another request.'))
+window.addEventListener('pagehide', () => disconnect('Disconnected. Any interrupted administrator change may already have completed. Reconnect and verify current state.'))
+window.addEventListener('pageshow', event => { if (event.persisted) disconnect('Restored page cleared. Reconnect or explicitly recheck the session. Any interrupted change may already have completed.') })
 if (!sessionMode && location.protocol !== 'https:' && !(location.protocol === 'http:' && location.hostname === '127.0.0.1')) {
   el('connect').hidden = true; el('status').textContent = 'HTTPS is required outside numeric loopback.'
 }

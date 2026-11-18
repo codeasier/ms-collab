@@ -7,7 +7,7 @@ import ssl
 import sys
 import tempfile
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 from packages.application_host.tests.fixtures import setup
@@ -15,11 +15,79 @@ from packages.application_ui import ApplicationUI
 from packages.application_ui.tests.synthetic_shutdown import serve_synthetic
 
 
+TRANSFER_MODE = 'admin-transfer'
+TRANSFER_PREFIX = '/synthetic/admin-transfer/'
+TRANSFER_CONTROLS = (TRANSFER_PREFIX + 'status', TRANSFER_PREFIX + 'repromote')
+
+
+def dispatch_admin_transfer(policy, *, mode, origin, environ, start_response):
+    """Fixed disposable-fixture controls, not recovery or product endpoints.
+
+    No scope, target, identity, SQL, key or proof is accepted from the caller.
+    The re-promotion is a separate legitimate policy edit by the new admin. It
+    only sets up historical replay acceptance; it is never recommended recovery.
+    """
+    path = environ.get('PATH_INFO', '')
+    if mode != TRANSFER_MODE or type(path) is not str or not path.startswith(TRANSFER_PREFIX):
+        return None
+
+    def respond(status, value=None):
+        raw = b'' if value is None else json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+        start_response(status, [('Content-Type', 'text/plain' if value is None else 'application/json'),
+            ('Content-Length', str(len(raw))), ('Cache-Control', 'no-store')])
+        return [raw]
+
+    if (environ.get('REQUEST_METHOD') != 'POST'
+            or environ.get('HTTP_ORIGIN') != origin
+            or environ.get('wsgi.url_scheme') != 'https'
+            or environ.get('HTTP_HOST') != urlsplit(origin).netloc
+            or environ.get('HTTP_SEC_FETCH_SITE') == 'cross-site'):
+        return respond('403 Forbidden')
+    if path not in TRANSFER_CONTROLS:
+        return respond('404 Not Found')
+    if (environ.get('QUERY_STRING', '') != ''
+            or environ.get('SCRIPT_NAME', '') != ''
+            or environ.get('CONTENT_LENGTH', '') not in ('', '0')
+            or environ.get('CONTENT_TYPE', '') not in ('', 'text/plain')
+            or 'HTTP_TRANSFER_ENCODING' in environ
+            or any(name in environ for name in ('HTTP_AUTHORIZATION', 'HTTP_X_WORKSPACE_ID',
+                'HTTP_X_PRINCIPAL_ID', 'HTTP_X_USER_ID', 'HTTP_X_SUBJECT', 'REMOTE_USER'))):
+        return respond('400 Bad Request')
+    from packages.workspace_admin_api.tests.transfer_fixtures import BROWSER_ACTOR
+    from packages.workspaces import PolicyError
+
+    def snapshot(current, db):
+        actor = current._memberships[('alpha', BROWSER_ACTOR)]
+        reader = current._memberships[('alpha', 'reader')]
+        return {'actor_role': actor.role, 'actor_revision': actor.revision,
+            'replacement_role': reader.role, 'replacement_revision': reader.revision,
+            'receipts': db.execute('SELECT count(*) FROM workspace_admin_transfers_v1').fetchone()[0],
+            'transfer_audits': db.execute("SELECT count(*) FROM audit WHERE action IN ('membership.promote','membership.demote')").fetchone()[0],
+            'audits': len(current._audit), 'epoch': current._epoch}
+
+    def repromote(current):
+        actor = current._memberships[('alpha', BROWSER_ACTOR)]
+        reader = current._memberships[('alpha', 'reader')]
+        if (actor.role, actor.state, actor.revision, reader.role, reader.state, reader.revision) != (
+                'developer', 'active', 2, 'admin', 'active', 2):
+            raise PolicyError(409, 'synthetic_fixture_conflict')
+        current.set_membership('reader', 'alpha', BROWSER_ACTOR,
+            role='admin', state='active', expected_revision=2)
+
+    try:
+        if path == TRANSFER_PREFIX + 'repromote':
+            policy._transaction(repromote, write=True)
+        value = policy._transaction(snapshot, write=False, with_connection=True)
+    except PolicyError:
+        return respond('409 Conflict')
+    return respond('200 OK', value)
+
+
 def main():
     if os.environ.get('MS_COLLAB_SYNTHETIC_APPLICATION_UI') != '1' or len(sys.argv) not in (3,4):
         raise SystemExit('explicit synthetic opt-in and temporary certificate required')
     mode=sys.argv[3] if len(sys.argv)==4 else ''
-    if mode not in {'','closed','pipelines','assets','pipeline-tasks','pipeline-discovery','module-status'}:raise SystemExit('unknown synthetic mode')
+    if mode not in {'','closed','pipelines','assets','pipeline-tasks','pipeline-discovery','module-status',TRANSFER_MODE}:raise SystemExit('unknown synthetic mode')
     enabled=mode!='closed'
     class QuietHTTPS(WSGIRequestHandler):
         def log_message(self,*args):pass
@@ -30,7 +98,8 @@ def main():
         origin='https://127.0.0.1:'+str(server.server_port)
         provider='https://localhost:'+str(server.server_port)+'/synthetic-provider'
         host,policy,login,exchange=setup(directory,origin=origin,enabled=enabled,
-            authorization_endpoint=provider,clock=lambda:datetime.now(timezone.utc))
+            authorization_endpoint=provider,clock=lambda:datetime.now(timezone.utc),
+            **({'admin_transfers': True} if mode == TRANSFER_MODE else {}))
         if mode=='module-status':
             from .module_status_fixture import dispatch,provision
             provision(policy)
@@ -72,6 +141,10 @@ def main():
             provision(policy)
         def fixture(env,start):
             path=env.get('PATH_INFO')
+            if mode == TRANSFER_MODE:
+                response = dispatch_admin_transfer(policy, mode=mode, origin=origin,
+                    environ=env, start_response=start)
+                if response is not None:return response
             if mode=='module-status':
                 response=dispatch(policy,mode=mode,origin=origin,environ=env,start_response=start)
                 if response is not None:return response
@@ -103,21 +176,37 @@ def main():
                 with sqlite3.connect(Path(directory)/'policy.sqlite') as db:
                     db.execute("UPDATE research_catalog SET revision=revision+1 WHERE workspace_id='alpha' AND catalog_id='knowledge'")
                 start('200 OK',[('Content-Length','0')]);return [b'']
-            if path in {'/synthetic/revoke-membership','/synthetic/revoke-session'}:
+            if path in {'/synthetic/revoke-membership','/synthetic/revoke-session'} and mode != TRANSFER_MODE:
                 if env.get('REQUEST_METHOD')!='POST' or env.get('HTTP_ORIGIN')!=origin:
                     start('403 Forbidden',[('Content-Length','0')]);return [b'']
                 if path.endswith('membership'):policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
                 else:login.revoke_subject('admin-sub')
                 start('200 OK',[('Content-Length','0'),('Cache-Control','no-store')]);return [b'']
-            if path=='/synthetic-provider' and enabled:
-                params=parse_qs(env.get('QUERY_STRING',''),strict_parsing=True)
+            if (path == '/synthetic-provider' or (mode == TRANSFER_MODE and path == '/synthetic-provider-reader')) and enabled:
+                if mode == TRANSFER_MODE:
+                    try:
+                        params = parse_qs(env.get('QUERY_STRING', ''), strict_parsing=True)
+                    except ValueError:
+                        start('400 Bad Request', [('Content-Length', '0')]);return [b'']
+                    if (env.get('REQUEST_METHOD') != 'GET' or env.get('wsgi.url_scheme') != 'https'
+                            or set(params) != {'response_type', 'client_id', 'redirect_uri', 'scope',
+                                               'state', 'code_challenge', 'code_challenge_method'}
+                            or any(len(value) != 1 or not value[0] for value in params.values())
+                            or params.get('response_type') != ['code']
+                            or params.get('scope') != ['synthetic_user']):
+                        start('400 Bad Request', [('Content-Length', '0')]);return [b'']
+                else:
+                    params=parse_qs(env.get('QUERY_STRING',''),strict_parsing=True)
                 if (env.get('HTTP_HOST')!='localhost:'+str(server.server_port)
                         or params.get('code_challenge_method')!=['S256']
                         or params.get('redirect_uri')!=[login.binding.callback_uri]
                         or params.get('client_id')!=[login.binding.audience]):
                     start('400 Bad Request',[('Content-Length','0')]);return [b'']
-                code=exchange.authorize(params['code_challenge'][0],
-                    'reader-sub' if mode=='module-status' else 'admin-sub')
+                subject = 'reader-sub' if mode=='module-status' else 'admin-sub'
+                if mode == TRANSFER_MODE:
+                    from packages.workspace_admin_api.tests.transfer_fixtures import BROWSER_SUBJECT
+                    subject = 'reader-sub' if path == '/synthetic-provider-reader' else BROWSER_SUBJECT
+                code=exchange.authorize(params['code_challenge'][0], subject)
                 target=login.binding.callback_uri+'?'+urlencode({'code':code,'state':params['state'][0]})
                 start('303 See Other',[('Location',target),('Content-Length','0'),('Cache-Control','no-store'),('Referrer-Policy','no-referrer')]);return [b'']
             return app(env,start)

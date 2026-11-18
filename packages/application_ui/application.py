@@ -49,6 +49,7 @@ _FILES = {
     '/app/client.mjs': ('application/client.mjs', 'text/javascript'),
     '/app/module-status.mjs': ('application/module-status.mjs', 'text/javascript'),
     '/app/style.css': ('application/style.css', 'text/css'),
+    '/manage/admin-transfer.mjs': ('workspace-admin/admin-transfer.mjs', 'text/javascript'),
     '/manage/admin.mjs': ('workspace-admin/admin.mjs', 'text/javascript'),
     '/manage/client.mjs': ('workspace-admin/client.mjs', 'text/javascript'),
     '/manage/style.css': ('workspace-admin/style.css', 'text/css'),

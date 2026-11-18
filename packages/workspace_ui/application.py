@@ -7,6 +7,7 @@ from packages.workspace_api import WorkspaceApplication
 _ROOT = Path(__file__).resolve().parents[2] / "frontend" / "workspace-admin"
 _FILES = {"/manage/": ("index.html", "text/html"),
           "/manage/entry.mjs": ("entry.mjs", "text/javascript"),
+          "/manage/admin-transfer.mjs": ("admin-transfer.mjs", "text/javascript"),
           "/manage/admin.mjs": ("admin.mjs", "text/javascript"),
           "/manage/client.mjs": ("client.mjs", "text/javascript"),
           "/manage/style.css": ("style.css", "text/css")}

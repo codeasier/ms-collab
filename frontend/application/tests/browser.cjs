@@ -5,6 +5,7 @@ const {createScenarioRouter}=require('../../workspace-admin/tests/scenario-route
 const {exerciseIdentitySelection}=require('../../workspace-admin/tests/identity-selection.cjs')
 const {exerciseInvitationReview}=require('../../workspace-admin/tests/invitation-review.cjs')
 const {exerciseModuleStatus}=require('./module-status.cjs')
+const {exerciseAdminTransfer}=require('../../workspace-admin/tests/admin-transfer.cjs')
 const {stopSyntheticFixtures}=require('./fixture-process.cjs')
 async function within(p,label){let timer;try{return await Promise.race([p,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(`Synthetic ${label} timed out`)),15000))])}finally{clearTimeout(timer)}}
 // Check actual computed foreground/background after the browser has applied both
@@ -64,6 +65,8 @@ async function main(){
   await page.locator('#app-sign-in').click();await page.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin'&&!document.querySelector('#app-data').hidden)
   const loginCount=logins.length;await page.locator('nav a[href="/manage/"]').click();await page.waitForFunction(()=>document.querySelector('#members').children.length===3)
   assert.equal(logins.length,loginCount);assert.equal(await page.locator('input[type="password"]').count(),0)
+  assert.equal((await context.request.get(main.origin+'/api/workspaces/alpha/admin-transfers/capabilities')).status(),404)
+  assert.equal(await page.locator('#transfer-open').isVisible(),false,'old no-handle mode stays unavailable')
   await page.getByRole('button',{name:'Edit reader',exact:true}).click();await readable(page,['#editing','#role','#member-state','#save','#cancel']);await page.locator('#role').selectOption('developer');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Membership saved'))
   assert.match(await page.locator('#members').textContent(),/reader · developer · active/)
   // Members/status are rendered before modules and invitations. Wait for the
@@ -167,6 +170,7 @@ async function main(){
   assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);assert.deepEqual(errors,[]);assert.deepEqual(dialogs,[]);assert.deepEqual(external,[])
   const statusFixture=await fixture(false,'module-status')
   await exerciseModuleStatus({browser,fixture:statusFixture,folder,readable})
+  await exerciseAdminTransfer({browser,transport:'cookie',folder})
  }catch(error){failure=error}
  finally{
   const failures=failure?[failure]:[]
@@ -181,7 +185,7 @@ async function main(){
   if(failures.length===1)throw failures[0]
   if(failures.length)throw new AggregateError(failures,'Unified UI scenario or cleanup failed')
  }
- console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider, member module-status observations and thirteen responsive screenshots with contrast checks. Synthetic HTTPS only.')
+ console.log('Unified UI acceptance passed: real cookie-only login, management, invitations, responsibility CAS, CSRF, workspace/session revocation, closed provider, member module-status observations and thirteen original responsive screenshots with contrast checks, plus the awaited administrator-transfer journey and two new screenshots. Synthetic HTTPS only.')
 }
 function reportFailure(error){
  console.error(error?.stack||String(error))

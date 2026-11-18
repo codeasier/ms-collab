@@ -3,6 +3,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), path=require(
 const {spawn}=require('node:child_process'), {chromium}=require('playwright')
 const {createScenarioRouter}=require('./scenario-router.cjs')
 const {exerciseIdentitySelection}=require('./identity-selection.cjs')
+const {exerciseAdminTransfer}=require('./admin-transfer.cjs')
 const within=async(promise)=>{let t;try{return await Promise.race([promise,new Promise((_,reject)=>t=setTimeout(()=>reject(new Error('barrier timeout')),10000))])}finally{clearTimeout(t)}}
 async function main(){
  const child=spawn('python3',['-m','packages.workspace_ui.tests.browser_server'],{cwd:path.resolve(__dirname,'../../..'),stdio:['ignore','pipe','pipe']});child.stderr.resume()
@@ -24,6 +25,8 @@ async function main(){
   await page.locator('#credential').fill('synthetic-admin');await page.locator('#connect button').click();await page.locator('#panel:not([hidden])').waitFor()
   assert.equal(await page.locator('#credential').inputValue(),'');assert.equal(await page.locator('#workspace option').count(),2)
   assert.match(await page.locator('#members').textContent(),/reader · viewer · active/)
+  assert.equal((await context.request.get(origin+'/api/workspaces/alpha/admin-transfers/capabilities',{headers:{Authorization:'Bearer synthetic-admin'}})).status(),404)
+  assert.equal(await page.locator('#transfer-open').isVisible(),false,'old no-handle mode stays unavailable')
   await page.getByRole('button',{name:'Edit reader',exact:true}).click();await page.locator('#member-state').selectOption('revoked');await page.locator('#cancel').click();assert.equal(mutations.length,0)
   await page.getByRole('button',{name:'Edit retiree',exact:true}).click();await page.locator('#member-state').selectOption('revoked');await page.locator('#save').click();await page.waitForFunction(()=>document.querySelector('#members').textContent.includes('retiree · viewer · revoked'))
   assert.equal(await page.getByRole('button',{name:'Edit retiree',exact:true}).isDisabled(),true)
@@ -137,7 +140,9 @@ async function main(){
   assert.equal(await page.locator('#control-spaces').textContent(),'');assert.equal(await page.locator('#modules').textContent(),'');assert.equal(await page.locator('#initial-admin').inputValue(),'')
   assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length})),{local:0,session:0})
   await within(router.drain());await context.unrouteAll({behavior:'wait'})
-  assert.deepEqual(external,[]);assert.deepEqual(errors,[]);console.log('Workspace administration browser acceptance passed; two synthetic screenshots written.')
+  assert.deepEqual(external,[]);assert.deepEqual(errors,[])
+  await exerciseAdminTransfer({browser,transport:'bearer',folder})
  }finally{await browser?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve)})}
+ console.log('Workspace administration browser acceptance passed; original screenshots and new transfer screenshots written after cleanup.')
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1})
