@@ -75,9 +75,13 @@ class ApplicationHost:
     def __init__(self, *, config: HostConfig, sessions: SessionPolicyStore,
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
                  clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
-                 community_refresh=None, directory_cursors=None, admin_transfers=None):
+                 community_refresh=None, directory_cursors=None, admin_transfers=None,
+                 artifact_product_views=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
+        if ("artifacts" not in config.modules and artifact_product_views is not None
+                and (type(artifact_product_views) not in (tuple, list) or artifact_product_views)):
+            raise ValueError("product views require the configured artifact index")
         if (config.artifact_downloads and type(artifact_downloads) is not ArtifactDownloadConfiguration
                 or not config.artifact_downloads and artifact_downloads is not None):
             raise ValueError('explicit download switch and trusted configuration required together')
@@ -102,7 +106,8 @@ class ApplicationHost:
                         "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication,
                         "gui-smoke": GuiSmokeApplication}
         self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
-                         **({"directory_cursors": self._directory_cursors} if key in {"pipelines", "artifacts"} else
+                         **({"directory_cursors": self._directory_cursors, "product_views": artifact_product_views} if key == "artifacts" else
+                            {"directory_cursors": self._directory_cursors} if key == "pipelines" else
                             {"connections": config.gui_smoke_connections} if key == "gui-smoke" else
                             {"credential_loader": community_refresh.credential_loader} if key == "community" and config.community_refresh else {}))
                          for key in config.modules}
