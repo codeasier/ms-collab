@@ -47,6 +47,7 @@ and final current-identity checks apply to all operations.
 | PUT | `/config` | Exact `{"fields":[...]}`; explicit editor authority and `If-Match`; historical identity pins are retained |
 | POST | `/reconfirm` | Exact `{fields, confirmation_token}`; explicit current editor, reviewed proposal and `If-Match` |
 | GET | `/candidates` | `view=mine|all|field|unassigned`, optional `field_id`, `offset`, `limit` |
+| GET | `/suggestion?number=N` | Only a configured, current exact open Issue suggestion; no assignment or workflow |
 
 Configuration PUT bodies are bounded to 65,536 bytes; only reconfirmation POST
 permits 65,624 bytes for the fixed token envelope, so full-budget saved fields
@@ -70,6 +71,47 @@ until republished; missing evidence is incomplete, never empty-complete. Even a
 complete result is `head_base_rechecked_unpinned`, not review/merge authority.
 The [core contract](../responsibility/README.md) defines candidate filters and
 explicitly unimplemented Issue identity mapping and workflow semantics.
+
+## Optional read-only Issue suggestions
+
+The new exact-scope GET is default-closed. It returns only `scope`, Issue
+`number`, the ordered `field_ids`, `community_revision`, `config_version`
+and `mode: "suggestion_only"`. No suggestion is a generic 404, as are an
+unknown, unapproved, closed, stale or unsupported Issue and an absent grant
+at the connection boundary. Authentication and existing workspace/module
+denials retain their ordinary status codes. No reason text, owner or assignee
+IDs, path content, fingerprints or external identifiers are returned. This
+does not add to candidate matching, Mine, ownership, assignment, review or
+external workflow authority.
+
+A trusted caller can pass one to 200 `IssueSuggestion(number, fingerprint,
+field_ids)` values to `prepare_issue_suggestions` on an explicitly configured
+bearer verifier application. Each value specifies one to three distinct current
+developer-field IDs and the existing **scope-and-content** fingerprint of the
+exact approved open Issue. The caller must review these values for the configured
+reader audience before preparation. Preparation checks the existing publisher
+grant, verifies the observed community and responsibility revisions, and returns
+a process- and policy-store-handle-local batch. It neither acquires data nor
+persists anything. The existing verifier runs outside the policy transaction;
+there is no new verifier, PAT bridge, request input/callback or HTTP write route.
+
+Mount up to 32 distinct batches explicitly via `prepared_suggestions=(...)` on
+a Responsibility application or the [configured Cookie host](../application_host/README.md).
+Only after authorization and exact approved Issue lookup does each read check the
+publisher, configuration and authority fence for that batch. A source revision,
+configuration change, workspace/module revision change or affected membership
+change makes the old result unavailable, not a record to rebind. Results are
+advisory, not a signature, and cannot be reused across processes or store
+handles. Prepare a fresh batch per process after restart/restore; do not persist,
+serialize or reuse prepared batches for a restored store. Replacing a full
+database underneath a running process/store is unsupported and not detected
+by this process-local fence.
+
+No business state/audit writes, live acquisition, solver, queue, persistence,
+notification, automatic publication or upstream writes are implemented.
+The Cookie host still uses its existing session-clock behavior. This is a
+bounded projection of explicitly prepared suggestions, not live Issue routing
+or real-provider acceptance.
 
 ## Prepared observation integration, not a public upload
 

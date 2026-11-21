@@ -90,6 +90,18 @@ SHA-256 in the admission transaction, then current session/policy checks through
 bounded acquisition and output. Missing configuration fails closed. This does not
 enable index refresh, create grants or assert real-cloud/deployment acceptance.
 
+## Optional prepared Issue suggestions
+
+Set both `HostConfig(..., responsibility_suggestions=True)` and
+`ApplicationHost(..., responsibility_suggestions=(batch, ...))` in trusted
+process code, with Community and Responsibility configured. Each batch must
+have been prepared for the exact same policy-store object in the current
+process. With no explicit configuration, the suggestion GET returns not found.
+No runtime config or deployment enables it. It uses the same current Cookie
+authority, Community approved-item fence and Responsibility scope; it grants no
+new role, opens no writer or background execution, and does not change the
+existing candidates UI. See the [suggestion contract](../responsibility_api/README.md#optional-read-only-issue-suggestions).
+
 ## Authentication and transaction seam
 
 `WorkspaceApplication(session_boundary=...)` is an exclusive trusted constructor
