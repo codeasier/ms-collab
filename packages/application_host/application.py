@@ -37,6 +37,7 @@ class HostConfig:
     artifact_refresh: bool = False
     community_connections: tuple[CommunityConnectionTemplate, ...] = ()
     community_refresh: bool = False
+    responsibility_suggestions: bool = False
 
     def __post_init__(self):
         if (type(self.modules) is not tuple or any(type(k) is not str or k not in _MODULES for k in self.modules)
@@ -61,6 +62,9 @@ class HostConfig:
             raise ValueError("connection management requires its explicit community module")
         if type(self.artifact_refresh) is not bool or (self.artifact_refresh and not self.artifact_administration):
             raise ValueError('artifact refresh requires explicit administration')
+        if (type(self.responsibility_suggestions) is not bool
+                or self.responsibility_suggestions and "responsibility" not in self.modules):
+            raise ValueError("suggestions require the explicit responsibility module")
         if "responsibility" in self.modules and "community" not in self.modules:
             raise ValueError("responsibility requires the configured community boundary")
 
@@ -76,7 +80,7 @@ class ApplicationHost:
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
                  clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
                  community_refresh=None, directory_cursors=None, admin_transfers=None,
-                 artifact_product_views=None):
+                 artifact_product_views=None, responsibility_suggestions=None):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
         if ("artifacts" not in config.modules and artifact_product_views is not None
@@ -91,6 +95,9 @@ class ApplicationHost:
         if (config.community_refresh and type(community_refresh) is not CommunityRefreshConfiguration
                 or not config.community_refresh and community_refresh is not None):
             raise ValueError("explicit community refresh switch and trusted configuration required together")
+        if (config.responsibility_suggestions and (type(responsibility_suggestions) is not tuple or not responsibility_suggestions)
+                or not config.responsibility_suggestions and responsibility_suggestions is not None):
+            raise ValueError("explicit suggestion switch and prepared batches required together")
         self._directory_cursors = configured(directory_cursors)
         self._config = config
         self._boundary = SessionWorkspaceApplication(sessions=sessions, origin=config.origin,
@@ -109,6 +116,7 @@ class ApplicationHost:
                          **({"directory_cursors": self._directory_cursors, "product_views": artifact_product_views} if key == "artifacts" else
                             {"directory_cursors": self._directory_cursors} if key == "pipelines" else
                             {"connections": config.gui_smoke_connections} if key == "gui-smoke" else
+                            {"prepared_suggestions": responsibility_suggestions} if key == "responsibility" and config.responsibility_suggestions else
                             {"credential_loader": community_refresh.credential_loader} if key == "community" and config.community_refresh else {}))
                          for key in config.modules}
         if config.community_refresh:

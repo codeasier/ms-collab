@@ -12,12 +12,14 @@ from packages.community_api import CommunityApplication
 from packages.community_api.records import fingerprint,encode
 from packages.responsibility import fields,PathEvidence,project
 from packages.responsibility.core import FIELD_ID
+from packages.responsibility.suggestions import MAX_ISSUE_NUMBER
 from packages.workspace_api import WorkspaceApplication
 from packages.workspace_api.application import _object
 from packages.workspaces import PolicyError
 from packages.workspaces.authority import authority_current
 from .records import (_TABLE,read,normalize_evidence,updated_fields,stale_references,proposal,
     reconfirmed_fields,capture_publisher,evidence_text,evidence_current,writable,audit)
+from . import suggestions as routing
 
 _ID=re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z')
 _MAX_CONFIG_BODY=65536
@@ -27,8 +29,10 @@ _MAX_RECONFIRM_BODY=_MAX_CONFIG_BODY+88
 
 
 class ResponsibilityApplication(WorkspaceApplication):
-    def __init__(self,*,clock=lambda:datetime.now(timezone.utc),**kwargs):
+    def __init__(self,*,clock=lambda:datetime.now(timezone.utc),prepared_suggestions=(),**kwargs):
         super().__init__(clock=clock,**kwargs);self._clock=clock
+        store=self._session_boundary._sessions.policy if self._session_boundary is not None else self._store
+        self._suggestions=routing.index_batches(prepared_suggestions,store)
 
     @staticmethod
     def _state(policy,actor,db,scope,action):
@@ -48,7 +52,7 @@ class ResponsibilityApplication(WorkspaceApplication):
 
     def _dispatch(self,environ):
         assertion=self._verify_request(environ)
-        scope,action,options=self._route(environ)
+        scope,action,options=self._route(environ,suggestions_enabled=bool(self._suggestions))
         expected=self._revision(environ) if action in {'save','reconfirm'} else None
         config=self._config_body(environ,reconfirm=action=='reconfirm') if action in {'save','reconfirm'} else None
         def operation(policy,actor,db):
@@ -86,6 +90,19 @@ class ResponsibilityApplication(WorkspaceApplication):
                 return common|{'fields':state['fields'],'references':{
                     'state':'reconfirmation_required' if stale else 'current',
                     'stale_ids':stale,'confirmation_token':token}}
+            if action=='suggestion':
+                if stale_references(policy,state):raise PolicyError(404,'not_found')
+                batch=self._suggestions.get(scope)
+                number=options['number']
+                digest=routing.approved_fingerprint(batch,scope,state,community,number)
+                if digest is None:raise PolicyError(404,'not_found')
+                try:self._state(policy,batch.publisher,db,scope,'publish')
+                except PolicyError:raise PolicyError(404,'not_found') from None
+                suggestion=routing.select(batch,policy,scope,state,community,number,digest)
+                if suggestion is None:raise PolicyError(404,'not_found')
+                return {'scope':scope.as_dict(),'number':number,'field_ids':list(suggestion.field_ids),
+                        'community_revision':community.revision,'config_version':state['config_version'],
+                        'mode':'suggestion_only'}
             if stale_references(policy,state):raise PolicyError(409,'reference_reconfirmation_required')
             approved=tuple(item for item in community.snapshot.items if fingerprint(scope,item) in community.approvals) if community.snapshot else ()
             current_evidence=evidence_current(policy,state,community)
@@ -97,6 +114,26 @@ class ResponsibilityApplication(WorkspaceApplication):
                     'snapshot_observed_at':community.snapshot.observed_at if community.snapshot else None,
                     'evidence_current':current_evidence,'evidence_observed_at':state['observed_at'] if current_evidence else None}
         return self._authenticated_transaction(assertion,operation,write=action in {'save','reconfirm'},with_connection=True)
+
+    def prepare_issue_suggestions(self,credential,scope,records,*,expected_revision,community_revision):
+        """Prepare reviewed values in trusted Python; no storage or HTTP ingestion.
+
+        Use the explicit bearer-side verifier with the same policy-store handle
+        that will serve the batch. The result is process-local, not authority.
+        """
+        if self._session_boundary is not None or type(credential) is not Credential or type(scope) is not Scope:
+            raise ValueError('explicit_verifier_credential_and_scope_required')
+        routing.validate_records(records)
+        if any(type(revision) is not int or not 1<=revision<=MAX_ISSUE_NUMBER
+               for revision in (expected_revision,community_revision)):
+            raise ValueError('explicit_suggestion_revisions_required')
+        assertion=self._verifier.verify(self._provider_key,credential)
+        def prepare(policy,actor,db):
+            state,community=self._state(policy,actor,db,scope,'publish')
+            policy._match(expected_revision,state['revision']);policy._match(community_revision,community.revision)
+            if stale_references(policy,state):raise PolicyError(409,'reference_reconfirmation_required')
+            return routing.prepare(policy,actor,scope,state,community,records,self._store)
+        return self._authenticated_transaction(assertion,prepare,with_connection=True)
 
     def publish_prepared(self,credential,scope,observations,*,expected_revision,community_revision,observed_at):
         """Trusted server integration, NEVER an HTTP ingestion/claims endpoint.
@@ -137,15 +174,29 @@ class ResponsibilityApplication(WorkspaceApplication):
         audit(policy,actor,scope,revision)
 
     @staticmethod
-    def _route(environ):
-        path,query=environ.get('PATH_INFO',''),environ.get('QUERY_STRING','')
-        if type(path) is not str or len(path)>1000 or type(query) is not str or len(query)>400:raise PolicyError(400,'invalid_request')
+    def _route(environ,*,suggestions_enabled=False):
+        path=environ.get('PATH_INFO','')
+        if type(path) is not str or len(path)>1000:raise PolicyError(400,'invalid_request')
         p=path.split('/');verb=environ.get('REQUEST_METHOD')
+        if (not suggestions_enabled and len(p)==9 and p[:3]==['','api','workspaces']
+                and p[4]=='responsibility' and p[8]=='suggestion'):
+            raise PolicyError(404,'not_found')
+        query=environ.get('QUERY_STRING','')
+        if type(query) is not str or len(query)>400:raise PolicyError(400,'invalid_request')
         if len(p)!=9 or p[:3]!=['','api','workspaces'] or p[4]!='responsibility' or any(not _ID.fullmatch(x) for x in p[3:]):raise PolicyError(404,'not_found')
         scope=Scope(p[3],p[5],p[6]+'/'+p[7])
         if p[8]=='config' and verb in {'GET','PUT'} and not query:return scope,'config' if verb=='GET' else 'save',{}
         if p[8]=='capabilities' and verb=='GET' and not query:return scope,'capabilities',{}
         if p[8]=='reconfirm' and verb=='POST' and not query:return scope,'reconfirm',{}
+        if p[8]=='suggestion' and verb=='GET':
+            try:
+                params=_object(parse_qsl(query,keep_blank_values=True,strict_parsing=True,max_num_fields=1))
+                if set(params)!={'number'} or not re.fullmatch(r'[1-9][0-9]{0,15}',params['number']):
+                    raise ValueError()
+                number=int(params['number'])
+                if number>MAX_ISSUE_NUMBER:raise ValueError()
+                return scope,'suggestion',{'number':number}
+            except ValueError:raise PolicyError(400,'invalid_request') from None
         if p[8]!='candidates' or verb!='GET':raise PolicyError(404,'not_found')
         try:
             options=_object(parse_qsl(query,keep_blank_values=True,strict_parsing=True,max_num_fields=4))
