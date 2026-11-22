@@ -37,6 +37,12 @@ class TestProvider:
                 {"id":"unit","name":"<img src=x onerror=alert(1)>","status":"success",
                  "started_at":"2026-01-01T10:00:00Z","finished_at":"2026-01-01T10:00:12Z"},
                 {"id":"lint","name":"Lint","status":"failure","started_at":None,"finished_at":None}]}]
+        if scope.workspace_id=="commons" and run_id in {"run-17","run-18","run-20"}:
+            # A real, bounded synthetic publication with a slow middle sample.
+            minutes,seconds={"run-17":(0,4),"run-18":(2,19),"run-20":(8,7)}[run_id]
+            run["stages"]=[{"name":"Build","jobs":[{"id":"unit","name":"Unit tests","status":"success",
+                "started_at":f"2026-01-01T10:{minutes:02d}:00Z",
+                "finished_at":f"2026-01-01T10:{minutes:02d}:{seconds:02d}Z"}]}]
         return run
 
 

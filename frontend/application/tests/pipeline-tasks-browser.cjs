@@ -30,6 +30,19 @@ async function checkFractionalRuns(page,origin,base){
  assert.match(await page.locator('#revision').textContent(),/Stored snapshot version 2/)
  const trend=page.locator('#durations article').filter({has:page.getByRole('heading',{name:'Timing / Probe',exact:true})})
  assert.deepEqual(await trend.locator('dd').allTextContents(),['3','0.1','0.1','0.1','0.1'])
+ // Equal sample times really overlap. Every run still has a keyboard position;
+ // comparing/selecting points stays local even with same starts and durations.
+ const chart=trend.locator('figure'),slider=chart.getByRole('slider'),seen=[]
+ const collect=r=>{if(new URL(r.url()).pathname.startsWith('/api/'))seen.push(r)}
+ page.on('request',collect)
+ try{
+  const coords=await chart.locator('svg circle:not(.selected-mark)').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('cx')+','+n.getAttribute('cy')))
+  assert.equal(coords.length,3);assert.equal(new Set(coords).size,1)
+  await slider.focus();await slider.press('Home');await slider.press('ArrowRight')
+  assert.ok((await slider.getAttribute('aria-valuetext')).includes(selected+' (success) · 0.1 seconds'))
+  assert.equal(await chart.getByRole('button',{name:'View selected run '+selected,exact:true}).count(),1)
+  assert.deepEqual(seen,[])
+ }finally{page.off('request',collect)}
  await trend.locator('summary').click();assert.equal(await trend.locator('.samples:visible li').count(),3)
  const samples=await trend.locator('.samples li').allTextContents();for(const id of ids)assert.ok(samples.some(line=>line.startsWith(id+' (success) · 0.1 seconds ·')))
  const runPath='/runs/'+selected
