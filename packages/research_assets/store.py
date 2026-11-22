@@ -18,6 +18,17 @@ _SCHEMA = (
     """CREATE INDEX research_asset_query ON research_asset(workspace_id,catalog_id,type_id,entity_id,title,id)""",
 )
 
+# Match the installed-runtime registry's whitespace normalization without
+# loading global schema or introducing a runtime dependency here.
+_DIRECTORY_SCHEMA = frozenset(
+    (kind, name, table, " ".join(ddl.split()))
+    for (kind, name, table), ddl in zip((
+        ("table", "research_catalog", "research_catalog"),
+        ("table", "research_asset", "research_asset"),
+        ("index", "research_asset_query", "research_asset"),
+    ), _SCHEMA)
+)
+
 
 def provision_catalog(store, binding):
     """Explicit trusted setup only; never replace a previously bound source set.
@@ -84,6 +95,50 @@ def state(policy, actor, conn, scope, *, write=False):
                 "evidence": evidence, "available": bool(row['available'])}
     except (ValueError, KeyError, TypeError):
         raise PolicyError(503, "asset_data_unavailable") from None
+
+
+def published_catalogs(policy, actor, conn, workspace, raw_query):
+    """Discover only complete, validated publications in this authorized snapshot."""
+    policy.authorize(actor, workspace, "research_assets", "read")
+
+    if type(raw_query) is not str or raw_query:
+        raise PolicyError(400, "invalid_query")
+    # An uninstalled module has neither table. Never repair a partial schema on
+    # a GET or query a replacement view/table with weaker scope constraints.
+    schema = conn.execute(
+        "SELECT type,name,tbl_name,substr(CAST(sql AS BLOB),1,4097) FROM main.sqlite_schema "
+        "WHERE sql IS NOT NULL AND (tbl_name COLLATE NOCASE IN ('research_catalog','research_asset') "
+        "OR name COLLATE NOCASE = 'research_asset_query') LIMIT 4"
+    ).fetchall()
+    if not schema:
+        return {"workspace_id": workspace, "items": []}
+    try:
+        actual = {(kind, name, table, " ".join(sql.decode("ascii").split()))
+                  for kind, name, table, sql in schema if len(sql) <= 4096}
+        if len(schema) != len(_DIRECTORY_SCHEMA) or actual != _DIRECTORY_SCHEMA:
+            raise ValueError("invalid research schema")
+    except (ValueError, TypeError):
+        raise PolicyError(503, "asset_data_unavailable") from None
+
+    # The (workspace_id,catalog_id) PK bounds the range and supplies this order.
+    rows = conn.execute(
+        "SELECT substr(CAST(catalog_id AS BLOB),1,129) FROM research_catalog WHERE workspace_id=? AND available=1 "
+        "ORDER BY catalog_id COLLATE BINARY LIMIT 33", (workspace,)
+    ).fetchall()
+    if len(rows) > 32:
+        raise PolicyError(503, "asset_data_unavailable")
+    items = []
+    for encoded_id, in rows:
+        try:
+            catalog_id = encoded_id.decode("ascii")
+            scope = AssetScope(workspace, catalog_id)
+        except (AssetError, UnicodeError):
+            raise PolicyError(503, "asset_data_unavailable") from None
+        current = state(policy, actor, conn, scope)
+        if not current["available"] or not 2 <= current["revision"] <= 999999999:
+            raise PolicyError(503, "asset_data_unavailable")
+        items.append(catalog_id)
+    return {"workspace_id": workspace, "items": items}
 
 
 def publish(policy, actor, conn, scope, previous, assets, evidence):
