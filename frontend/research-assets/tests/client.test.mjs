@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {TYPES,scopeFrom,filtersFrom,validateTypes,validateEntities,validatePage,validateDetail,createAssetSessionClient} from '../client.mjs'
+import {TYPES,scopeFrom,filtersFrom,validateTypes,validateEntities,validatePage,validateDetail,validateCatalogDirectory,selectableWorkspaces,createAssetSessionClient} from '../client.mjs'
 const scope=scopeFrom('alpha','knowledge'),head={scope,revision:2,available:true,execution_verified:false,live_provider_verified:false}
 const types=()=>({...head,items:Object.entries(TYPES).map(([id,s])=>({id,title:s.title,detail:s.format,columns:s.fields,count:id==='records'?1:0}))})
 const entities=()=>({...head,items:[{id:'tool',title:'Tool',count:1}]})
@@ -14,11 +14,34 @@ test('different scope/revision/availability or verified flags fail closed',()=>{
 test('bounded page positions, size, duplicate and foreign rows are rejected',()=>{validatePage(page(),scope,metadata(),filtersFrom(),1);for(const mutate of [x=>x.page=2,x=>x.page_size=50,x=>x.total=2,x=>x.items.push(row()),x=>x.items[0].entity.id='other',x=>x.items[0].fields.path='source',x=>x.items[0].summary='x'.repeat(1025),x=>x.items[0].content_revision='unknown']){const x=page();mutate(x);assert.throws(()=>validatePage(x,scope,metadata(),filtersFrom(),1))}})
 test('detail matches selected content identity and only declared text sections',()=>{validateDetail(detail(),scope,metadata(),row());for(const mutate of [x=>x.asset.content_revision='c'.repeat(64),x=>x.asset.title='other',x=>x.asset.summary='different',x=>x.asset.detail.execution_verified=true,x=>x.asset.detail.sections[0].heading='Command',x=>x.asset.detail.sections[0].text='x'.repeat(8193),x=>x.asset.detail.raw='private']){const x=detail();mutate(x);assert.throws(()=>validateDetail(x,scope,metadata(),row()))}})
 test('unpublished differs from successful empty projection',()=>{for(const available of [true,false]){const t=types();t.available=available;t.items.forEach(x=>x.count=0);const e={...head,available,items:[{id:'tool',title:'Tool',count:0}]};validateTypes(t,scope);validateEntities(e,scope,t);validatePage({...head,available,total:0,page:1,page_size:20,items:[]},scope,{types:t,entities:e},filtersFrom(),1)}})
-test('session adapter sends only fixed GET paths with pinned revision and encoded query',async()=>{const calls=[],client=createAssetSessionClient({clear(){calls.push('clear')},request:async(path,options)=>{calls.push({path,options});return {}}});const signal=new AbortController().signal;await client.request(scope,'types',{signal});await client.request(scope,'entities',{revision:2,signal});await client.request(scope,'assets',{revision:2,filters:filtersFrom('records','tool','<img> & ?x=1'),page:2,signal});await client.request(scope,'detail',{revision:2,asset:row().id,signal});assert.equal(calls[0].path,'/api/workspaces/alpha/research-assets/knowledge/types');assert.match(calls[2].path,/revision=2/);assert.match(calls[2].path,/q=%3Cimg%3E\+%26\+%3Fx%3D1/);assert.match(calls[2].path,/page=2&page_size=20/);for(const x of calls)assert.deepEqual(x.options,{signal});assert.equal(client.connect,undefined);for(const kind of ['sync','execute','logs'])assert.throws(()=>client.request(scope,kind));assert.throws(()=>client.request(scope,'detail',{asset:row().id}));assert.throws(()=>client.request(scope,'assets',{revision:2,filters:{...filtersFrom(),path:'raw'}}));assert.equal(calls.length,4);client.clear();assert.equal(calls.at(-1),'clear')})
+test('session adapter sends only fixed GET paths with pinned revision and encoded query',async()=>{const calls=[],client=createAssetSessionClient({clear(){calls.push('clear')},request(){throw Error('Use fixed research transport')},readResearchAssets:async(path,options)=>{calls.push({path,options});return {}}});const signal=new AbortController().signal;await client.request(scope,'types',{signal});await client.request(scope,'entities',{revision:2,signal});await client.request(scope,'assets',{revision:2,filters:filtersFrom('records','tool','<img> & ?x=1'),page:2,signal});await client.request(scope,'detail',{revision:2,asset:row().id,signal});assert.equal(calls[0].path,'/api/workspaces/alpha/research-assets/knowledge/types');assert.match(calls[2].path,/revision=2/);assert.match(calls[2].path,/q=%3Cimg%3E\+%26\+%3Fx%3D1/);assert.match(calls[2].path,/page=2&page_size=20/);for(const x of calls){assert.equal(x.options.signal,signal);assert.equal(x.options.isCurrent(),true)};assert.equal(client.connect,undefined);for(const kind of ['sync','execute','logs'])assert.throws(()=>client.request(scope,kind));assert.throws(()=>client.request(scope,'detail',{asset:row().id}));assert.throws(()=>client.request(scope,'assets',{revision:2,filters:{...filtersFrom(),path:'raw'}}));assert.equal(calls.length,4);client.clear();assert.equal(calls.at(-1),'clear')})
 
 test('single-dimension counts and same-filter page totals cannot silently shrink',()=>{
  const empty={...page(),total:0,items:[]}
  for(const filters of [filtersFrom('records'),filtersFrom('','tool')])assert.throws(()=>validatePage(empty,scope,metadata(),filters,1))
  const searched=filtersFrom('','','no-match');validatePage(empty,scope,metadata(),searched,1)
  assert.throws(()=>validatePage(empty,scope,metadata(),searched,1,1))
+})
+
+test('published directory accepts only exact sorted IDs within the selected workspace',()=>{
+ assert.deepEqual(validateCatalogDirectory({workspace_id:'alpha',items:[]},'alpha'),[])
+ assert.deepEqual(validateCatalogDirectory({workspace_id:'alpha',items:['A','a','empty','knowledge']},'alpha'),['A','a','empty','knowledge'])
+ for(const d of [
+  {workspace_id:'beta',items:['empty']},{workspace_id:'alpha',items:['z','a']},
+  {workspace_id:'alpha',items:['empty','empty']},{workspace_id:'alpha',items:['a\n']},
+  {workspace_id:'alpha',items:[{id:'a'}]},{workspace_id:'alpha',items:['a'],total:2},
+  {workspace_id:'alpha',items:Array.from({length:33},(_,i)=>'p'+String(i).padStart(2,'0'))}
+ ])assert.throws(()=>validateCatalogDirectory(d,'alpha'))
+})
+test('workspace picker uses only already returned available routable workspaces and only sends selected directory',async()=>{
+ const w=(id,state='active')=>({id,name:'<img src=x>',kind:'product',state,revision:1})
+ const spaces=[w('alpha'),w('old','archived'),w('colon:id'),w('frozen','suspended'),w('beta')]
+ assert.deepEqual(selectableWorkspaces(spaces),[{id:'alpha',name:'<img src=x>',state:'active'},{id:'old',name:'<img src=x>',state:'archived'},{id:'beta',name:'<img src=x>',state:'active'}])
+ for(const bad of [[w('alpha'),w('alpha')],[{...w('beta'),other:true}],[w('beta','unknown')],null])assert.throws(()=>selectableWorkspaces(bad))
+ const calls=[],signal=new AbortController().signal,isCurrent=()=>true,client=createAssetSessionClient({
+  clear(){},readResearchAssets:async(path,options)=>{calls.push([path,options]);return path==='/api/workspaces'?spaces:{workspace_id:'beta',items:['empty']}}
+ })
+ await client.workspaces({signal,isCurrent});assert.deepEqual(await client.catalogs('beta',{signal,isCurrent}),['empty'])
+ await assert.rejects(client.catalogs('alpha/else',{signal,isCurrent}))
+ assert.deepEqual(calls,[['/api/workspaces',{signal,isCurrent}],['/api/workspaces/beta/research-assets',{signal,isCurrent}]])
 })

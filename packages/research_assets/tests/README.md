@@ -8,6 +8,9 @@ No source checkout, network credentials, production corpus or runbook execution.
 [Catalog contract and limits](../README.md)
 
 
+- `test_catalog_discovery.py`: workspace-only published catalog IDs; current
+  module/membership checks, cookie-only host routing, empty/invalid states,
+  overflow, closed queries and absence of business writes.
 - `test_assets.py`: projection, scoped service reads and complete multi-source
   atomic publication, bounded data, failure rollback and current policy.
 - `test_flow_authority.py`: realm/generation/permission-revision admission fences,

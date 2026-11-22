@@ -62,7 +62,19 @@ The `research_assets` module must permit `read`. Shared workspaces still require
 membership and never union private catalogs. Generic resource APIs cannot read
 these dedicated tables.
 
-GET routes are rooted at:
+`GET /api/workspaces/{workspace_id}/research-assets` lists published catalog IDs
+for the current workspace. It accepts **no query parameters**. Its entire data
+projection is `{"workspace_id":"alpha","items":["catalog-a","catalog-b"]}`, in
+binary ID order. A complete empty publication is listed; an unrefreshed binding
+is not. Catalogs in shared or other workspaces never enter this result. After
+checking current module read authority, the service validates each publication
+using the same scoped binding, evidence and asset-count checks as a direct
+catalog read. More than 32 publications or an invalid publication fails the
+whole listing with 503; it never returns a truncated directory. No installed
+catalog schema yields an empty list; an incomplete schema fails closed. The
+request neither provisions tables nor refreshes sources.
+
+The existing exact-catalog GET routes are rooted at:
 `/api/workspaces/{workspace_id}/research-assets/{catalog_id}`
 
 - `/types`: descriptors and scoped counts.
@@ -71,7 +83,7 @@ GET routes are rooted at:
   default page size 50, maximum 100. Supply only nonempty optional filters.
 - `/assets/{opaque_id}`: one asset's read-only sections.
 
-All reads return scope, catalog revision, availability and explicit unverified
+Exact-catalog reads return scope, catalog revision, availability and explicit unverified
 flags. Optional `revision=N` fences list paging, descriptors and details against
 a stale view (412 on mismatch). `available: false` means never published, not a
 successful empty source. A successful complete empty batch yields true and zero

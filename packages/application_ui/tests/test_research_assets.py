@@ -45,3 +45,25 @@ class AssetUITests(unittest.TestCase):
         self.login.logout(self.session.token,self.session.csrf)
         self.assertEqual(self.read('/api/workspaces/alpha/research-assets/knowledge/types')['status'],401)
         self.assertEqual(self.read('/research-assets/')['status'],200)
+
+    def test_published_directory_through_real_host_mount(self):
+        directory='/api/workspaces/alpha/research-assets'
+        result=self.read(directory)
+        self.assertEqual(result['status'],200)
+        self.assertEqual(result['body'],{'data':{'workspace_id':'alpha','items':['empty','knowledge']}})
+        self.assertIn(('Cache-Control','no-store'),result['headers'])
+        self.assertEqual(self.read(directory.replace('/alpha/','/commons/'))['status'],404)
+        self.assertEqual(self.read(directory,extra={'HTTP_AUTHORIZATION':'Bearer synthetic'})['status'],401)
+        self.policy.set_membership('second','alpha','admin',role='admin',state='revoked',expected_revision=1)
+        self.assertEqual(self.read(directory)['status'],404)
+
+    def test_paired_browser_data_has_the_same_catalog_id_with_distinct_publications(self):
+        provision(self.policy,paired=True)
+        root='/api/workspaces'
+        for workspace,ids,total in (('alpha',['empty','knowledge'],28),('beta',['beta-only','knowledge'],1)):
+            directory=f'{root}/{workspace}/research-assets'
+            self.assertEqual(self.read(directory)['body']['data']['items'],ids)
+            view=self.read(directory+'/knowledge/assets?revision=2')['body']['data']
+            self.assertEqual(view['scope'],{'workspace_id':workspace,'catalog_id':'knowledge'})
+            self.assertEqual(view['total'],total)
+        self.assertEqual(self.read(root+'/commons/research-assets')['body'],{'error':'not_found'})
