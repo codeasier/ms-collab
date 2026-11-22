@@ -14,5 +14,6 @@
 .duration-plot circle[data-selected=true]{fill:#ffdc95;stroke:#fff;stroke-width:3}
 .duration-plot circle.selected-mark{fill:none;stroke:#ffdc95;stroke-width:2}
 .duration-plot label{margin-top:1rem;max-width:42rem}
-.duration-plot input{width:100%;padding:0;min-height:32px;accent-color:currentColor}
+/* Chromium gives range inputs inline margins; a 100%-wide grid child must not add to the chart width. */
+.duration-plot input{width:100%;margin:0;padding:0;min-height:32px;accent-color:currentColor}
 .duration-plot p{font-variant-numeric:tabular-nums;margin:.35rem 0 .65rem}

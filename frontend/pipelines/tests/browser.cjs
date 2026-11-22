@@ -64,7 +64,13 @@ async function checkTrend(page,origin){
  try{
   await page.locator('#query').fill('no-local-match');await page.locator('#filters button').click()
   await page.setViewportSize({width:390,height:844})
-  assert.ok(await chart.evaluate(n=>n.getBoundingClientRect().width>0&&n.scrollWidth<=n.clientWidth&&document.documentElement.scrollWidth<=innerWidth))
+  const mobile=await chart.evaluate(n=>{
+   const range=n.querySelector('input'),style=getComputedStyle(range)
+   return {chart:n.getBoundingClientRect().width,client:n.clientWidth,scroll:n.scrollWidth,
+    page:document.documentElement.scrollWidth,viewport:innerWidth,rangeMargins:[style.marginInlineStart,style.marginInlineEnd]}
+  })
+  assert.ok(mobile.chart>0&&mobile.scroll<=mobile.client&&mobile.page<=mobile.viewport,
+   'Duration chart or page overflows at 390px: '+JSON.stringify(mobile))
   await dots.first().click();assert.equal(await slider.inputValue(),'0')
   await slider.focus();await slider.press('End');assert.equal(await slider.inputValue(),'2');await slider.press('ArrowLeft')
   const target=group.samples[1];assert.equal(await slider.inputValue(),'1');assert.ok((await slider.getAttribute('aria-valuetext')).includes(target.run_id+' (failure) · 19 seconds'))
