@@ -7,7 +7,7 @@ from packages.artifacts_api.records import load_view, record_id
 from packages.workspaces import PolicyError
 from .records import authorized, decode_snapshot
 from .discovery import directory, directory_request
-from .product_views import ProductViewRegistry, framed_body, product_result, product_route
+from .product_views import ProductViewRegistry, framed_body, product_choices, product_result, product_route
 from packages.directory_cursors.directory import configured, serve
 
 
@@ -28,10 +28,12 @@ class IndexedArtifactApplication(ArtifactApplication):
         route = product_route(environ) if self._product_views else None
         if route is not None:
             scope, view_id = route
-            raw = framed_body(environ)
+            raw = framed_body(environ) if view_id is not None else None
 
             def product_read(policy, actor, db):
                 record = authorized(policy, actor, db, scope, 'read')
+                if view_id is None:
+                    return product_choices(self._product_views, scope, record)
                 return product_result(self._product_views, scope, view_id, raw, record)
 
             return self._authenticated_transaction(assertion, product_read, with_connection=True)

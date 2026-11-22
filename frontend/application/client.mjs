@@ -2,6 +2,7 @@
 import {downloadPath,receiveArtifact,validateDownloadBinding} from './artifact-downloads.mjs'
 import {validKey} from '../artifacts/client.mjs'
 import {readPath} from '../pipelines/client.mjs'
+import {createArtifactDirectoryClient} from './artifact-scope-client.mjs'
 import {scopeFrom,queryFrom,validateFields,validConfirmationToken,responsibilityRequestLimit} from '../responsibility/client.mjs'
 const own=(o,keys)=>o!==null&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',')
 const token=/^[A-Za-z0-9_-]{43}$/
@@ -305,7 +306,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    return payload.data
   }catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{if(moduleStatus||transfer||researchRead)current()}
  }
- // Only the two fixed product reads use this owner. Public request options
+ // Only fixed product reads use this owner. Public request options
  // cannot install it or suppress an ordinary (including catalog) 401.
  function productOwner(options) {
   const turn=epoch
@@ -327,14 +328,15 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   guard()
   return {signal,guard}
  }
- async function guardedProductPost(path,wire,{signal,guard},revision,limit,errors,unverified,decode) {
+ async function guardedProductRead(path,wire,{signal,guard},revision,limit,errors,unverified,decode) {
   guard()
-  const headers={'Content-Type':'application/json','X-CSRF-Token':csrfCookie(cookie())}
+  const method=wire===undefined?'GET':'POST'
+  const headers=method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':csrfCookie(cookie())}
   if(revision!==undefined)headers['If-Match']=`"${revision}"`
   let response
   guard()
   try{
-   response=await fetcher(path,{method:'POST',headers,body:wire,signal,mode:'same-origin',
+   response=await fetcher(path,{method,headers,body:wire,signal,mode:'same-origin',
     credentials:'same-origin',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error'})
   }catch{guard();throw unverified()}
   guard()
@@ -366,6 +368,28 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   guard()
   return data
  }
+
+ async function readArtifactProductPicker(selection,options) {
+  const owner=productOwner(options),unverified=()=>new Error('Product discovery could not be verified.')
+  const read=(path,{decode=data=>data,limit=65536}={})=>guardedProductRead(path,undefined,owner,undefined,limit,
+   {...productReadErrors,503:'Authorized scope discovery is unavailable. You can still enter exact IDs.'},unverified,decode)
+  const selected=(kind,other=[])=>own(selection,['kind',...other])&&Object.hasOwn(selection,'kind')&&
+    other.every(key=>Object.hasOwn(selection,key))&&selection.kind===kind
+  if(selected('workspaces'))return read('/api/workspaces',{limit:2097152})
+  if(selected('scopes',['workspace','after','lastTuple'])){
+   return createArtifactDirectoryClient({request:path=>read(path)}).list(selection.workspace,
+    {after:selection.after,lastTuple:selection.lastTuple})
+  }
+  if(selected('views',['scope'])){
+   const scope=captureProductFields(selection.scope,3)
+   let codec
+   try{codec=await import('./artifact-product-codec.mjs')}catch{owner.guard();throw unverified()}
+   owner.guard()
+   // 128 labels can each contain 80 non-BMP characters; the server uses ASCII JSON escapes.
+   return read(codec.productChoicesPath(scope),{limit:192*1024,decode:data=>codec.validateProductChoices(data,scope)})
+  }
+  throw new Error('Invalid product discovery selection.')
+ }
  async function readArtifactProductView(scope,viewId,body,options) {
   const owner=productOwner(options),{guard}=owner
   const unverified=()=>new Error('The product view response could not be verified.')
@@ -376,7 +400,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   guard()
   const request=codec.makeProductRequest(selection,viewId,criteria),wire=JSON.stringify(request.body)
   if(new TextEncoder().encode(wire).length>16384)throw new Error('Product view request is too large.')
-  const result=await guardedProductPost(request.path,wire,owner,undefined,2097152,productReadErrors,unverified,
+  const result=await guardedProductRead(request.path,wire,owner,undefined,2097152,productReadErrors,unverified,
    data=>codec.validateProductResult(data,request))
   guard();return result
  }
@@ -391,7 +415,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    throw new Error('Invalid product file selection.')
   const path=downloadPath(selected,'availability')
   const unverified=()=>new Error('The byte availability response could not be verified.')
-  const result=await guardedProductPost(path,JSON.stringify({key}),owner,revision,16384,
+  const result=await guardedProductRead(path,JSON.stringify({key}),owner,revision,16384,
    messages,unverified,data=>{
     // Require actual, separate JSON fields before using the shared binding
     // validator; delimiter-joined field names are not an equivalent shape.
@@ -402,7 +426,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   owner.guard();return result
  }
  return {
-  clear,readArtifactProductView,readArtifactDownloadAvailability,
+  clear,readArtifactProductView,readArtifactDownloadAvailability,readArtifactProductPicker,
   bootstrap:()=>send('/app/bootstrap'),
   async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||!validPolicyId(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},

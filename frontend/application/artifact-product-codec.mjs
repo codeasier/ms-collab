@@ -75,6 +75,33 @@ export function lastSevenUtcDates(date) {
   }
 }
 
+export function productChoicesPath(scope) {
+  if (!fields(scope, scopeFields) || !scopeFields.every(k => full(id, scope[k]))) throw invalidRequest()
+  const {workspace_id: w, connection_id: c, bucket_id: b} = scope
+  return `/api/workspaces/${w}/artifacts/${c}/${b}/product-views`
+}
+
+export function validateProductChoices(data, scope) {
+  if (!fields(data, ['format', 'kind', 'scope', 'catalog_revision', 'views', 'quarters']) ||
+      data.format !== 1 || data.kind !== 'product-view-choices' ||
+      !fields(data.scope, scopeFields) || !scopeFields.every(k => data.scope[k] === scope[k]) ||
+      !bounded(data.catalog_revision, 1, Number.MAX_SAFE_INTEGER) ||
+      !Array.isArray(data.views) || data.views.length > 128 ||
+      !Array.isArray(data.quarters) || data.quarters.length > 500 ||
+      (!data.views.length && data.quarters.length)) throw invalidResult()
+  let previous = ''
+  for (const item of data.views) {
+    if (!fields(item, ['view_id', 'label']) || !full(id, item.view_id) ||
+        item.view_id <= previous || typeof item.label !== 'string' ||
+        item.label !== item.label.trim() || [...item.label].length < 1 || [...item.label].length > 80 ||
+        /[^ \p{L}\p{M}\p{N}\p{P}\p{S}]/u.test(item.label)) throw invalidResult()
+    previous = item.view_id
+  }
+  if (data.quarters.some(q => !full(quarter, q)) ||
+      new Set(data.quarters).size !== data.quarters.length) throw invalidResult()
+  return data
+}
+
 export function makeProductRequest(scope, viewId, body) {
   if (!fields(scope, scopeFields) || !scopeFields.every(k => full(id, scope[k])) ||
       !full(id, viewId) || !fields(body, ['format', 'quarter'], [...baseFields.slice(2), ...fileFields]) ||

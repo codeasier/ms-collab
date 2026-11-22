@@ -13,7 +13,7 @@ module mounted support this endpoint. No configuration or an empty list/tuple
 leaves it unmounted. The generic resource-backed `ArtifactApplication`, normal
 demo, runtime manifest, and old named views do not gain product-view behavior.
 A host with the Cookie application UI can also serve the browser described below.
-There is no management or listing endpoint for these definitions.
+There is no management endpoint or global listing for these definitions.
 
 Supply a list or tuple of at most 128 exact descriptors. The registry copies and
 validates the entire input; duplicate (workspace, connection, bucket, view ID)
@@ -30,6 +30,7 @@ scope = {"workspace_id": "lab", "connection_id": "idx", "bucket_id": "internal-0
 definition = {
     "format": 1, "kind": "product-view", "match": "relative-key-ascii-substring-v1",
     "scope": scope, "view_id": "analyzer", "product_token": "Kit_",
+    "discovery_label": "Analyzer",
     "parent": {"grant_revision": approved_parent.grant_revision,
                "policy_digest": digest(approved_parent.policy_raw)},
 }
@@ -44,6 +45,10 @@ a replacement automatically. A new legitimate publication under the unchanged
 parent does not require replacing the filter. The product token is an ASCII
 alphanumeric followed by up to 63 ASCII alphanumerics, periods, underscores or
 hyphens. Scope IDs and view IDs use the existing 1–128 character route grammar.
+`discovery_label` is optional, trusted display text of 1–80 printable
+characters with no leading/trailing whitespace. Omit it for an exact-ID-only
+view. Labels are shown to current bucket readers; do not include private
+configuration or credentials.
 
 There is no database table, generic resource, file loader, per-user grant or
 durable filter registry here. To change/remove a definition replace the trusted
@@ -52,6 +57,20 @@ a new configuration. A restored runtime does not recover these definitions by
 itself. This is not a hot revocation service across replicas. **Index and identity
 permissions are checked again on every request**, even when the client supplies
 an observation from the previous page.
+
+## Find explicitly listed views in a published scope
+
+GET `/api/workspaces/lab/artifacts/idx/internal-01/product-views`
+without query parameters. Only a current reader of that exact scope can
+receive a list, and a publication is still required. The response contains
+`format:1`, `kind:"product-view-choices"`, `scope`, `catalog_revision`,
+`views` (only `view_id` and `label`) and `quarters`. Only definitions
+explicitly labeled and still matching the current parent grant revision and
+policy digest are listed. Quarters are from that same approved bucket
+publication, not guaranteed to contain files matched by every view. If no
+view is listed both arrays are empty. No product matching token, policy digest,
+source endpoint, provider object, candidate or byte availability is returned.
+A listed option and its catalog revision are not reusable authority.
 
 ## Read the tree, then refine
 
@@ -121,7 +140,8 @@ scope/view/publication is **not** a successful empty catalog.
 
 The observation is SHA-256 of compact, ASCII-escaped JSON with sorted keys and
 no insignificant whitespace: the array containing "product-observation-v1",
-the complete validated descriptor, published_revision, and lowercase SHA-256 of
+the validated read descriptor (without the optional discovery label),
+published_revision, and lowercase SHA-256 of
 the full canonical ASCII publication envelope. It covers neither the private
 candidate nor the request's temporary path/time/mode. Bind the full query
 coordinates in clients separately. The value only compares content; it does not
@@ -159,10 +179,14 @@ view. No configuration or an empty registry leaves the entry hidden and the
 dedicated page and its two modules unmounted. Reload the document to pick up a
 new host configuration; the hint is not a live configuration monitor.
 
-The separate page at `/artifacts/product-views/` starts empty. Enter the exact
-workspace, connection, **internal bucket ID**, product view ID and quarter. Use
-**Open product view** to read the root. Editing the IDs does not discover
-anything; editing just the quarter and opening again reads that quarter’s root
+The separate page at `/artifacts/product-views/` starts empty. Choose **Load
+current workspaces**, select a workspace, a published bucket scope, a listed
+product view and a published quarter, then **Open selected product view**.
+Opening performs a fresh authorized exact metadata read. The picker uses the
+existing explicitly configured scope directory. Unavailable discovery or
+unlisted views can still use manual exact workspace, connection, **internal
+bucket ID**, product view ID and quarter with **Open product view**.
+Editing just the manual quarter and opening again reads that quarter’s root
 under the same confirmed observation. Folder buttons follow verified children.
 Breadcrumbs and **Up one folder** follow literal ancestors, including empty
 segments; a file and a folder with the same name remain separate. Tree totals
@@ -189,10 +213,11 @@ strict timestamp representation cannot be verified on this page. This does not
 diagnose bad stored data. Neither the private product token nor the quarterly
 index offset is supplied to the browser to recompute the server’s match.
 
-For metadata reads, only the exact product POST carries scope and view IDs in its API path.
-Directory, query, time and observation are sent only in its body. No shared
-link, page URL, history state or browser storage carries your selection. The
-page does not query the ordinary catalog, enumerate scopes or views, or use a
+The explicit picker uses existing workspace and bounded scope directory GETs
+and one exact bucket choice GET. The product POST carries the exact scope and
+view IDs in its API path; file directory, query, time and observation are sent
+only in its body. No shared link, page URL, history state or browser storage
+carries your selection. The page does not query another catalog or use a
 provider to list product files. By default it has no file actions. Return to
 the ordinary catalog explicitly and open a new scope there if needed. Recheck, sign-out and leaving the
 document clear private page state; Back does not reopen a query. Other tabs

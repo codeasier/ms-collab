@@ -157,7 +157,7 @@ async function start(){
     template.replaceWith(template.content.cloneNode(true))
     download=mountArtifactDownload({session,productFile:true})
    }
-   page=mountArtifactProductView({session,download})
+   page=mountArtifactProductView({session,download,validateWorkspaces})
    if(download)installProductFileDeparture()
   }
   else if(['artifacts','artifact-admin'].includes(document.body.dataset.page)){
