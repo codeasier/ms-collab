@@ -50,6 +50,26 @@ class Tests(unittest.TestCase):
         self.assertEqual(report["groups"][0]["average_seconds"],12)
         self.assertEqual(report["coverage"]["runs_with_samples"],2)
 
+    def test_recorded_trend_and_slow_run_in_same_authorized_snapshot(self):
+        base="/api/workspaces/commons/pipelines/example-ci/build"
+        def read(suffix,query=""):
+            response=self.call(base+suffix,HTTP_AUTHORIZATION="Bearer synthetic-reader",QUERY_STRING=query)
+            self.assertEqual(response["status"],200)
+            return json.loads(response["body"])["data"]
+        report=read("/durations","limit=100")
+        group,=report["groups"]
+        self.assertEqual([(s["run_id"],s["duration_seconds"]) for s in group["samples"]],
+                         [("run-17",4),("run-18",19),("run-20",7)])
+        slow=group["samples"][1]
+        detail=read("/runs/"+slow["run_id"])
+        self.assertEqual((detail["scope"],detail["source"]),(report["scope"],report["source"]))
+        self.assertEqual(detail["run"]["status"],"failure")
+        tasks=read("/runs/"+slow["run_id"]+"/tasks",f"revision={report['source']['revision']}&limit=10")
+        task,=tasks["items"]
+        self.assertEqual((task["id"],task["status"],task["started_at"],task["finished_at"]),
+                         (slow["job_id"],"success",slow["started_at"],slow["finished_at"]))
+        self.assertFalse(report["source"]["live_provider_verified"])
+
     def test_no_execution_log_or_provider_refresh_routes(self):
         base="/api/workspaces/alpha/pipelines/example-ci/build"
         for method,path in (("POST",base+"/runs"),("POST",base+"/refresh"),("GET",base+"/runs/run-20/logs"),("POST",base+"/runs/run-20/retry")):

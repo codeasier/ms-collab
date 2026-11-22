@@ -4,3 +4,15 @@
 
 .samples>li{padding-block:4px}.samples>li>button{min-height:44px;margin-inline-start:.75rem}
 @media(max-width:700px){.samples>li>button{display:block;margin:4px 0 0}}
+
+.duration-plot{margin:1rem 0 1.5rem;border-left:3px solid #526d83;padding:0 0 0 1rem}
+.duration-plot figcaption{font-weight:650;margin-bottom:.3rem}
+.duration-plot small{display:block;color:inherit;overflow-wrap:anywhere}
+.duration-plot svg{display:block;width:100%;max-width:42rem;height:auto;background:#132231;margin:.4rem 0;border-radius:6px}
+.duration-plot line{stroke:#577086;stroke-dasharray:4 4}
+.duration-plot circle{cursor:pointer;fill:#89bfdf;stroke:#183041;stroke-width:2}
+.duration-plot circle[data-selected=true]{fill:#ffdc95;stroke:#fff;stroke-width:3}
+.duration-plot circle.selected-mark{fill:none;stroke:#ffdc95;stroke-width:2}
+.duration-plot label{margin-top:1rem;max-width:42rem}
+.duration-plot input{width:100%;padding:0;min-height:32px;accent-color:currentColor}
+.duration-plot p{font-variant-numeric:tabular-nums;margin:.35rem 0 .65rem}

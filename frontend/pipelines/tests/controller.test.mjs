@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {mountPipelinePage} from '../runs.mjs'
+import {mountPipelinePage,durationPoints} from '../runs.mjs'
 const scope={workspace_id:'alpha',connection_id:'ci',pipeline_id:'build'},source={kind:'stored_snapshot',revision:1,full_history_complete:false,live_provider_verified:false}
 const summary={id:'run-1',status:'failure',observed_at:'2026-01-01T00:00:00Z',stage_count:1,job_count:1,details_available:true},job={id:'job-1',name:'Unit <img src=x>',status:'failure',started_at:null,finished_at:null}
 const run={...scope,id:summary.id,status:summary.status,observed_at:summary.observed_at,stages:[{name:'Checks',jobs:[job]}]},counts={success:0,failure:1,cancelled:0,timed_out:0,skipped:0,queued:0,running:0,unknown:0}
@@ -20,7 +20,7 @@ async function harness(action){
  }
  const ids=['detail','detail-title','detail-status','detail-body','panel','scope-title','revision','summary','coverage','runs','durations','session','workspace','connection','pipeline','query','state','status','previous','next','disconnect','scope-form','reload','filters','detail-close']
  for(const id of ids){const n=new Node();n.id=id}nodes.get('panel').hidden=true
- globalThis.document={getElementById:id=>nodes.get(id),createElement:tag=>new Node(tag)};globalThis.window={addEventListener:(name,fn)=>events.set(name,fn)};globalThis.location={protocol:'https:',hostname:'app.example.invalid'}
+ globalThis.document={getElementById:id=>nodes.get(id),createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag)};globalThis.window={addEventListener:(name,fn)=>events.set(name,fn)};globalThis.location={protocol:'https:',hostname:'app.example.invalid'}
  let hook=async kind=>structuredClone(responses[kind])
  const client={clear(){calls.push('clear')},request:async(_scope,kind,options)=>{calls.push(kind);return hook(kind,options,_scope)}}
  const page=mountPipelinePage({client,sessionMode:true})
@@ -93,7 +93,7 @@ function sampleDriver(h){
   return intercept?intercept(entry,reply):reply
  })
  const all=(root,predicate)=>[...(predicate(root)?[root]:[]),...root.children.flatMap(node=>all(node,predicate))]
- const sampleButtons=()=>all(h.nodes.get('durations'),node=>node.tagName==='button')
+ const sampleButtons=()=>all(h.nodes.get('durations'),node=>node.tagName==='button'&&node.textContent==='View run')
  const sample=id=>{
   const choices=sampleButtons().filter(b=>b.getAttribute('aria-label')==='View run '+id)
   assert.equal(choices.length,1,'one explicitly named button in the sample list for '+id)
@@ -248,4 +248,42 @@ test('mounted task cards keep position-specific elapsed, status and original tim
  const filtered=h.nodes.get('tasks').children;assert.equal(filtered.length,1);check(filtered[0],items[2],expected[2])
  assert.equal(h.nodes.get('durations').textContent,before)
  assert.deepEqual(h.calls,['runs','durations','detail','tasks','tasks'])
+}))
+
+test('duration coordinates use recorded instants, retain ties/fractions/zero, and never synthesize missing samples',()=>{
+ const sample=(id,start,seconds)=>({run_id:id,started_at:start,duration_seconds:seconds})
+ const base='2026-01-01T00:00:00.'
+ const a=sample('a',base+'000000Z',0),b=sample('b',base+'000001Z',0.1),c=sample('c',base+'000004Z',0.05)
+ const input=[c,a,b],points=durationPoints(input)
+ assert.deepEqual(points.map(p=>p.sample),[a,b,c]);assert.deepEqual(input,[c,a,b])
+ assert.deepEqual(points.map(p=>[p.x,p.y]),[[18,106],[134,18],[482,62]])
+ const tied=sample('z','2026-01-01T01:00:00+01:00',0)
+ assert.deepEqual(durationPoints([tied,a]).map(p=>[p.sample.run_id,p.x,p.y]),[['a',250,106],['z',250,106]])
+ for(const rows of [[],[a],[a,sample('bad','2026-02-30T12:00:00Z',3)]])assert.deepEqual(durationPoints(rows),[])
+})
+
+test('plot selection is local and stale controls cannot target repeating run IDs after reload or sign-out',()=>harness(async h=>{
+ const s=sampleDriver(h);await h.open()
+ function controls(){
+  const [chart]=s.all(h.nodes.get('durations'),n=>n.tagName==='figure')
+  return ['input','button'].map(tag=>s.all(chart,n=>n.tagName===tag)[0])
+ }
+ const [oldRange,oldView]=controls()
+ assert.equal(oldView.getAttribute('aria-label'),'View selected run run-b')
+ oldRange.value='0';await oldRange.fire('input');assert.equal(oldView.getAttribute('aria-label'),'View selected run run-a')
+ assert.deepEqual(s.requests.map(r=>r.kind),['runs','durations'])
+ s.setData(scope,2);await h.nodes.get('reload').fire('click')
+ oldRange.value='1';await oldRange.fire('input');await s.click(oldView)
+ const [range,view]=controls();assert.equal(s.requests.length,4);assert.equal(view.getAttribute('aria-label'),'View selected run run-b')
+ range.value='0';await range.fire('input');await s.click(view)
+ assert.deepEqual(s.requests.slice(-2).map(r=>[r.kind,r.options.runID]),[['detail','run-a'],['tasks','run-a']]);assert.equal(s.requests.at(-1).options.revision,2)
+ h.page.clear();await s.click(view);assert.equal(s.requests.length,6);assert.equal(h.nodes.get('durations').textContent,'')
+}))
+
+test('a denied chart drilldown clears both trend and fallback, without retry',()=>harness(async h=>{
+ const s=sampleDriver(h);await h.open()
+ const [view]=s.all(h.nodes.get('durations'),n=>n.tagName==='button'&&n.textContent==='View selected run')
+ s.intercept((req,data)=>{if(req.kind==='detail')throw Object.assign(Error('Denied'),{status:403});return data})
+ await s.click(view);assert.deepEqual(s.requests.map(r=>r.kind),['runs','durations','detail'])
+ assert.equal(h.nodes.get('durations').textContent,'');assert.equal(h.nodes.get('panel').hidden,true);assert.equal(h.nodes.get('detail').open,false)
 }))
