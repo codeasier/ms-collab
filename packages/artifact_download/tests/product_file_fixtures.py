@@ -40,14 +40,18 @@ def setup_product_download(directory, *, origin, clock, authorization_endpoint):
     parent = store._transaction(lambda _, db: records.load(db, SCOPE, read_candidate=False),
                                 write=False, with_connection=True)
     view = dict(format=1, kind='product-view', match='relative-key-ascii-substring-v1', scope=SCOPE.as_dict(),
-                view_id='kit', product_token='kit_', parent=dict(grant_revision=parent.grant_revision,
+                view_id='kit', product_token='kit_', discovery_label='Synthetic kit', parent=dict(grant_revision=parent.grant_revision,
                                                                  policy_digest=records.digest(parent.policy_raw)))
+    manual = {key: value for key, value in view.items() if key != 'discovery_label'}
+    manual['view_id'] = 'manual-kit'
+    stale = {**view, 'view_id': 'obsolete-kit', 'discovery_label': 'Obsolete kit',
+             'parent': {**view['parent'], 'policy_digest': '0' * 64}}
     objects = SyntheticObjects()
     objects.data = DATA
     host = ApplicationHost(config=replace(original._config, artifact_downloads=True),
                            sessions=original._boundary._sessions, clock=clock, directory_cursors=original._directory_cursors,
                            exchange=exchange, authorization_endpoint=authorization_endpoint, authorization_scopes=('synthetic_user',),
-                           artifact_product_views=[view], artifact_downloads=ArtifactDownloadConfiguration(objects.loader, objects))
+                           artifact_product_views=[view, manual, stale], artifact_downloads=ArtifactDownloadConfiguration(objects.loader, objects))
     return host, store, login, exchange, objects
 
 

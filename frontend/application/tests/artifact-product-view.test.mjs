@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import {createSessionClient, validateBootstrap} from '../client.mjs'
 import {makeProductRequest, validateProductResult, productInstantMicros, lastSevenUtcDates} from '../artifact-product-codec.mjs'
+import {validateWorkspaces} from '../../workspace-admin/client.mjs'
 
 const scope = {workspace_id:'alpha', connection_id:'source', bucket_id:'bucket'}
 const route = '/api/workspaces/alpha/artifacts/source/bucket/product-views/kit'
@@ -314,7 +315,7 @@ async function controllerHarness(productFile=false){
       download=mountArtifactDownload({doc,session:client.session,productFile:true})
     }finally{if(saved)Object.defineProperty(globalThis,'window',saved);else delete globalThis.window}
   }
-  const ctrl=mountArtifactProductView({doc,session:client.session,download,now:()=>new Date('2026-04-03T00:00:01Z')})
+  const ctrl=mountArtifactProductView({doc,session:client.session,download,validateWorkspaces,now:()=>new Date('2026-04-03T00:00:01Z')})
   const el=id=>doc.getElementById('pv-'+id)
   const edit=async(id,value)=>{el(id).value=value;await el(id).fire('input')}
   async function select(view='kit'){
@@ -328,6 +329,88 @@ async function controllerHarness(productFile=false){
   }
   return {ctrl,client,doc,el,edit,select,plan,download}
 }
+
+test('picker reads authorized published choices and opens the selected product with fresh exact authority',async()=>{
+  const {ctrl,client,el,plan}=await controllerHarness()
+  const change=async(id,value)=>{el('picker-'+id).value=value;await el('picker-'+id).fire('change')}
+  const expectedPath='/api/workspaces/alpha/artifacts/source/bucket/product-views'
+  ctrl.activate()
+  const before=client.calls.length
+  const workspace=(id,name)=>({id,name,kind:'product',state:'active',revision:1})
+  client.queue.push(()=>response([workspace('team:omega','Other ID grammar'),workspace('alpha','Synthetic product'),
+    workspace('w'.repeat(129),'Too long for an artifact scope')]))
+  await el('picker-load').fire('click')
+  assert.match(el('picker-workspace').text(),/Synthetic product/)
+  assert.doesNotMatch(el('picker-workspace').text(),/Other ID grammar|Too long/)
+  client.queue.push(()=>response({workspace_id:'alpha',items:[{scope,catalog_revision:3}],next_after:null}))
+  await change('workspace','0')
+  client.queue.push(()=>response({format:1,kind:'product-view-choices',scope,catalog_revision:3,
+    views:[{view_id:'kit',label:'Synthetic Kit'}],quarters:['2026Q2']}))
+  await change('scope','0')
+  assert.match(el('picker-view').text(),/Synthetic Kit/)
+  assert.equal(el('picker-open').disabled,true)
+  await change('view','0');await change('quarter','0')
+  assert.equal(el('picker-open').disabled,false)
+  plan([folder('pkg/')])
+  await el('picker-open').fire('click')
+  assert.equal(el('workspace').value,'alpha')
+  assert.equal(el('location').textContent,'Folder: /')
+  assert.match(el('results').text(),/pkg/)
+  const calls=client.calls.slice(before)
+  assert.deepEqual(calls.map(x=>[x.path,x.options.method]),[
+    ['/api/workspaces','GET'],['/api/workspaces/alpha/artifacts/scopes','GET'],
+    [expectedPath,'GET'],[route,'POST'],
+  ])
+  for(const {options} of calls.slice(0,3)){
+    assert.deepEqual(options.headers,{})
+    assert.equal(options.body,undefined)
+    assert.equal(options.cache,'no-store')
+    assert.equal(options.referrerPolicy,'no-referrer')
+  }
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{...body,path:''})
+})
+
+test('picker accepts the complete bounded ASCII-escaped Unicode listing',async()=>{
+  const h=harness();await h.session.inspect()
+  const data={format:1,kind:'product-view-choices',scope,catalog_revision:3,
+    views:Array.from({length:128},(_,i)=>({view_id:String(i).padStart(3,'0')+'x'.repeat(125),label:'🧪'.repeat(80)})),
+    quarters:Array.from({length:500},(_,i)=>(2025-i)+'Q1')}
+  const raw=JSON.stringify({data}).replace(/[^\u0000-\u007f]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'))
+  assert.ok(raw.length>65536);assert.ok(raw.length<192*1024)
+  h.queue.push(()=>({status:200,ok:true,text:async()=>raw}))
+  assert.deepEqual(await h.session.readArtifactProductPicker({kind:'views',scope},{isCurrent:()=>true}),data)
+})
+
+test('picker retires a stale 401 and rejected cross-bucket choices never repaint the current selection',async()=>{
+  const {ctrl,client,el}=await controllerHarness()
+  const change=async(id,value)=>{el('picker-'+id).value=value;await el('picker-'+id).fire('change')}
+  ctrl.activate()
+  const w=id=>({id,name:id,kind:'product',state:'active',revision:1})
+  const directory=s=>({workspace_id:s.workspace_id,items:[{scope:s,catalog_revision:3}],next_after:null})
+  const received=deferred()
+  const beta={...scope,workspace_id:'beta',bucket_id:'other'}
+  client.queue.push(()=>response([w('alpha'),w('beta')]))
+  await el('picker-load').fire('click')
+  client.queue.push(()=>received.promise)
+  const old=change('workspace','0');await flush()
+  client.queue.push(()=>response(directory(beta)))
+  await change('workspace','1')
+  assert.match(el('picker-scope').text(),/source \/ other/)
+  client.queue.push(()=>response(directory(scope)))
+  await change('workspace','0')
+  received.resolve(response(undefined,401));await old
+  assert.deepEqual(client.effects,[])
+  assert.doesNotMatch(el('picker-scope').text(),/other/)
+  client.queue.push(()=>response({format:1,kind:'product-view-choices',scope:beta,catalog_revision:3,
+    views:[{view_id:'wrong',label:'Foreign product'}],quarters:['2026Q2']}))
+  await change('scope','0')
+  assert.equal(el('picker-view').disabled,true)
+  assert.doesNotMatch(el('picker-view').text(),/Foreign/)
+  assert.equal(el('picker-open').disabled,true)
+  ctrl.clear()
+  assert.equal(el('picker').hidden,true)
+  assert.doesNotMatch(el('picker-scope').text(),/source/)
+})
 
 test('controller replaces edits immediately, preserves paths and submits the UTC shortcut exactly once',async()=>{
   const h=await controllerHarness(), {ctrl,client,el}=h
@@ -407,7 +490,7 @@ test('shell awaiting the optional product module cannot revive inspection after 
     const session={bootstrap:async()=>bootstrap,clear:()=>seen.push('clear'),
       inspect:async()=>{seen.push('inspect');return {principal_id:'reader'}}}
     vm.runInNewContext(source,{document:doc,window:{addEventListener(k,fn){listeners[k]=fn}},
-      location:{protocol:'https:',origin:'https://app.example.invalid'},validateBootstrap,displayPolicyId:x=>x,
+      location:{protocol:'https:',origin:'https://app.example.invalid'},validateBootstrap,validateWorkspaces,displayPolicyId:x=>x,
       createSessionClient:()=>session,loadProductPage:()=>{started.resolve();return held.promise}})
     await started.promise
     if(retire)listeners.pagehide()
@@ -636,7 +719,7 @@ test('opt-in product shell retires an in-flight byte request on same-tab navigat
     ui_modules:['workspaces','artifacts','artifact-product-views','artifact-downloads','artifact-product-file-downloads']})}
   const source=shell.replace(/^import .+\n/gm,'').replace("import('./artifact-product-view.mjs')",'loadProductPage()')
   vm.runInNewContext(source,{document:doc,window:win,location:{origin,protocol:'https:'},createSessionClient:()=>session,
-    validateBootstrap,displayPolicyId:id=>id,mountArtifactDownload:({session:s,productFile})=>{assert.equal(s,session);assert.equal(productFile,true);return h.download},
+    validateBootstrap,validateWorkspaces,displayPolicyId:id=>id,mountArtifactDownload:({session:s,productFile})=>{assert.equal(s,session);assert.equal(productFile,true);return h.download},
     loadProductPage:async()=>({mountArtifactProductView:({download})=>{assert.equal(download,h.download);return h.ctrl}})})
   await flush()
   const bubble=(target,extra={})=>{

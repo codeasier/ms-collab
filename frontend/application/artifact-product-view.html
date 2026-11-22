@@ -20,9 +20,25 @@
   </header>
 
   <div id="pv-controls" hidden>
+    <section id="pv-picker" class="pv-surface" aria-labelledby="pv-picker-title" hidden>
+      <h2 id="pv-picker-title">Find a published product view</h2>
+      <p class="pv-note">Choose a workspace, an authorized bucket scope, then a listed view and quarter. Opening checks current access again. No provider is contacted.</p>
+      <div class="pv-fields">
+        <button id="pv-picker-load" type="button">Load current workspaces</button>
+        <label>Workspace<select id="pv-picker-workspace" autocomplete="off" disabled></select></label>
+        <label>Published bucket scope<select id="pv-picker-scope" autocomplete="off" disabled></select></label>
+        <label>Product view<select id="pv-picker-view" autocomplete="off" disabled></select></label>
+        <label>Published quarter<select id="pv-picker-quarter" autocomplete="off" disabled></select></label>
+      </div>
+      <div class="pv-actions">
+        <button id="pv-picker-next" type="button" disabled>Next bucket scopes</button>
+        <button id="pv-picker-open" class="pv-primary" type="button" disabled>Open selected product view</button>
+      </div>
+      <p id="pv-picker-status" class="pv-note" role="status" aria-live="polite"></p>
+    </section>
     <section class="pv-surface" aria-labelledby="pv-choose">
-      <h2 id="pv-choose">Choose a product view</h2>
-      <p class="pv-note">Use exact IDs from your administrator. No scopes, views or quarters are looked up as you type.</p>
+      <h2 id="pv-choose">Open by exact IDs</h2>
+      <p class="pv-note">Use exact IDs from your administrator for an unlisted view or when discovery is unavailable. Nothing is looked up as you type.</p>
       <form id="pv-setup" autocomplete="off" novalidate>
         <label>Workspace ID<input id="pv-workspace" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>
         <label>Connection ID<input id="pv-connection" required spellcheck="false" autocapitalize="none" autocomplete="off"></label>

@@ -2,7 +2,97 @@
 // no links, navigation state or storage are constructed from private values.
 import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validateProductResult} from './artifact-product-codec.mjs'
 
-export function mountArtifactProductView({session, download=null, now=()=>new Date(), doc=document}){
+// Shared directory outcomes never become grants and never leave this document.
+function mountProductPicker({session, doc, validateWorkspaces, retireSelection, openSelection}) {
+  const el=id=>doc.getElementById('pv-picker'+(id?'-'+id:''))
+  const ids=['workspace','scope','view','quarter']
+  let active=false,generation=0,flight=null,workspaces=[],scopes=[],views=[],quarters=[],next=null
+  const status=text=>{el('status').textContent=text}
+  const choose=(id,values)=>/^\d+$/.test(el(id).value)?values[Number(el(id).value)]:undefined
+  function choices(id,values,label,placeholder) {
+    const option=(text,value)=>{const node=doc.createElement('option');node.textContent=text;node.value=value;return node}
+    el(id).replaceChildren(option(placeholder,''),...values.map((item,index)=>option(label(item),String(index))))
+    el(id).value=''
+  }
+  function controls() {
+    el('load').disabled=!active||!!flight
+    for(const [i,values] of [workspaces,scopes,views,quarters].entries())el(ids[i]).disabled=!active||!values.length
+    el('next').disabled=!active||!!flight||!next
+    el('open').disabled=!active||!!flight||!choose('scope',scopes)||!choose('view',views)||!choose('quarter',quarters)
+  }
+  function reset(from) {
+    generation++;flight?.abort();flight=null
+    if(from<=0){workspaces=[];choices('workspace',[],'','Choose a workspace')}
+    if(from<=1){scopes=[];next=null;choices('scope',[],'','Choose a bucket scope')}
+    if(from<=2){views=[];quarters=[];choices('view',[],'','Choose a product view');choices('quarter',[],'','Choose a quarter')}
+    controls()
+  }
+  function clear() {active=false;reset(0);el('').hidden=true;status('')}
+  function activate() {clear();active=true;el('').hidden=false;controls()}
+  async function read(selection,from,receive) {
+    if(!active)return
+    retireSelection();reset(from)
+    const abort=new AbortController(),turn=generation
+    flight=abort;controls();status('Checking current access to published metadata…')
+    const isCurrent=()=>active&&generation===turn&&flight===abort&&!abort.signal.aborted
+    try {
+      const data=await session.readArtifactProductPicker(selection,{signal:abort.signal,isCurrent})
+      if(isCurrent())receive(data)
+    }catch(error){
+      if(isCurrent())status(error.status===503?'Directory unavailable. Use exact IDs below.':'Published choices could not be verified. You can still use exact IDs below.')
+    }finally{
+      if(isCurrent()){flight=null;controls()}
+    }
+  }
+  function loadScopes(after=null,lastTuple=null) {
+    const workspace=choose('workspace',workspaces)?.id
+    if(!workspace)return
+    return read({kind:'scopes',workspace,after,lastTuple},1,data=>{
+      scopes=data.items
+      next=data.next_after
+      choices('scope',scopes,item=>item.scope.connection_id+' / '+item.scope.bucket_id,'Choose a bucket scope')
+      status(scopes.length?'Choose an authorized published bucket scope.':'No currently accessible published scopes.')
+    })
+  }
+  el('load').addEventListener('click',()=>read({kind:'workspaces'},0,data=>{
+    // The workspace grammar is broader than the artifact scope grammar. An
+    // unrelated workspace with such an ID cannot invalidate valid choices.
+    workspaces=validateWorkspaces(data).filter(w=>w.state!=='suspended'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(w.id))
+    choices('workspace',workspaces,w=>w.name+' · '+w.id,'Choose a workspace')
+    status(workspaces.length?'Choose a current workspace.':'No accessible workspaces.')
+  }))
+  el('workspace').addEventListener('change',()=>{
+    if(!active)return
+    if(choose('workspace',workspaces))return loadScopes()
+    retireSelection();reset(1);status('Choose a current workspace.')
+  })
+  el('next').addEventListener('click',()=>{
+    if(!active||flight||!next)return
+    const last=scopes.at(-1).scope
+    return loadScopes(next,[last.connection_id,last.bucket_id])
+  })
+  el('scope').addEventListener('change',()=>{
+    if(!active)return
+    const scope=choose('scope',scopes)?.scope
+    if(!scope){retireSelection();reset(2);status('Choose an authorized bucket scope.');return}
+    return read({kind:'views',scope},2,data=>{
+      views=data.views;quarters=data.quarters
+      choices('view',views,v=>v.label+' · '+v.view_id,'Choose a product view')
+      choices('quarter',quarters,q=>q,'Choose a quarter')
+      status(!views.length?'No listed product views for this bucket. Use exact IDs if supplied.':
+        !quarters.length?'This publication has no observed quarters.':'Choose a product view and a published quarter.')
+    })
+  })
+  for(const id of ['view','quarter'])el(id).addEventListener('change',()=>{if(active){retireSelection();controls()}})
+  el('open').addEventListener('click',()=>{
+    if(!active||flight)return
+    const scope=choose('scope',scopes)?.scope,viewId=choose('view',views)?.view_id,quarter=choose('quarter',quarters)
+    if(scope&&viewId&&quarter)return openSelection(scope,viewId,quarter)
+  })
+  return {activate,clear,manual(){reset(1);el('workspace').value='';status('Manual selection edited. Choose a workspace again to use discovery.')}}
+}
+
+export function mountArtifactProductView({session, download=null, validateWorkspaces, now=()=>new Date(), doc=document}){
   if(typeof session?.readArtifactProductView!=='function')throw Error('Product view reader required.')
   if(download&&(typeof download.select!=='function'||typeof download.clear!=='function'))throw Error('A content-bound download panel is required.')
   const el=id=>doc.getElementById('pv-'+id)
@@ -14,6 +104,8 @@ export function mountArtifactProductView({session, download=null, now=()=>new Da
   const identityFields=['workspace','connection','bucket','view']
   const fields=()=>({scope:{workspace_id:el('workspace').value,connection_id:el('connection').value,bucket_id:el('bucket').value},viewId:el('view').value})
   const navigation=(body,path)=>({format:1,quarter:body.quarter,path,mode:'tree',page:1,page_size:body.page_size})
+  const picker=typeof session.readArtifactProductPicker==='function'&&typeof validateWorkspaces==='function'&&el('picker')
+    ?mountProductPicker({session,doc,validateWorkspaces,retireSelection,openSelection}):null
 
   function controls(){
     el('controls').hidden=!active
@@ -56,22 +148,34 @@ export function mountArtifactProductView({session, download=null, now=()=>new Da
     el('page-size').value='10'
     resetFilters()
   }
+  function retireSelection(){
+    retire();pin=null;recovery=false
+    for(const id of [...identityFields,'quarter'])el(id).value=''
+    forgetLocation();status('');controls()
+  }
+  function openSelection(scope,viewId,quarter){
+    if(!active)return
+    retireSelection()
+    for(const [id,key] of [['workspace','workspace_id'],['connection','connection_id'],['bucket','bucket_id']])el(id).value=scope[key]
+    el('view').value=viewId;el('quarter').value=quarter
+    return read(scope,viewId,{format:1,quarter,path:'',mode:'tree',page:1,page_size:10},{fresh:true})
+  }
   function clear(){
     if(el('controls').contains?.(doc.activeElement))doc.activeElement?.blur?.()
-    active=false
+    active=false;picker?.clear()
     retire()
     pin=null;recovery=false
     for(const id of [...identityFields,'quarter'])el(id).value=''
     forgetLocation();status('');controls()
   }
   function activate(){
-    clear();active=true;controls()
-    status('Enter the exact IDs and quarter to open a product view.')
-    el('workspace').focus()
+    clear();active=true;picker?.activate();controls()
+    status(picker?'Load current workspaces to find a listed view, or open by exact IDs.':'Enter the exact IDs and quarter to open a product view.')
+    el(picker?'picker-load':'workspace').focus()
   }
   function editSetup(identity){
     if(!active)return
-    retire()
+    picker?.manual();retire()
     if(identity){pin=null;recovery=false}
     forgetLocation();controls()
     if(recovery){status('Reopen the product view to check the selected quarter at the root.');return}

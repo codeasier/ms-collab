@@ -87,7 +87,9 @@ async function run(){
   await cdp.send('Network.setBlockedURLs',{urlPatterns:[
    {urlPattern:info.origin+'/*',block:false},{urlPattern:info.provider+'?*',block:false},
    {urlPattern:'*://*:*/*',block:true}],urls:['*']})
-  let watching=false
+  let watching=false,discovering=false
+  const discovered=[],discoveryPaths=['/api/workspaces',
+    '/api/workspaces/alpha/artifacts/scopes','/api/workspaces/alpha/artifacts/source/bucket/product-views']
   const tracked=new WeakSet()
   p.on('pageerror',()=>errors.push('page error'))
   p.on('dialog',async d=>{errors.push('unexpected dialog');await d.dismiss()})
@@ -99,6 +101,10 @@ async function run(){
    if(!watching&&u.pathname.startsWith('/api/')&&
       ([product,available,binary].includes(u.pathname)||r.frame().url()===info.origin+viewPage))errors.push('premature product or byte read')
    if(watching&&u.pathname.startsWith('/api/')){
+    if(discovering&&discoveryPaths.includes(u.pathname)){
+     if(u.origin!==info.origin||u.search||r.method()!=='GET'||r.headers()['x-csrf-token']||r.headers().referer)errors.push('unexpected discovery request')
+     discovered.push(u.pathname);return
+    }
     if(![product,available,binary].includes(u.pathname)||u.search||r.method()!=='POST')errors.push('unexpected API')
     tracked.add(r);events.push(['request',u.pathname])
    }
@@ -191,18 +197,30 @@ async function run(){
    assert.deepEqual(actual,['','',null,0,0,0,0]);assert.deepEqual(errors,[])
   }
 
-  async function enterSignedIn(){
+  async function enterSignedIn(manual=true){
    watching=false
    await p.goto(info.origin+'/artifacts/');await p.waitForFunction(()=>!document.querySelector('#app-sign-in').disabled)
    await p.locator('#app-sign-in').click();await p.waitForFunction(()=>document.querySelector('#app-principal')?.textContent==='admin')
    await p.goto(info.origin+'/artifacts/');await p.locator('#app-product-view-entry').waitFor({state:'visible'})
    await p.locator('#app-product-view-entry').click();await p.locator('#pv-controls').waitFor({state:'visible'})
    watching=true
-   for(const [id,value] of Object.entries({workspace:'alpha',connection:'source',bucket:'bucket',view:'kit',quarter:'2026Q2'}))await p.locator('#pv-'+id).fill(value)
+   if(manual)for(const [id,value] of Object.entries({workspace:'alpha',connection:'source',bucket:'bucket',view:'kit',quarter:'2026Q2'}))await p.locator('#pv-'+id).fill(value)
   }
-  checkpoint='sign in and enter product view'
-  await enterSignedIn();assert.deepEqual(await state(),zero);assert.deepEqual(events,[])
-  const root=await openRoot();assert.equal(root.catalog_revision,1);assert.equal(await p.locator('.pv-check-download').count(),0)
+  checkpoint='discover a published product from the signed-in artifact entry'
+  await enterSignedIn(false);assert.deepEqual(await state(),zero);assert.deepEqual(events,[])
+  discovering=true
+  try{
+   await p.locator('#pv-picker-load').click()
+   await p.locator('#pv-picker-workspace').selectOption({label:'alpha · alpha'})
+   await p.locator('#pv-picker-scope').selectOption({label:'source / bucket'})
+   await p.locator('#pv-picker-view').selectOption({label:'Synthetic kit · kit'})
+   await p.locator('#pv-picker-quarter').selectOption({label:'2026Q2'})
+   assert.deepEqual(await p.locator('#pv-picker-view option').allTextContents(),['Choose a product view','Synthetic kit · kit'])
+   assert.deepEqual(discovered,discoveryPaths)
+  }finally{discovering=false}
+  assert.deepEqual(await state(),zero);assert.deepEqual(events,[]);await privacy()
+  const root=await verifyLevel(()=>p.locator('#pv-picker-open').click(),body,['pkg/'])
+  assert.equal(root.catalog_revision,1);assert.equal(await p.locator('.pv-check-download').count(),0)
   let level=await branch(root.observation);assert.deepEqual(await state(),zero)
   assert.equal(await select(keys[0]).count(),0);assert.equal(await select(keys[1]).count(),0)
   assert.equal(await select(leaf).count(),1);assert.equal(await select(unbound).count(),1)

@@ -167,6 +167,37 @@ class IndexedProductRouteTests(unittest.TestCase):
         absent = read(quarter='2026Q3')
         self.assertEqual((absent['quarter_available'], absent['total'], absent['items']), (False, 0, []))
 
+    def test_product_choices_only_current_explicit_labels_and_published_quarters(self):
+        listing = '/product-views'
+        listed = {**self.view, 'discovery_label': 'Synthetic Kit'}
+        unlisted = {**self.view, 'view_id': 'manual-only'}
+        stale = {**self.view, 'view_id': 'stale', 'discovery_label': 'Do not list',
+                 'parent': {**self.view['parent'], 'policy_digest': '0' * 64}}
+        wrong_scope = Scope('alpha', 'source', 'another-bucket')
+        other = {**self.view, 'view_id': 'other', 'scope': wrong_scope.as_dict(),
+                 'discovery_label': 'Other bucket'}
+        app = IndexedArtifactApplication(**self.args, product_views=[other, stale, unlisted, listed])
+        result = self.ok(call(app, listing))
+        self.assertEqual(result, {
+            'format': 1, 'kind': 'product-view-choices', 'scope': SCOPE.as_dict(),
+            'catalog_revision': record(self.store).published_revision,
+            'views': [{'view_id': 'files', 'label': 'Synthetic Kit'}], 'quarters': ['2026Q2'],
+        })
+        self.assertEqual(self.ok(self.post(app=app))['observation'],
+                         self.ok(self.post())['observation'])  # Label is not the read fence.
+        self.ok(self.post(app=app, suffix=listing+'/manual-only'))
+        self.error(self.post(app=app, suffix=listing+'/stale'), 404, 'not_found')
+        self.error(call(app, listing, token='other'), 404, 'not_found')
+        self.error(call(app, listing, token='approver'), 404, 'not_found')
+        self.error(call(app, listing, base=BASE.replace('/bucket', '/ungranted')), 404, 'not_found')
+        self.error(call(app, listing, query='view=files'), 400, 'invalid_request')
+        self.error(call(IndexedArtifactApplication(**self.args), listing), 404, 'not_found')
+        self.assertEqual(self.ok(call(self.app, listing))['views'], [])
+        self.assertEqual(self.ok(call(self.app, listing))['quarters'], [])
+        for label in ('', ' spaced', 'line\nbreak', '\u202eto', 'x'*81, None):
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                IndexedArtifactApplication(**self.args, product_views=[{**self.view, 'discovery_label': label}])
+
     def test_exact_authorization_and_lookup_order_not_just_denial(self):
         with trace_read() as trace:
             self.ok(self.post())
@@ -423,7 +454,7 @@ class IndexedProductRouteTests(unittest.TestCase):
         self.error(self.post(query='page=1'), 400, 'invalid_request')
         for method in ('GET', 'PUT', 'DELETE'):
             self.error(call(self.app, ROUTE, method=method, body=BODY), 404, 'not_found')
-        for malformed in ('/product-views', '/product-views/', ROUTE+'/', ROUTE+'/more', '/product-view/files',
+        for malformed in ('/product-views/', ROUTE+'/', ROUTE+'/more', '/product-view/files',
                           '/product-views/'+'v'*129, '/product-views/ünicode', '/product-views/id%2Fid'):
             self.error(self.post(suffix=malformed), 404, 'not_found')
         for ident in ('alpha', 'source', 'bucket'):

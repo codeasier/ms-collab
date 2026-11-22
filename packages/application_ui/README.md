@@ -186,6 +186,29 @@ pipeline, task and discovery browser journeys.
   computed text contrast and five desktop/mobile screenshots. These are not live
   OBS, real identity-provider, deployment or download acceptance evidence.
 
+### Find a published product view
+
+When the optional product-view registry is mounted, choose **Open a product view** in
+Artifacts. Load current workspaces, select an accessible published bucket scope,
+then select a listed view and a published quarter. Opening it uses a fresh
+authorized metadata request; it neither starts a download nor grants one.
+Exact-ID opening remains available for views not listed or if the optional
+scope directory is unavailable.
+
+Only a trusted view descriptor with `discovery_label` appears in the picker
+(1–80 printable characters). The current parent grant revision and policy
+digest must match and the exact bucket must have a publication. The listing
+exposes at most 128 view IDs and labels and the bucket's published quarter
+choices (at most 500). It does not expose private matching tokens, source
+endpoints or unapproved candidates. Changing selection or ending the session
+clears old results and download confirmation. The existing separate byte
+grant, explicit confirmation and integrity check still apply.
+
+The [artifact download workflow](../../.github/workflows/artifact-download-session.yml)
+exercises this navigation through authorized discovery, exact metadata and the
+native save with synthetic HTTPS. It does not demonstrate availability in a
+deployed workspace, a real identity or OBS data migration.
+
 ### Artifact byte handoff
 
 The [download session workflow](../../.github/workflows/artifact-download-session.yml)
