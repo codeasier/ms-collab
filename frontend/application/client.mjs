@@ -51,6 +51,23 @@ function assertCurrentModuleStatus(context){
  try{if(context.isCurrent()===true)return}catch{}
  throw staleModuleStatus()
 }
+// Fixed research catalog reads retain their page owner through transport. A
+// retired request cannot invalidate the fresh view's session with a late 401.
+const researchReadRoute=/^\/api\/workspaces\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/research-assets(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/(?:types|entities|assets(?:\/a_[0-9a-f]{64})?))?$/
+function researchReadPath(path){
+ // Research starts with the existing session's workspace index. Its owner is
+ // separate from both the catalog directory and exact-scope operations.
+ if(path==='/api/workspaces')return true
+ if(typeof path!=='string')return false
+ const [route,query,...extra]=path.split('?')
+ return !extra.length&&route.match(researchReadRoute)?.[0]===route&&(query===undefined||(query.length>0&&!route.endsWith('/research-assets')))
+}
+function staleResearchRead(){const error=new Error('Stale research catalog read discarded.');error.name='AbortError';return error}
+function assertCurrentResearchRead(context,signal){
+ if(!context)return
+ try{if(!signal?.aborted&&context.isCurrent()===true&&!signal?.aborted)return}catch{}
+ throw staleResearchRead()
+}
 const invitationURL=workspace=>`/api/workspaces/${encodeURIComponent(workspace)}/invitations`
 const validateInvitations=(items,workspace)=>{if(items.some(i=>!i||!validId(i.id)||i.workspace_id!==workspace||!validId(i.principal_id)||typeof i.workspace_name!=='string'||i.workspace_name.length>200||!['viewer','developer'].includes(i.role)||!['pending','accepted','declined','revoked','expired','invalidated'].includes(i.state)||!Number.isSafeInteger(i.created)||!Number.isSafeInteger(i.expires)||i.expires<=i.created||!integer(i.revision)))throw Error('Invalid invitation response.')}
 // Invitation-only codecs mirror the standalone transport. Their asset roots are
@@ -230,7 +247,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  let active=false,epoch=0
  const transfers=new Set()
  const clear=()=>{active=false;epoch++;for(const cancel of transfers)cancel();transfers.clear()}
- async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={},moduleStatus,transfer){
+ async function send(path,{method='GET',body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent,signal,login=false,authenticated=false}={},moduleStatus,transfer,researchRead){
   if(typeof path!=='string'||path.length>2048||/[\u0000-\u0020\u007f\\#]/.test(path)||!path.startsWith('/')||path.startsWith('//')||path.includes('/../')||path.includes('/./'))throw new Error('Invalid application path.')
   if(!['GET','POST','PATCH','PUT'].includes(method)||(method==='GET'&&body!==undefined))throw new Error('Invalid method.')
   initialAdminSelectionRequest(path,method,initialAdminPrecondition)
@@ -239,6 +256,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   // options cannot install a navigation guard or suppress genuine 401 handling.
   if(moduleStatus&&(typeof moduleStatus.isCurrent!=='function'||path!==moduleStatus.path||path!==moduleStatusURL(moduleStatus.workspace,moduleStatus.key)||method!=='GET'||!authenticated||login||[body,revision,requestKey,initialAdminPrecondition,invitationRecipientPrecondition,invitationIsCurrent].some(value=>value!==undefined)))throw new Error('Invalid module status request.')
   if(transfer&&(moduleStatus||path!==transfer.path||!authenticated||login||(transfer.kind==='submit'?method!=='POST':method!=='GET')))throw new Error('Invalid administrator transfer request.')
+  if(researchRead&&(path!==researchRead.path||!researchReadPath(path)||!authenticated||method!=='GET'||login||moduleStatus||transfer))throw new Error('Invalid research catalog read.')
   if(authenticated&&!active)throw new Error('Session recheck required.')
   const turn=epoch,headers={}
   if(body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(body);if(new TextEncoder().encode(body).length>responsibilityRequestLimit(path,method,JSON.parse(body)))throw new Error('Request is too large.')}
@@ -252,11 +270,11 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    if(login){headers['X-MS-Collab-Login']='1';const raw=cookie();if(raw.split(';').some(x=>x.trim().startsWith('__Host-ms-collab-csrf=')))headers['X-CSRF-Token']=csrfCookie(raw)}
    else headers['X-CSRF-Token']=csrfCookie(cookie())
   }
-  const current=()=>{assertCurrentTransfer(transfer);assertCurrentModuleStatus(moduleStatus);assertCurrentInvitation(invitationIsCurrent);if(turn!==epoch){if(transfer)throw transferAbort();if(moduleStatus)throw staleModuleStatus();throw new Error('Stale session response discarded.')}}
-  if(moduleStatus||transfer)current()
+  const current=()=>{assertCurrentTransfer(transfer);assertCurrentModuleStatus(moduleStatus);assertCurrentInvitation(invitationIsCurrent);assertCurrentResearchRead(researchRead,signal);if(turn!==epoch){if(transfer)throw transferAbort();if(researchRead)throw staleResearchRead();if(moduleStatus)throw staleModuleStatus();throw new Error('Stale session response discarded.')}}
+  if(moduleStatus||transfer||researchRead)current()
   let response
   try{response=await fetcher(path,{method,headers,body,signal,credentials:'same-origin',cache:'no-store',redirect:'error'})}
-  catch(error){if(moduleStatus||transfer)current();if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}
+  catch(error){if(moduleStatus||transfer||researchRead)current();if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}
   current() // Before 401 can clear the current session or call onInvalid.
   if(!response.ok){
    const error=new Error(messages[response.status]||'The request could not be verified. Nothing was retried.');error.status=response.status
@@ -272,6 +290,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
     else onInvalid(error.message)
    }throw error
   }
+  if(researchRead&&response.status!==200)throw new Error('Invalid research catalog response.')
   if(transfer&&response.status!==200)throw new Error('Invalid administrator transfer response.')
   if(moduleStatus&&response.status!==200)throw new Error('Invalid module status response. Check again explicitly.')
   if((invitation.review||invitation.creation)&&response.status!==200)throw new Error('Invalid invitation response.')
@@ -285,7 +304,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    if(moduleStatus)return validateModuleStatus(payload.data,moduleStatus.workspace,moduleStatus.key)
    if(invitation.review||invitation.creation)return validateInvitationResult(payload,invitation)
    return payload.data
-  }catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{if(moduleStatus||transfer)current()}
+  }catch(error){if(transfer)throw new Error('Administrator transfer response could not be verified.');throw error}finally{if(moduleStatus||transfer||researchRead)current()}
  }
  // Only fixed product reads use this owner. Public request options
  // cannot install it or suppress an ordinary (including catalog) 401.
@@ -417,6 +436,14 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   async submitAdminTransfer(value,options={}) {
    const attempt=transferAttempt(value),{signal,context}=transferContext('submit',attempt.workspace_id,undefined,options,attempt)
    return send(context.path,{method:'POST',body:{replacement_id:attempt.replacement_id,replacement_revision:String(attempt.replacement_revision)},revision:attempt.actor_revision,requestKey:attempt.requestKey,signal,authenticated:true},undefined,context)
+  },
+  async readResearchAssets(path,options){
+   if(!researchReadPath(path)||!options||Object.getPrototypeOf(options)!==Object.prototype||
+      !Object.hasOwn(options,'isCurrent')||typeof options.isCurrent!=='function'||
+      Reflect.ownKeys(options).some(key=>!['signal','isCurrent'].includes(key))||
+      (options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new Error('Invalid research catalog read.')
+   const {signal,isCurrent}=options
+   return send(path,{signal,authenticated:true},undefined,undefined,Object.freeze({path,isCurrent}))
   },
   async readModuleStatus(workspace,key,options={}){
    const path=moduleStatusURL(workspace,key)

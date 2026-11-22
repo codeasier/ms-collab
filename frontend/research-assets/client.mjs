@@ -54,13 +54,42 @@ export function validateDetail(value,scope,metadata,selected){
  for(const [i,section]of detail.sections.entries())if(!own(section,['heading','text'])||section.heading!==schema.headings[i]||!text(section.text,8192,true,true))invalid()
  return value
 }
+const MAX_CATALOGS=32
+export function validateCatalogDirectory(data,workspace){
+ if(!id(workspace)||!own(data,['workspace_id','items'])||data.workspace_id!==workspace||
+    !Array.isArray(data.items)||data.items.length>MAX_CATALOGS)invalid()
+ let last=''
+ for(const value of data.items){if(!id(value)||value<=last)invalid();last=value}
+ return Object.freeze([...data.items])
+}
+export function selectableWorkspaces(data){
+ if(!Array.isArray(data))invalid()
+ const seen=new Set(),items=[]
+ for(const workspace of data){
+  if(!own(workspace,['id','name','kind','state','revision'])||typeof workspace.id!=='string'||
+     !workspace.id.length||[...workspace.id].length>200||seen.has(workspace.id)||
+     typeof workspace.name!=='string'||!workspace.name.trim()||[...workspace.name].length>200||
+     !['product','shared'].includes(workspace.kind)||!['active','suspended','archived'].includes(workspace.state)||
+     !integer(workspace.revision,1,Number.MAX_SAFE_INTEGER))invalid()
+  seen.add(workspace.id)
+  if(workspace.state!=='suspended'&&id(workspace.id))items.push(Object.freeze({id:workspace.id,name:workspace.name,state:workspace.state}))
+ }
+ return Object.freeze(items)
+}
 export function createAssetSessionClient(session){
- return {clear:()=>session.clear(),request(scope,kind,{revision,filters=filtersFrom(),page=1,asset,signal}={}){
+ if(typeof session?.clear!=='function'||typeof session.readResearchAssets!=='function')invalid()
+ return {clear:()=>session.clear(),async workspaces({signal,isCurrent}={}){
+  if(typeof isCurrent!=='function')invalid()
+  return selectableWorkspaces(await session.readResearchAssets('/api/workspaces',{signal,isCurrent}))
+ },async catalogs(workspace,{signal,isCurrent}={}){
+  if(!id(workspace)||typeof isCurrent!=='function')invalid()
+  return validateCatalogDirectory(await session.readResearchAssets(`/api/workspaces/${workspace}/research-assets`,{signal,isCurrent}),workspace)
+ },request(scope,kind,{revision,filters=filtersFrom(),page=1,asset,signal,isCurrent=()=>!signal?.aborted}={}){
   scopeFrom(scope.workspace_id,scope.catalog_id);if(!['types','entities','assets','detail'].includes(kind))throw new Error('Unsupported read.')
   if(kind!=='types'&&!integer(revision,1,999999999))throw new Error('Current catalog revision required.')
   const params=new URLSearchParams();if(revision!==undefined){if(!integer(revision,1,999999999))throw new Error('Current catalog revision required.');params.set('revision',String(revision))}
   if(kind==='assets'){filtersFrom(filters.type,filters.entity,filters.q);if(!integer(page,1,100000))throw new Error('Invalid page.');for(const [key,value]of Object.entries(filters)){if(!['type','entity','q'].includes(key))throw new Error('Invalid filter.');if(value)params.set(key,value)}params.set('page',String(page));params.set('page_size','20')}
   if(kind==='detail'&&!assetID(asset))throw new Error('Invalid asset ID.')
-  return session.request(`/api/workspaces/${scope.workspace_id}/research-assets/${scope.catalog_id}/${kind==='detail'?'assets/'+asset:kind}${params.size?'?'+params:''}`,{signal})
+  return session.readResearchAssets(`/api/workspaces/${scope.workspace_id}/research-assets/${scope.catalog_id}/${kind==='detail'?'assets/'+asset:kind}${params.size?'?'+params:''}`,{signal,isCurrent})
  }}
 }

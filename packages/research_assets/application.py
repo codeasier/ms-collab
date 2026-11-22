@@ -8,7 +8,7 @@ from packages.workspace_api import WorkspaceApplication
 from packages.workspaces import PolicyError
 from packages.workspaces.authority import principal_pin
 from .core import AssetError, AssetScope, CatalogBinding, SourceBatch, MAX_ASSETS, MAX_BATCH_BYTES, canonical, identifier, now_utc, pairs, prepare_batch, text
-from .store import publish, query, state
+from .store import publish, published_catalogs, query, state
 
 
 class AssetApplication(WorkspaceApplication):
@@ -17,6 +17,8 @@ class AssetApplication(WorkspaceApplication):
         assertion = self._verify_request(environ)
         scope, endpoint, asset_id, options = self._route(environ)
         def read(policy, actor, conn):
+            if endpoint == 'catalogs':
+                return published_catalogs(policy, actor, conn, scope, options)
             current = state(policy, actor, conn, scope)
             return query(conn, scope, current, endpoint, asset_id, options)
         return self._authenticated_transaction(assertion, read, with_connection=True)
@@ -24,9 +26,17 @@ class AssetApplication(WorkspaceApplication):
     @staticmethod
     def _route(environ):
         path, raw = environ.get('PATH_INFO', ''), environ.get('QUERY_STRING', '')
-        if type(path) is not str or len(path) > 600 or type(raw) is not str or len(raw) > 4096:
+        if type(path) is not str or len(path) > 600:
             raise PolicyError(400, 'invalid_request')
         parts = path.split('/')
+        if (len(parts) == 5 and parts[:3] == ['', 'api', 'workspaces'] and parts[4] == 'research-assets'
+                and environ.get('REQUEST_METHOD') == 'GET'):
+            try:
+                return identifier(parts[3]), 'catalogs', None, raw
+            except AssetError:
+                raise PolicyError(404, 'not_found') from None
+        if type(raw) is not str or len(raw) > 4096:
+            raise PolicyError(400, 'invalid_request')
         if (environ.get('REQUEST_METHOD') != 'GET' or len(parts) not in (7, 8)
                 or parts[:3] != ['', 'api', 'workspaces'] or parts[4] != 'research-assets'
                 or parts[6] not in {'types', 'entities', 'assets'}):

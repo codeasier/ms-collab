@@ -23,6 +23,60 @@ export function recordedTaskElapsed(task,observedAt){
  const fraction=String(elapsed%1000000n).padStart(6,'0').replace(/0+$/,'')
  return (hours?`${hours}h `:'')+(hours||minutes?`${minutes}m `:'')+`${seconds%60n}${fraction?'.'+fraction:''}s`
 }
+// Only plot individual reported samples. Time is the recorded job start, not
+// run observation order; tied instants share x, and remain selectable by keyboard.
+export function durationPoints(samples){
+ if(samples.length<2)return []
+ const rows=samples.map(sample=>({sample,at:recordedMicros(sample.started_at)}))
+ if(rows.some(row=>row.at===null))return [] // Keep the original sample list available.
+ rows.sort((a,b)=>a.at<b.at?-1:a.at>b.at?1:a.sample.run_id<b.sample.run_id?-1:a.sample.run_id>b.sample.run_id?1:0)
+ const first=rows[0].at,span=rows.at(-1).at-first
+ const peak=Math.max(...rows.map(row=>row.sample.duration_seconds))
+ return rows.map(({sample,at})=>({sample,
+  x:span===0n?250:18+464*(Number(at-first)/Number(span)),
+  y:106-(peak===0?0:88*(sample.duration_seconds/peak))}))
+}
+function durationTrend(group,openRun){
+ const points=durationPoints(group.samples)
+ if(!points.length)return null
+ const element=(tag,value)=>{const n=document.createElement(tag);if(value!==undefined)n.textContent=value;return n}
+ const svgNode=(tag,attrs)=>{const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [name,value]of Object.entries(attrs))n.setAttribute(name,String(value));return n}
+ const box=element('figure'),caption=element('figcaption','Successful job duration by recorded start time')
+ box.className='duration-plot'
+ const plot=svgNode('svg',{viewBox:'0 0 500 124',role:'img','aria-label':group.stage_name+' / '+group.job_name+': duration samples, earliest start on the left'})
+ const peak=Math.max(...points.map(p=>p.sample.duration_seconds))
+ const scale=element('small',peak===0?'All plotted samples: 0 seconds.':'Vertical scale: 0 to '+peak+' seconds.')
+ plot.append(svgNode('line',{x1:18,x2:482,y1:106,y2:106}))
+ if(peak>0)plot.append(svgNode('line',{x1:18,x2:482,y1:18,y2:18}))
+ let selected
+ const dots=points.map(({sample,x,y},index)=>{
+  const dot=svgNode('circle',{cx:x,cy:y,r:5}),title=svgNode('title',{})
+  title.textContent=sample.run_id+' · '+sample.started_at+' · '+sample.duration_seconds+' seconds'
+  dot.append(title);plot.append(dot);dot.addEventListener('click',()=>select(index));return dot
+ })
+ const marker=svgNode('circle',{r:9,'class':'selected-mark','pointer-events':'none'})
+ plot.append(marker)
+ const axis=element('small',points[0].x===points.at(-1).x?'All samples share one start time.':
+  'Starts: '+points[0].sample.started_at+' to '+points.at(-1).sample.started_at)
+ const label=element('label','Select a recorded sample'),slider=element('input')
+ slider.type='range';slider.min='0';slider.max=String(points.length-1);slider.step='1';label.append(slider)
+ const readout=element('p'),view=element('button','View selected run');view.type='button'
+ function select(index){
+  if(!Number.isInteger(index)||index<0||index>=points.length)return
+  if(selected!==undefined)dots[selected].setAttribute('data-selected','false')
+  selected=index;dots[index].setAttribute('data-selected','true')
+  marker.setAttribute('cx',points[index].x);marker.setAttribute('cy',points[index].y)
+  const s=points[index].sample
+  slider.value=String(index)
+  const value=(index+1)+' of '+points.length+' · '+s.run_id+' ('+s.run_status+') · '+s.duration_seconds+' seconds · started '+s.started_at
+  slider.setAttribute('aria-valuetext',value);readout.textContent=value
+  view.setAttribute('aria-label','View selected run '+s.run_id)
+ }
+ slider.addEventListener('input',()=>select(Number(slider.value)))
+ view.addEventListener('click',()=>openRun(points[selected].sample.run_id))
+ select(points.length-1)
+ box.append(caption,scale,plot,axis,label,readout,view);return box
+}
 export function mountPipelinePage({client,sessionMode=false,onSignOut=()=>{},onBusyChange=()=>{}}){
 if(!client||typeof client.request!=='function'||typeof client.clear!=='function')throw new Error('Explicit request client required.')
 const el=id=>document.getElementById(id),transportAllowed=location.protocol==='https:'||(location.protocol==='http:'&&location.hostname==='127.0.0.1')
@@ -37,8 +91,9 @@ function disconnect(message='Disconnected. Reconnect to read current authorized 
 }
 function failure(error,token){if(token!==epoch||error.name==='AbortError')return;if(error.status===401){disconnect(error.message);return}clearPanel();el('status').textContent=error.status?error.message:'Snapshot changed or could not be validated. Reopen the scope to retry.'}
 // An ID can recur in a different scope or after a reload at the same revision.
+function runOwner(){return {scope,snapshot,revision:snapshot.revision,epoch}}
 function runButton(runID,label){
- const owner={scope,snapshot,revision:snapshot.revision,epoch}
+ const owner=runOwner()
  const button=text('button','View run');button.type='button';button.setAttribute('aria-label',label)
  button.addEventListener('click',()=>showDetail(runID,owner))
  return button
@@ -62,6 +117,9 @@ function renderDurations(){
  for(const group of report.groups){
   const card=text('article','','trend'),heading=text('h3',`${group.stage_name} / ${group.job_name}`);card.append(heading)
   const values=text('dl','','metrics');for(const [name,key]of[['Samples','count'],['Average seconds','average_seconds'],['Minimum seconds','min_seconds'],['Maximum seconds','max_seconds'],['Latest sample seconds','latest_seconds']]){const pair=text('div','');pair.append(text('dt',name),text('dd',Number(group[key]).toLocaleString(undefined,{maximumFractionDigits:3})));values.append(pair)}card.append(values)
+  const owner=runOwner(),trend=durationTrend(group,runID=>showDetail(runID,owner))
+  if(trend)card.append(trend)
+  else card.append(text('p',group.count===1?'Only one recorded sample; no trend to compare.':'Start times could not be plotted. See the recorded sample list.'))
   const disclosure=document.createElement('details');disclosure.append(text('summary',`Show ${group.samples.length} samples`));const list=text('ul','','samples')
   for(const sample of group.samples){
    const row=text('li','')

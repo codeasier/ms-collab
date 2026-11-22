@@ -47,6 +47,47 @@ async function checkSampleRun(page,origin,base,report){
   await card.locator('summary').click();assert.deepEqual(journal,urls.map(u=>[true,'GET',u,true]))
  }finally{page.off('request',observe)}
 }
+// Normal provider -> fixture publication -> authorized snapshot; no intercepted DTOs.
+async function checkTrend(page,origin){
+ const base='/api/workspaces/commons/pipelines/example-ci/build'
+ const wait=suffix=>page.waitForResponse(r=>r.url()===origin+base+suffix&&r.request().method()==='GET')
+ const [wire]=await Promise.all([wait('/durations?limit=100'),page.locator('#reload').click()])
+ const report=(await wire.json()).data
+ assert.equal(wire.status(),200);assert.equal(report.source.full_history_complete,false)
+ const group=report.groups.find(g=>g.stage_name==='Build'&&g.job_name==='Unit tests')
+ assert.deepEqual(group.samples.map(s=>[s.run_id,s.duration_seconds]),[['run-17',4],['run-18',19],['run-20',7]])
+ const chart=page.locator('#durations figure').first(),slider=chart.getByRole('slider'),dots=chart.locator('circle:not(.selected-mark)')
+ await chart.waitFor();const geometry=await dots.evaluateAll(nodes=>nodes.map(n=>['cx','cy'].map(k=>Number(n.getAttribute(k)))))
+ assert.ok(geometry[0][1]>geometry[2][1]&&geometry[2][1]>geometry[1][1]);assert.equal((geometry[1][0]-geometry[0][0])/(geometry[2][0]-geometry[0][0]),0.25)
+ const journal=[],collect=r=>{const u=new URL(r.url());if(u.pathname.startsWith('/api/'))journal.push([r.method(),u.pathname+u.search])}
+ page.on('request',collect)
+ try{
+  await page.locator('#query').fill('no-local-match');await page.locator('#filters button').click()
+  await page.setViewportSize({width:390,height:844})
+  const mobile=await chart.evaluate(n=>{
+   const range=n.querySelector('input'),style=getComputedStyle(range)
+   return {chart:n.getBoundingClientRect().width,client:n.clientWidth,scroll:n.scrollWidth,
+    page:document.documentElement.scrollWidth,viewport:innerWidth,rangeMargins:[style.marginInlineStart,style.marginInlineEnd]}
+  })
+  assert.ok(mobile.chart>0&&mobile.scroll<=mobile.client&&mobile.page<=mobile.viewport,
+   'Duration chart or page overflows at 390px: '+JSON.stringify(mobile))
+  await dots.first().click();assert.equal(await slider.inputValue(),'0')
+  await slider.focus();await slider.press('End');assert.equal(await slider.inputValue(),'2');await slider.press('ArrowLeft')
+  const target=group.samples[1];assert.equal(await slider.inputValue(),'1');assert.ok((await slider.getAttribute('aria-valuetext')).includes(target.run_id+' (failure) · 19 seconds'))
+  const view=chart.getByRole('button',{name:'View selected run '+target.run_id,exact:true})
+  assert.deepEqual(journal,[]);assert.equal(await page.locator('#runs button').count(),0)
+  const suffix='/runs/'+target.run_id,taskSuffix=suffix+'/tasks?revision='+report.source.revision+'&offset=0&limit=10'
+  const [detail,tasks]=await Promise.all([wait(suffix),wait(taskSuffix),view.click()])
+  assert.deepEqual([detail.status(),tasks.status()],[200,200])
+  assert.equal((await detail.json()).data.run.id,target.run_id);assert.equal((await tasks.json()).data.items[0].id,target.job_id)
+  await page.locator('#detail[open] #tasks .task-elapsed').waitFor();assert.equal(await page.locator('#detail-title').textContent(),'run-18')
+  assert.equal(await page.locator('#tasks .task-elapsed').textContent(),'Recorded elapsed: 19s')
+  await page.keyboard.press('Escape');assert.equal(await view.evaluate(n=>document.activeElement===n),true)
+  assert.deepEqual(journal,[['GET',base+suffix],['GET',base+taskSuffix]])
+  await page.locator('#query').fill('');await page.locator('#filters button').click()
+  await page.setViewportSize({width:1440,height:1000})
+ }finally{page.off('request',collect)}
+}
 async function main(){
  const child=spawn('python3',['-m','packages.pipeline_ui.tests.browser_server'],{cwd:path.resolve(__dirname,'../../..'),stdio:['ignore','pipe','pipe']});child.stderr.resume();let browser
  try{
@@ -89,7 +130,7 @@ async function main(){
   await page.locator('#reload').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('could not be validated'));assert.equal(await page.locator('#runs').textContent(),'');await page.unroute('**/commons/pipelines/example-ci/build/durations?*')
   await scope('beta');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('unavailable to your current identity'));assert.equal(await page.locator('#panel').isVisible(),false)
   await open('empty');assert.match(await page.locator('#summary').textContent(),/0 matching runs/);assert.match(await page.locator('#durations').textContent(),/No valid/);assert.equal(await page.locator('#durations .samples button').count(),0)
-  await open('commons');await page.screenshot({path:path.join(folder,'desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.ok(await page.locator('button:visible').evaluateAll(buttons=>buttons.every(b=>b.scrollWidth<=b.clientWidth)));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
+  await open('commons');await checkTrend(page,origin);await page.screenshot({path:path.join(folder,'desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.ok(await page.locator('button:visible').evaluateAll(buttons=>buttons.every(b=>b.scrollWidth<=b.clientWidth)));await page.screenshot({path:path.join(folder,'mobile.png'),fullPage:true})
   // Real Back/Forward lifecycle must not retain credentials or private records.
   await page.goto(origin+'/unavailable');await page.goBack();await page.locator('#connect:not([hidden])').waitFor();await page.goForward();await page.goBack();await page.locator('#connect:not([hidden])').waitFor();assert.equal(await page.locator('#runs').textContent(),'');assert.equal(await page.locator('#workspace').inputValue(),'');assert.equal(await page.locator('#credential').inputValue(),'')
   await connect();await open();await page.route('**/alpha/pipelines/example-ci/build/runs?*',route=>route.fulfill({status:401,contentType:'application/json',body:'{"error":"expired"}'}));await page.locator('#reload').click();await page.locator('#connect:not([hidden])').waitFor();assert.equal(await page.locator('#runs').textContent(),'');assert.equal(await page.locator('#detail-body').textContent(),'')

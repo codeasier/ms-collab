@@ -138,7 +138,7 @@ def main():
             pipeline_sync.collect=forbidden_provider
         if mode=='assets':
             from .research_asset_fixtures import provision
-            provision(policy)
+            provision(policy, paired=True)
         def fixture(env,start):
             path=env.get('PATH_INFO')
             if mode == TRANSFER_MODE:
