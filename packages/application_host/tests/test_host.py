@@ -132,6 +132,81 @@ class HostTests(unittest.TestCase):
         caps=self.request(READS[0].replace('/items','/capabilities'))['body']['data']['capabilities']
         self.assertFalse(caps['refresh'])
 
+    def test_issue_suggestions_require_two_explicit_inputs_and_use_current_cookie_reader(self):
+        from packages.community_api.records import fingerprint, read as read_community
+        from packages.community_board.model import Scope
+        from packages.identity import AuthenticationError, Credential, Provider, VerifiedIdentity
+        from packages.responsibility.suggestions import IssueSuggestion
+        from packages.responsibility_api import ResponsibilityApplication
+        from packages.responsibility_api.records import read as read_responsibility
+
+        scope = Scope("alpha", "source", "sample/project")
+        path = READS[4].replace("/config", "/suggestion")
+        sessions = self.app._boundary._sessions
+        fields = [dict(id="dev-field", name="Synthetic team", kind="developer",
+                       paths=["code"], owner_ids=["admin"], backup=None)]
+        for query in ("number=1", "number=not-an-issue", "number=" + "1" * 401):
+            with self.subTest(unmounted_query=query):
+                initial = self.request(path, query=query)
+                self.assertEqual((initial["status"], initial["body"]), (404, {"error": "not_found"}))
+        saved = self.mutation(READS[4], method="PUT", body={"fields": fields})
+        self.assertEqual(saved["status"], 200, saved)
+
+        def read_states():
+            return self.policy._transaction(lambda _, db: (read_community(db, scope), read_responsibility(db, scope)),
+                                            write=False, with_connection=True)
+        community, responsibility = read_states()
+        before = self.policy.audit_events("admin", "alpha")
+        login_issuer = self.login.binding.issuer
+        now = self.now
+
+        class LocalFixtureVerifier:
+            def verify(self, credential):
+                if credential.value != "synthetic-suggestion-publisher":
+                    raise AuthenticationError()
+                return VerifiedIdentity(login_issuer, "admin-sub", "synthetic-ingress",
+                                        now, now + timedelta(minutes=1))
+
+        preparer = ResponsibilityApplication(store=self.policy,
+            providers=(Provider("fixture", login_issuer, "synthetic-ingress", LocalFixtureVerifier()),),
+            provider_key="fixture", clock=lambda: self.now)
+        # Provision a bounded in-memory value, not server-side state or a route.
+        prepared = preparer.prepare_issue_suggestions(Credential("synthetic-suggestion-publisher"),
+            scope, (IssueSuggestion(1, fingerprint(scope, community.snapshot.items[0]), ("dev-field",)),),
+            expected_revision=responsibility["revision"], community_revision=community.revision)
+        modules = ("community", "responsibility")
+        config = HostConfig(ORIGIN, modules, responsibility_suggestions=True)
+        with self.assertRaises(ValueError):
+            HostConfig(ORIGIN, ("community",), responsibility_suggestions=True)
+        for kwargs in ({}, {"responsibility_suggestions": ()}, {"responsibility_suggestions": [prepared]}):
+            with self.subTest(kwargs=tuple(kwargs)), self.assertRaises(ValueError):
+                ApplicationHost(config=config, sessions=sessions, **kwargs)
+        with self.assertRaises(ValueError):
+            ApplicationHost(config=HostConfig(ORIGIN, modules), sessions=sessions,
+                            responsibility_suggestions=(prepared,))
+
+        app = ApplicationHost(config=config, sessions=sessions, responsibility_suggestions=(prepared,))
+        def request(**kwargs):
+            return call(app, path, query=kwargs.pop("query", "number=1"),
+                        cookies=kwargs.pop("cookies", self.cookies), **kwargs)
+        other = session(self.login, self.exchange, "reader-sub")
+        reader = cookie_header({_SESSION: other.token.value, _CSRF: other.csrf.value})
+        authorized = request(cookies=reader)
+        self.assertEqual(authorized["status"], 200, authorized)
+        self.assertEqual(authorized["body"]["data"]["field_ids"], ["dev-field"])
+        self.assertEqual(authorized["body"]["data"]["mode"], "suggestion_only")
+        self.assertEqual(dict(authorized["headers"])["Cache-Control"], "no-store")
+        self.assertEqual(request(cookies="")["status"], 401)
+        self.assertEqual(request(extra={"HTTP_AUTHORIZATION": "Bearer anything"})["status"], 401)
+        outsider = session(self.login, self.exchange, "outsider-sub")
+        private_cookie = cookie_header({_SESSION: outsider.token.value, _CSRF: outsider.csrf.value})
+        for result in (request(query="number=2"), request(cookies=private_cookie),
+                       request(method="POST", origin=ORIGIN, csrf=self.session.csrf.value, body={})):
+            self.assertEqual((result["status"], result["body"]), (404, {"error": "not_found"}))
+        # Session clocks are the existing host behavior; business records/audit are unchanged.
+        self.assertEqual(read_states(), (community, responsibility))
+        self.assertEqual(self.policy.audit_events("admin", "alpha"), before)
+
     def test_all_modules_enforce_https_exact_host_origin(self):
         for path in READS:
             for extra in ({'wsgi.url_scheme':'http'},{'HTTP_HOST':'other.example.invalid'},
