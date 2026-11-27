@@ -236,9 +236,9 @@ Installation and backup formats are separately registered:
 | --- | --- | --- |
 | I1, installation `format:1` | Original B1 `format:1`, unchanged keys | New I1 directory |
 | I2, installation `format:2` | B2 `format:2` plus exact `installation_format:2` | New I2 directory |
-| I3, installation `format:3` (inspection only) | Unsupported; no B3 | No I3 restore |
+| I3, installation `format:3` (no service) | B3 `format:3` plus exact `installation_format:3` | New I3 directory |
 
-B1/B2 validation selects only these exact pairs. Restore preserves the profile,
+B1/B2/B3 validation selects only these exact pairs. Restore preserves the profile,
 not “latest”; no source or backup is upgraded. Source validation precedes output
 allocation. Every restore creates empty login/session state with a nondecreasing
 security floor. Successful ordinary factory creation can still maintain the
@@ -300,14 +300,14 @@ uses a factory-prepared exact registry with bounded complete-byte projections,
 not per-request offline `inspect`, full-history validation or in-memory DDL.
 
 
-## Fresh preset storage exercise (I3, inspection only)
+## Fresh preset storage and cold recovery (I3, no service)
 
 `init --layout 3` is a separate, explicit **new-directory-only** choice. It
 adds exactly one frozen product-preset table to I1, matching the
 [product-view preset contract](../artifact_sync/PRODUCT-VIEWS.md). It is not
 I2 plus presets: it does not add handover history or any download policy/lease
 tables. Omitting `--layout` still creates I1. Existing I1/I2 installations and
-B1/B2 backup pairs are unchanged.
+B1/B2 backup pairs are unchanged. B3 is separately paired with I3.
 
 Use a private, disposable installation directory with the normal disabled
 login configuration. There is no table adoption, conversion or in-place DDL
@@ -324,11 +324,22 @@ A successful I3 check is read-only and certifies installation structure, not
 preset rows or product acceptance. Initialization leaves the preset table
 empty and creates no identity, workspace, grant, publication or session. The
 factory rejects I3 before session-store initialization; the CLI cannot serve
-it. Cold backup fails with `backup_layout_unsupported` after checking the
-exact manifest under the exclusive lease, before opening either SQLite file
-for writing or allocating a destination. It never recovers an I3 rollback
-journal while rejecting the request. `verify-backup` and `restore` still recognize only
-B1 and B2; relabeling I3 bytes does not create a valid backup. The ordinary
+it. A B3 cold backup checks the exact I3 manifest under an exclusive lease
+before opening the attached databases for writing. Like B1/B2, it can recover
+an interrupted SQLite transaction after admission. Unsupported layouts or
+invalid manifests are rejected before any writer can recover a journal.
+
+B3 contains only the checked policy SQLite image and its private manifest. It
+preserves preset rows and stored provenance exactly, without interpreting them
+as current authority or rebinding scopes. Host-provided product definitions,
+runtime configuration, certificates, credentials and login state are not
+included; do not publish the archive. The digest detects corruption, not an
+adversary who can rewrite both archive files. Restore verifies the declared
+pair, config binding, checksums, core schema and policy before allocating a
+new directory, creates a fresh empty login store at a nondecreasing clock
+floor, and never activates service. I3 cannot be relabeled as B1/B2; no
+conversion or in-place restore is supported. An incomplete new destination
+is retained privately and is never silently reused. The ordinary
 `check --require-production` still exits 3 on any valid installation.
 
 This is a storage foundation only. It does not mount product views, presets or

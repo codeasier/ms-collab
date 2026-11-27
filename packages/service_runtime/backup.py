@@ -18,6 +18,10 @@ from .schema import layout_profile, schema_digest, _APPLICATION_ID, _SCHEMA_VERS
 from packages.workspace_admin_api.transfer_records import validate_all as validate_transfer_history
 
 BACKUP_MANIFEST = 'backup.json'
+# B1 has no installation selector. Each later supported envelope declares
+# exactly its paired installed profile; there is no format conversion.
+_BACKUP_LAYOUTS = (1, 2, 3)
+_VERSIONED_BACKUP_LAYOUTS = _BACKUP_LAYOUTS[1:]
 
 
 def _disjoint(source, destination):
@@ -44,11 +48,12 @@ def _verify(config, source):
         raise RuntimeFailure('backup_invalid')
     if meta['format'] == 1:
         profile = layout_profile(1)  # B1's registry entry is explicitly I1.
-    elif meta['format'] == 2:
+    elif meta['format'] in _VERSIONED_BACKUP_LAYOUTS:
         expected_keys = expected_keys | {'installation_format'}
-        if type(meta.get('installation_format')) is not int or meta['installation_format'] != 2:
+        if (type(meta.get('installation_format')) is not int
+                or meta['installation_format'] != meta['format']):
             raise RuntimeFailure('backup_invalid')
-        profile = layout_profile(2)  # B2 admits only the declared I2 pair.
+        profile = layout_profile(meta['installation_format'])
     else:
         raise RuntimeFailure('backup_invalid')
     if (set(meta) != expected_keys
@@ -99,9 +104,9 @@ def backup(config_path, destination):
         # could recover a hot rollback journal while opening a writer.
         with Lease(config.directory, exclusive=True):
             profile = inspect_manifest(config)
-            if profile.format not in (1, 2):
+            if profile.format not in _BACKUP_LAYOUTS:
                 raise RuntimeFailure('backup_layout_unsupported')
-            # Only the existing backed-up layouts acquire SQLite writer
+            # Only known cold-backup layouts acquire SQLite writer
             # reservations. Inspect again in the attached database snapshot.
             with closing(connection(config.directory, writable=True)) as db:
                 inspected = inspect(config, db)
@@ -111,12 +116,12 @@ def backup(config_path, destination):
                 content = db.serialize(name='main')
                 if not 0 < len(content) <= MAX_DB:
                     raise RuntimeFailure('invalid_storage')
-                meta = {'format':1 if profile.format == 1 else 2, 'binding':config.binding.fingerprint(),
+                meta = {'format':profile.format, 'binding':config.binding.fingerprint(),
                     'policy_schema':profile.policy_digest, 'login_schema':profile.login_digest,
                     'policy_sha256':sha256(content).hexdigest(),'policy_bytes':len(content),
                     'clock_floor':floor,'created_at':max(floor,now_micros()),'sessions_excluded':True}
-                if profile.format == 2:
-                    meta['installation_format'] = 2
+                if profile.format in _VERSIONED_BACKUP_LAYOUTS:
+                    meta['installation_format'] = profile.format
                 allocate_directory(destination)
                 write_new(destination / POLICY, content)
                 write_new(destination / BACKUP_MANIFEST, canonical(meta))

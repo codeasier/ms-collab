@@ -128,14 +128,16 @@ class PresetInstallLayoutTests(unittest.TestCase):
         with Lease(self.state, exclusive=True) as lease:
             self.assertTrue(lease.valid())
 
-    def test_i3_backup_rejected_before_allocation_and_without_mutation(self):
+    def test_unsupported_layout_backup_rejected_before_allocation_and_without_mutation(self):
         initialize(self.config, layout=3)
+        installed = self.state / 'installation.json'
+        installed.write_bytes(canonical(dict(json.loads(installed.read_bytes()), format=4)))
         before = self.snapshot()
         destination = self.root / 'backup'
         with patch('packages.service_runtime.backup.allocate_directory') as allocate:
             self.assertEqual(self.cli('backup', '--directory', str(destination)), (2, {
-                'error': 'backup_layout_unsupported'}))
-            with self.assertRaisesRegex(RuntimeFailure, '^backup_layout_unsupported$'):
+                'error': 'unsupported_layout'}))
+            with self.assertRaisesRegex(RuntimeFailure, '^unsupported_layout$'):
                 backup(self.config, destination)
             allocate.assert_not_called()
         self.assertFalse(destination.exists())
@@ -166,13 +168,15 @@ os._exit(0)
         self.assertNotEqual(path.read_bytes(), stable)
         return stable, journal
 
-    def test_i3_rejected_backup_preserves_real_hot_journal_and_database(self):
+    def test_unknown_layout_rejected_backup_preserves_real_hot_journal_and_database(self):
         initialize(self.config, layout=3)
+        installed = self.state / 'installation.json'
+        installed.write_bytes(canonical(dict(json.loads(installed.read_bytes()), format=4)))
         _, journal = self.interrupted_writer()
         before = self.snapshot()
         destination = self.root / 'backup'
         self.assertEqual(self.cli('backup', '--directory', str(destination)), (2, {
-            'error': 'backup_layout_unsupported'}))
+            'error': 'unsupported_layout'}))
         self.assertFalse(destination.exists())
         self.assertTrue(journal.is_file())
         self.assertEqual(self.snapshot(), before)
@@ -191,8 +195,8 @@ os._exit(0)
         self.assertTrue(journal.is_file())
         self.assertEqual(self.snapshot(), before)
 
-    def test_admitted_i1_and_i2_backups_still_recover_real_hot_journals(self):
-        for layout in (1, 2):
+    def test_admitted_layout_backups_recover_real_hot_journals(self):
+        for layout in (1, 2, 3):
             with self.subTest(layout=layout):
                 self.state = self.root / f'layout-{layout}'
                 self.write_config(self.state)
@@ -205,7 +209,7 @@ os._exit(0)
                 self.assertEqual((self.state / 'policy.sqlite').read_bytes(), stable)
                 self.assertEqual((destination / 'policy.sqlite').read_bytes(), stable)
 
-    def test_no_b3_and_i3_bytes_are_never_restored_as_i1_or_i2(self):
+    def test_i3_bytes_are_never_restored_from_mismatched_backup_envelopes(self):
         initialize(self.config, layout=3)
         installed = manifest(load_config(self.config), layout=3)
         body = (self.state / 'policy.sqlite').read_bytes()
@@ -218,7 +222,7 @@ os._exit(0)
         metadata = {'binding': installed['binding'], 'policy_sha256': sha256(body).hexdigest(),
                     'policy_bytes': len(body), 'clock_floor': 0, 'created_at': now_micros(),
                     'sessions_excluded': True, 'login_schema': installed['login_schema']}
-        for envelope, layout in ((3, 3), (2, 3), (1, 1), (2, 2)):
+        for envelope, layout in ((4, 3), (3, 2), (2, 3), (1, 1), (2, 2)):
             with self.subTest(envelope=envelope, claimed_layout=layout):
                 claim = dict(metadata, format=envelope, policy_schema=layout_profile(layout).policy_digest)
                 if envelope != 1:
