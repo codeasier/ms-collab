@@ -146,13 +146,18 @@ def product_choices(registry, scope, record):
             'catalog_revision': record.published_revision, 'views': views, 'quarters': quarters}
 
 
-def product_result(registry, scope, view_id, raw, record):
+def bound_view(registry, scope, view_id, record):
     """Called only inside a current, exact authorized index read transaction."""
     if record.published_raw is None:
         raise PolicyError(404, 'not_found')
     view = registry.lookup(scope, view_id)
     if (view.grant_revision != record.grant_revision or view.policy_digest != digest(record.policy_raw)):
         raise PolicyError(404, 'not_found')
+    return view
+
+
+def product_result(registry, scope, view_id, raw, record):
+    view = bound_view(registry, scope, view_id, record)
     try:
         body = json.loads(raw.decode('utf-8'), object_pairs_hook=_object, parse_constant=_bad_constant)
         query = validate_request(body)

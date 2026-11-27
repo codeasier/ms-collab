@@ -50,8 +50,9 @@ characters with no leading/trailing whitespace. Omit it for an exact-ID-only
 view. Labels are shown to current bucket readers; do not include private
 configuration or credentials.
 
-There is no database table, generic resource, file loader, per-user grant or
-durable filter registry here. To change/remove a definition replace the trusted
+The product-view definitions themselves have no database table, generic resource,
+file loader, per-user grant or durable registry. Optional saved searches below
+store filters within a published view; they never create or modify that view. To change/remove a definition replace the trusted
 factory and retire the previous instance; a running old process does not learn
 a new configuration. A restored runtime does not recover these definitions by
 itself. This is not a hot revocation service across replicas. **Index and identity
@@ -263,3 +264,38 @@ the brand) retires it immediately; opening a link in another tab does not. Late 
 recall bytes already delivered. Nothing is automatically retried or stored in
 the page URL or browser storage. Synthetic coverage is not live provider or
 production download evidence.
+
+## Optional: save the current file query and reopen it by exact preset ID
+
+This backend slice lets a workspace administrator save a file filter for a
+published product view. A second authorized bucket reader who knows the preset
+ID can re-run the same query against the current publication in that quarter.
+It does not expose this action in the browser yet.
+
+Opt in twice: explicitly call
+`packages.artifact_sync.initialize_product_presets(workspace_store)` in trusted
+setup, then pass `artifact_product_presets=True` and product views to
+`ApplicationHost` (or `product_presets=True` at the indexed API factory).
+The default is off; a request never creates or repairs storage. The private
+SQLite table uses the existing identity/policy transaction, not generic
+resources. No saved result rows, download grants or provider access are stored.
+
+At the exact product-view endpoint append, for example,
+`/quarters/2026Q2/presets/linux-kit`. Use a non-sensitive route ID. POST the
+active files query with its matching `if_observation`, removing transient
+`page` and `page_size`. The request's quarter must equal the selected URL
+quarter. The admin must also hold current artifact module write and the exact
+index read grant. Duplicate preset IDs in the same binding are refused (409);
+a stale observation returns 412. This slice is create-only, max 128 saved
+presets per workspace/connection/bucket including retired bindings.
+
+GET that same URL to re-run the saved filter. Both operations return the saved
+`query` (no observation or pagination), exact `preset_id`, and `result` from
+the ordinary authorized product projection. Absence of the selected published
+quarter, changed product filter or grant binding, and loss of access do not
+fall back to an unfiltered catalog. A new publication under the same grant
+uses current rows, not frozen results. Presets retain the existing literal
+keyword, directory/recursion and explicit absolute time semantics. There is no
+global list, arbitrary search expression, rolling day/week/month, update/delete,
+or byte authorization in this slice. Separate browser, real deployment and
+end-user replacement acceptance remain outstanding.

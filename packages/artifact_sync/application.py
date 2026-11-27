@@ -5,6 +5,7 @@ from packages.artifacts import ArtifactCatalog
 from packages.artifacts_api import ArtifactApplication
 from packages.artifacts_api.records import load_view, record_id
 from packages.workspaces import PolicyError
+from . import product_presets as presets
 from .records import authorized, decode_snapshot
 from .discovery import directory, directory_request
 from .product_views import ProductViewRegistry, framed_body, product_choices, product_result, product_route
@@ -12,10 +13,13 @@ from packages.directory_cursors.directory import configured, serve
 
 
 class IndexedArtifactApplication(ArtifactApplication):
-    def __init__(self, *, directory_cursors=None, product_views=None, **kwargs):
+    def __init__(self, *, directory_cursors=None, product_views=None, product_presets=False, **kwargs):
         super().__init__(**kwargs)
         self._directory_cursors = configured(directory_cursors)
         self._product_views = ProductViewRegistry(product_views)
+        if type(product_presets) is not bool or (product_presets and not self._product_views):
+            raise ValueError('presets require explicit product views')
+        self._product_presets = product_presets
 
     def _dispatch(self, environ):
         assertion = self._verify_request(environ)
@@ -25,6 +29,14 @@ class IndexedArtifactApplication(ArtifactApplication):
             return serve(self, assertion, workspace=workspace, query=query,
                          action='artifact.scopes.read', store=self._directory_cursors,
                          projection=lambda policy, actor, db: directory(policy, actor, db, workspace))
+        preset = presets.preset_route(environ) if self._product_presets else None
+        if preset is not None:
+            writing = environ.get('REQUEST_METHOD') == 'POST'
+            raw = framed_body(environ) if writing else None
+            def product_preset(policy, actor, db):
+                record = authorized(policy, actor, db, preset[0], 'read')
+                return presets.serve(self._product_views, policy, actor, db, record, preset, raw)
+            return self._authenticated_transaction(assertion, product_preset, write=writing, with_connection=True)
         route = product_route(environ) if self._product_views else None
         if route is not None:
             scope, view_id = route
