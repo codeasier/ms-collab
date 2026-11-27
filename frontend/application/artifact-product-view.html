@@ -76,6 +76,15 @@
           <button id="pv-tree" type="button">Clear filters and browse folders</button>
         </div>
       </form>
+      <fieldset aria-describedby="pv-preset-help">
+        <legend>Named file filters</legend>
+        <p class="pv-note" id="pv-preset-help">Use an exact preset ID for this workspace, bucket, product view and quarter. If enabled by the host, members can reopen a known ID; workspace administrators with write access can save applied filters under a new ID. Dates stay fixed, including “Last 7 UTC dates”.</p>
+        <label>Preset ID<input id="pv-preset-id" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="128" placeholder="e.g. weekly-kit"></label>
+        <div class="pv-actions">
+          <button id="pv-preset-open" type="button" disabled>Reopen named filters</button>
+          <button id="pv-preset-save" type="button" disabled>Save applied file filters</button>
+        </div>
+      </fieldset>
       <div class="pv-layout pv-list-heading">
         <div class="pv-title">
           <h3>Results</h3>

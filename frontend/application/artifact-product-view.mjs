@@ -1,6 +1,6 @@
 // A document-local reader. Only the typed Cookie transport knows the network;
 // no links, navigation state or storage are constructed from private values.
-import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validateProductResult} from './artifact-product-codec.mjs'
+import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validProductPresetId, validateProductResult} from './artifact-product-codec.mjs'
 
 // Shared directory outcomes never become grants and never leave this document.
 function mountProductPicker({session, doc, validateWorkspaces, retireSelection, openSelection}) {
@@ -115,6 +115,10 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     el('open').disabled=!active||recovery||!!flight
     el('up').disabled=!opened?.body.path||!!flight
     for(const id of ['apply','range7','tree'])el(id).disabled=!opened||!!flight
+    const named=!!opened&&!flight&&validProductPresetId(el('preset-id').value)
+    el('preset-id').disabled=!opened||!!flight
+    el('preset-open').disabled=!named
+    el('preset-save').disabled=!named||!shown?.available||shown.request.body.mode!=='files'
     el('page-size').disabled=!shown
     el('prev').disabled=!shown||shown.request.body.page<=1
     el('next').disabled=!shown||shown.request.body.page*shown.request.body.page_size>=shown.total
@@ -143,6 +147,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   }
   function forgetLocation(){
     opened=null
+    el('preset-id').value=''
     el('location').textContent=''
     el('crumbs').replaceChildren()
     el('page-size').value='10'
@@ -318,7 +323,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       if(download)validateProductResult(data,request)
       pin=Object.freeze({scope:request.scope,viewId:request.viewId,observation:data.observation,observed_at:data.observed_at,catalog_revision:data.catalog_revision})
       opened=request;recovery=false
-      shown=Object.freeze({request,total:data.total,witness:pin})
+      shown=Object.freeze({request,total:data.total,witness:pin,available:data.quarter_available})
       drawLocation();drawRows(data,request,ticket)
       if(focusLocation&&doc.activeElement===doc.body)el('location').focus()
     }catch(error){
@@ -329,6 +334,52 @@ export function mountArtifactProductView({session, download=null, validateWorksp
         if(recovery&&doc.activeElement===doc.body)el('reopen').focus()
       }
     }
+  }
+  async function namedFilters(saving){
+    const name=el('preset-id').value,previous=shown,expected=pin
+    if(!active||flight||!opened||!expected||!validProductPresetId(name)||
+       (saving&&(!previous?.available||previous.request.body.mode!=='files')))return
+    const {scope,viewId,body}=opened,q=body.quarter
+    const current=fields()
+    if(current.viewId!==viewId||el('quarter').value!==q||
+       Object.keys(scope).some(k=>current.scope[k]!==scope[k])){editSetup(true);return}
+    // Never collect unchecked form edits, rows, paging, selectors or grants.
+    const saved=saving?{...previous.request.body,if_observation:expected.observation}:null
+    if(saved){delete saved.page;delete saved.page_size}
+    retire()
+    const ticket=serial,abort=new AbortController();flight=abort
+    const isCurrent=()=>active&&ticket===serial&&flight===abort&&!abort.signal.aborted
+    controls();status(saving?'Saving the applied file filters…':'Rechecking access and reopening the named filters…')
+    try{
+      const options={signal:abort.signal,isCurrent}
+      const answer=saving
+        ?await session.saveArtifactProductPreset(scope,viewId,name,saved,options)
+        :await session.readArtifactProductPreset(scope,viewId,q,name,options)
+      if(!isCurrent())return
+      // Both paths return the authorized query and newly computed page one.
+      const {query,result}=answer
+      if(expected.observation!==result.observation||expected.observed_at!==result.observed_at||
+         expected.catalog_revision!==result.catalog_revision)throw Object.assign(Error(),{status:412})
+      const request=makeProductRequest(scope,viewId,{...query,path:query.path??'',page:1,page_size:50,if_observation:expected.observation})
+      validateProductResult(result,request)
+      resetFilters()
+      el('keyword').value=query.keyword??'';el('start').value=query.start_time??'';el('end').value=query.end_time??''
+      el('recursive').checked=query.recursive===true
+      opened=request
+      shown=Object.freeze({request,total:result.total,witness:expected,available:true})
+      drawLocation();drawRows(result,request,ticket)
+      status((saving?'Saved':'Reopened')+' preset '+name+'. '+result.total+' matching files.')
+    }catch(error){
+      if(!isCurrent())return
+      const code=error?.status
+      if(code===401){clear();return}
+      // The host deliberately does not disclose whether an inaccessible ID
+      // exists. Never guess another scope, retry a write, or retain old rows.
+      fail(code===400?undefined:code)
+      if(code===404||code===403)status('Presets may be disabled, inaccessible or the ID unavailable. Reopen the product view to continue.')
+      else if(code===409)status('Preset could not be created or opened. No overwrite was attempted. Reopen the product view to continue.')
+      else if(saving&&!code)status('Save outcome not verified. Reopen the product view and check the exact ID before retrying.')
+    }finally{if(isCurrent()){flight=null;controls()}}
   }
   function open(fresh){
     if(!active||flight||recovery!==fresh)return
@@ -376,6 +427,9 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   for(const id of identityFields)el(id).addEventListener('input',()=>editSetup(true))
   el('quarter').addEventListener('input',()=>editSetup(false))
   for(const id of ['keyword','start','end','recursive'])el(id).addEventListener('input',()=>editFilters(id))
+  el('preset-id').addEventListener('input',controls)
+  el('preset-save').addEventListener('click',()=>namedFilters(true))
+  el('preset-open').addEventListener('click',()=>namedFilters(false))
   el('setup').addEventListener('submit',e=>{e.preventDefault();return open(false)})
   el('reopen').addEventListener('click',()=>open(true))
   el('filters').addEventListener('submit',e=>{e.preventDefault();return apply()})

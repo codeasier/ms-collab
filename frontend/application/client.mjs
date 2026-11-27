@@ -404,6 +404,23 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
    data=>codec.validateProductResult(data,request))
   guard();return result
  }
+ // The exact route is derived here, never supplied by the caller. Save and
+ // reopen are distinct capabilities: a malformed save cannot become a GET.
+ async function productPreset(writing,scope,viewId,selected,name,body,options) {
+  const owner=productOwner(options),selection=captureProductFields(scope,3)
+  const criteria=writing?captureProductFields(body,9):undefined
+  const unverified=()=>new Error('The preset response could not be verified.')
+  let codec
+  try{codec=await import('./artifact-product-codec.mjs')}catch{owner.guard();throw unverified()}
+  owner.guard()
+  const saved=writing?codec.productPresetWrite(selection,viewId,criteria):undefined
+  const q=writing?saved.quarter:selected
+  const path=codec.productPresetPath(selection,viewId,q,name)
+  return guardedProductRead(path,writing?JSON.stringify(saved):undefined,owner,undefined,2097152,
+   productReadErrors,unverified,data=>codec.validateProductPreset(data,selection,viewId,q,name,saved))
+ }
+ const saveArtifactProductPreset=(scope,viewId,name,body,options)=>productPreset(true,scope,viewId,null,name,body,options)
+ const readArtifactProductPreset=(scope,viewId,quarter,name,options)=>productPreset(false,scope,viewId,quarter,name,null,options)
  async function readArtifactDownloadAvailability(scope,key,revision,options) {
   const owner=productOwner(options),selected=captureProductFields(scope,3)
   // Keep the object key literal in JSON; never use it as a URL, filename or
@@ -426,7 +443,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
   owner.guard();return result
  }
  return {
-  clear,readArtifactProductView,readArtifactDownloadAvailability,readArtifactProductPicker,
+  clear,readArtifactProductView,saveArtifactProductPreset,readArtifactProductPreset,readArtifactDownloadAvailability,readArtifactProductPicker,
   bootstrap:()=>send('/app/bootstrap'),
   async inspect(){clear();const turn=epoch,data=await send('/auth/session');if(turn!==epoch)throw new Error('Stale session response discarded.');if(!own(data,['principal_id'])||!validPolicyId(data.principal_id))throw new Error('Invalid session response.');active=true;return data},
   start(){clear();return send('/auth/start',{method:'POST',body:{},login:true})},
