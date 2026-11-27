@@ -100,6 +100,9 @@ def backup(config_path, destination):
         with Lease(config.directory, exclusive=True), closing(connection(config.directory, writable=True)) as db:
             inspected = inspect(config, db)
             profile, floor = inspected.profile, inspected.clock_floor
+            if profile.format not in (1, 2):
+                # Do not serialize or allocate output for an unreviewed pair.
+                raise RuntimeFailure('backup_layout_unsupported')
             content = db.serialize(name='main')
             if not 0 < len(content) <= MAX_DB:
                 raise RuntimeFailure('invalid_storage')

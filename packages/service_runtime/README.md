@@ -221,7 +221,7 @@ one dedicated permanent administrator-handover history table:
 .venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/service.json init --layout 2
 ```
 
-Both layouts retain disabled real login and the same application/SQLite core and
+Both serving layouts retain disabled real login and the same application/SQLite core and
 login versions. I2 now mounts the [explicit administrator handover adapter](../workspace_admin_api/README.md#atomic-administrator-handover)
 and its two management clients through the real factory's verified private
 handle. I1 keeps every prior route and does not mount this subtree. No old
@@ -236,6 +236,7 @@ Installation and backup formats are separately registered:
 | --- | --- | --- |
 | I1, installation `format:1` | Original B1 `format:1`, unchanged keys | New I1 directory |
 | I2, installation `format:2` | B2 `format:2` plus exact `installation_format:2` | New I2 directory |
+| I3, installation `format:3` (inspection only) | Unsupported; no B3 | No I3 restore |
 
 B1/B2 validation selects only these exact pairs. Restore preserves the profile,
 not “latest”; no source or backup is upgraded. Source validation precedes output
@@ -297,3 +298,37 @@ Existing runtime/TLS and product suites remain unchanged acceptance gates; actua
 execution results belong to the exact revision's CI evidence. Online admission
 uses a factory-prepared exact registry with bounded complete-byte projections,
 not per-request offline `inspect`, full-history validation or in-memory DDL.
+
+
+## Fresh preset storage exercise (I3, inspection only)
+
+`init --layout 3` is a separate, explicit **new-directory-only** choice. It
+adds exactly one frozen product-preset table to I1, matching the
+[product-view preset contract](../artifact_sync/PRODUCT-VIEWS.md). It is not
+I2 plus presets: it does not add handover history or any download policy/lease
+tables. Omitting `--layout` still creates I1. Existing I1/I2 installations and
+B1/B2 backup pairs are unchanged.
+
+Use a private, disposable installation directory with the normal disabled
+login configuration. There is no table adoption, conversion or in-place DDL
+on `check`, `serve` or restore; an existing source is never reused. Do not
+run a separate initializer against an installed database to bypass the exact
+profile check.
+
+```sh
+.venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/disposable.json init --layout 3
+.venv/bin/python -m packages.service_runtime --config /srv/ms-collab/runtime/disposable.json check
+```
+
+A successful I3 check is read-only and certifies installation structure, not
+preset rows or product acceptance. Initialization leaves the preset table
+empty and creates no identity, workspace, grant, publication or session. The
+factory rejects I3 before session-store initialization; the CLI cannot serve
+it. Cold backup fails with `backup_layout_unsupported` before serialization or
+destination allocation. `verify-backup` and `restore` still recognize only
+B1 and B2; relabeling I3 bytes does not create a valid backup. The ordinary
+`check --require-production` still exits 3 on any valid installation.
+
+This is a storage foundation only. It does not mount product views, presets or
+downloads, enable any login, import real data, or substitute for the target
+workspace acceptance by an administrator and an independent member.

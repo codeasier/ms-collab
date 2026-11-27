@@ -1,6 +1,6 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
-"""Two exact reviewed layouts; never adopt schema or migrate during an open."""
+"""Exact reviewed layouts; never adopt schema or migrate during an open."""
 from contextlib import closing
 from dataclasses import dataclass
 from hashlib import sha256
@@ -41,15 +41,27 @@ class _LayoutProfile:
     login_digest: str
 
 
+# I3 is a fresh, inspection-only product-preset layout based on I1, not
+# an I2 extension or a conversion target. Freeze the already-reviewed SQL
+# here so a later preset implementation cannot silently change this profile.
+_I3_PRESETS = ("""CREATE TABLE artifact_product_presets_v1 (
+workspace TEXT NOT NULL, connection TEXT NOT NULL, bucket TEXT NOT NULL,
+view TEXT NOT NULL, binding TEXT NOT NULL, quarter TEXT NOT NULL,
+preset TEXT NOT NULL, created_by TEXT NOT NULL, query TEXT NOT NULL CHECK(length(query) <= 16384),
+PRIMARY KEY(workspace,connection,bucket,view,binding,quarter,preset))""",)
+
+
 _PROFILES = (
     _LayoutProfile(1, MODULE_SCHEMA, POLICY_SCHEMA, POLICY_DIGEST, LOGIN_DIGEST),
     _LayoutProfile(2, (*MODULE_SCHEMA, *TRANSFERS), (*POLICY_SCHEMA, *TRANSFERS),
                    expected((*POLICY_SCHEMA, *TRANSFERS)), LOGIN_DIGEST),
+    _LayoutProfile(3, (*MODULE_SCHEMA, *_I3_PRESETS), (*POLICY_SCHEMA, *_I3_PRESETS),
+                   expected((*POLICY_SCHEMA, *_I3_PRESETS)), LOGIN_DIGEST),
 )
 
 
 def layout_profile(value):
     """Private configuration lookup, never an HTTP-selected capability."""
-    if type(value) is not int or value not in (1, 2):
+    if type(value) is not int or value not in (1, 2, 3):
         raise ValueError('unsupported_layout')
     return _PROFILES[value - 1]

@@ -209,6 +209,10 @@ def create_application(config_path):
     try:
         lease = Lease(config.directory)
         with closing(connection(config.directory)) as db: inspection = inspect(config, db)
+        # Inspection-only I3 is not a serving layout. Reject before constructing
+        # a session store/host or advancing the installed login clock.
+        if inspection.profile.format not in (1, 2):
+            raise RuntimeFailure('unsupported_runtime_layout')
         policy = SQLiteWorkspaceService(config.directory / POLICY)
         login = SQLiteLoginStore(config.directory / LOGIN, binding=config.binding)
         sessions = SessionPolicyStore(policy=policy, login=login)
