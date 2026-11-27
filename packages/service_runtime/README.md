@@ -324,8 +324,10 @@ A successful I3 check is read-only and certifies installation structure, not
 preset rows or product acceptance. Initialization leaves the preset table
 empty and creates no identity, workspace, grant, publication or session. The
 factory rejects I3 before session-store initialization; the CLI cannot serve
-it. Cold backup fails with `backup_layout_unsupported` before serialization or
-destination allocation. `verify-backup` and `restore` still recognize only
+it. Cold backup fails with `backup_layout_unsupported` after checking the
+exact manifest under the exclusive lease, before opening either SQLite file
+for writing or allocating a destination. It never recovers an I3 rollback
+journal while rejecting the request. `verify-backup` and `restore` still recognize only
 B1 and B2; relabeling I3 bytes does not create a valid backup. The ordinary
 `check --require-production` still exits 3 on any valid installation.
 

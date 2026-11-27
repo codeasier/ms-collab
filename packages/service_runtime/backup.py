@@ -13,7 +13,7 @@ from packages.login_state import SQLiteLoginStore
 from packages.workspaces import SQLiteWorkspaceService, StorageError
 from .config import RuntimeFailure, absolute, private, read_private, decode, load_config
 from .runtime import (Lease, allocate_directory, canonical, write_new, sync_directory,
-    connection, inspect, manifest, now_micros, MAX_DB, POLICY, LOGIN, LOCK, MANIFEST)
+    connection, inspect, inspect_manifest, manifest, now_micros, MAX_DB, POLICY, LOGIN, LOCK, MANIFEST)
 from .schema import layout_profile, schema_digest, _APPLICATION_ID, _SCHEMA_VERSION
 from packages.workspace_admin_api.transfer_records import validate_all as validate_transfer_history
 
@@ -95,27 +95,32 @@ def backup(config_path, destination):
     config = load_config(config_path); destination = absolute(str(destination))
     _disjoint(config.directory, destination)
     try:
-        # No service using this runtime may remain open. SQLite additionally
-        # reserves both attached DBs before capturing policy and security time.
-        with Lease(config.directory, exclusive=True), closing(connection(config.directory, writable=True)) as db:
-            inspected = inspect(config, db)
-            profile, floor = inspected.profile, inspected.clock_floor
+        # Reject unsupported layouts under the same lease *before* SQLite
+        # could recover a hot rollback journal while opening a writer.
+        with Lease(config.directory, exclusive=True):
+            profile = inspect_manifest(config)
             if profile.format not in (1, 2):
-                # Do not serialize or allocate output for an unreviewed pair.
                 raise RuntimeFailure('backup_layout_unsupported')
-            content = db.serialize(name='main')
-            if not 0 < len(content) <= MAX_DB:
-                raise RuntimeFailure('invalid_storage')
-            meta = {'format':1 if profile.format == 1 else 2, 'binding':config.binding.fingerprint(),
-                'policy_schema':profile.policy_digest, 'login_schema':profile.login_digest,
-                'policy_sha256':sha256(content).hexdigest(),'policy_bytes':len(content),
-                'clock_floor':floor,'created_at':max(floor,now_micros()),'sessions_excluded':True}
-            if profile.format == 2:
-                meta['installation_format'] = 2
-            allocate_directory(destination)
-            write_new(destination / POLICY, content)
-            write_new(destination / BACKUP_MANIFEST, canonical(meta))
-            sync_directory(destination); sync_directory(destination.parent)
+            # Only the existing backed-up layouts acquire SQLite writer
+            # reservations. Inspect again in the attached database snapshot.
+            with closing(connection(config.directory, writable=True)) as db:
+                inspected = inspect(config, db)
+                if inspected.profile is not profile:
+                    raise RuntimeFailure('unsupported_layout')
+                floor = inspected.clock_floor
+                content = db.serialize(name='main')
+                if not 0 < len(content) <= MAX_DB:
+                    raise RuntimeFailure('invalid_storage')
+                meta = {'format':1 if profile.format == 1 else 2, 'binding':config.binding.fingerprint(),
+                    'policy_schema':profile.policy_digest, 'login_schema':profile.login_digest,
+                    'policy_sha256':sha256(content).hexdigest(),'policy_bytes':len(content),
+                    'clock_floor':floor,'created_at':max(floor,now_micros()),'sessions_excluded':True}
+                if profile.format == 2:
+                    meta['installation_format'] = 2
+                allocate_directory(destination)
+                write_new(destination / POLICY, content)
+                write_new(destination / BACKUP_MANIFEST, canonical(meta))
+                sync_directory(destination); sync_directory(destination.parent)
         _verify(config, destination)
         return {'backup_valid':True,'sessions_excluded':True,'live_restore_tested':False}
     except RuntimeFailure: raise

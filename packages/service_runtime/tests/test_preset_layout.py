@@ -7,6 +7,8 @@ import io
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -140,6 +142,68 @@ class PresetInstallLayoutTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         with Lease(self.state, exclusive=True) as lease:
             self.assertTrue(lease.valid())
+
+    def interrupted_writer(self):
+        # Spill actual database pages into the main file, then terminate without
+        # SQLite cleanup. A zeroed/stale journal would not exercise recovery.
+        path = self.state / 'policy.sqlite'
+        stable = path.read_bytes()
+        script = """import os, sqlite3, sys
+db = sqlite3.connect(sys.argv[1], isolation_level=None)
+assert db.execute('PRAGMA journal_mode=DELETE').fetchone() == ('delete',)
+db.execute('PRAGMA cache_size=2')
+db.execute('PRAGMA cache_spill=ON')
+db.execute('BEGIN IMMEDIATE')
+db.execute('UPDATE metadata SET epoch=epoch+1')
+db.execute('CREATE TABLE crash_probe (payload BLOB)')
+for _ in range(32):
+    db.execute('INSERT INTO crash_probe VALUES (zeroblob(16384))')
+os._exit(0)
+"""
+        subprocess.run([sys.executable, '-c', script, str(path)], check=True, timeout=10)
+        journal = self.state / 'policy.sqlite-journal'
+        self.assertEqual(journal.read_bytes()[:8], bytes.fromhex('d9d505f920a163d7'))
+        self.assertNotEqual(path.read_bytes(), stable)
+        return stable, journal
+
+    def test_i3_rejected_backup_preserves_real_hot_journal_and_database(self):
+        initialize(self.config, layout=3)
+        _, journal = self.interrupted_writer()
+        before = self.snapshot()
+        destination = self.root / 'backup'
+        self.assertEqual(self.cli('backup', '--directory', str(destination)), (2, {
+            'error': 'backup_layout_unsupported'}))
+        self.assertFalse(destination.exists())
+        self.assertTrue(journal.is_file())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_invalid_binding_rejected_before_recovering_hot_legacy_storage(self):
+        initialize(self.config)
+        installed = self.state / 'installation.json'
+        bad = dict(json.loads(installed.read_bytes()), binding='not-the-configured-binding')
+        installed.write_bytes(canonical(bad))
+        _, journal = self.interrupted_writer()
+        before = self.snapshot()
+        destination = self.root / 'backup'
+        self.assertEqual(self.cli('backup', '--directory', str(destination)), (2, {
+            'error': 'unsupported_layout'}))
+        self.assertFalse(destination.exists())
+        self.assertTrue(journal.is_file())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_admitted_i1_and_i2_backups_still_recover_real_hot_journals(self):
+        for layout in (1, 2):
+            with self.subTest(layout=layout):
+                self.state = self.root / f'layout-{layout}'
+                self.write_config(self.state)
+                initialize(self.config, layout=layout)
+                stable, journal = self.interrupted_writer()
+                destination = self.root / f'backup-{layout}'
+                self.assertTrue(backup(self.config, destination)['backup_valid'])
+                self.assertTrue(verify_backup(self.config, destination)['backup_valid'])
+                self.assertFalse(journal.exists())
+                self.assertEqual((self.state / 'policy.sqlite').read_bytes(), stable)
+                self.assertEqual((destination / 'policy.sqlite').read_bytes(), stable)
 
     def test_no_b3_and_i3_bytes_are_never_restored_as_i1_or_i2(self):
         initialize(self.config, layout=3)
