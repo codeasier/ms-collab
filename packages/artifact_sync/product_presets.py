@@ -9,6 +9,7 @@ from packages.artifacts.product_projection import validate_request
 from packages.workspace_api.application import _object
 from packages.workspaces import PolicyError, SQLiteWorkspaceService, StorageError
 from .product_views import _ID, bound_view, product_result
+from .product_windows import separate_window
 from .records import digest, dump, scope_key
 
 _TABLE = 'artifact_product_presets_v1'
@@ -17,7 +18,8 @@ workspace TEXT NOT NULL, connection TEXT NOT NULL, bucket TEXT NOT NULL,
 view TEXT NOT NULL, binding TEXT NOT NULL, quarter TEXT NOT NULL,
 preset TEXT NOT NULL, created_by TEXT NOT NULL, query TEXT NOT NULL CHECK(length(query) <= 16384),
 PRIMARY KEY(workspace,connection,bucket,view,binding,quarter,preset))"""
-_FIELDS = {'format', 'quarter', 'mode', 'path', 'keyword', 'recursive', 'start_time', 'end_time'}
+_FIELDS = {'format', 'quarter', 'mode', 'path', 'keyword', 'recursive', 'start_time', 'end_time',
+           'relative_range', 'time_zone'}
 
 
 def _schema(db):
@@ -59,7 +61,8 @@ def preset_route(env):
 
 def _query(raw, selected, *, saving):
     body = json.loads(raw, object_pairs_hook=_object)
-    validate_request(body)
+    ordinary, _ = separate_window(body)
+    validate_request(ordinary)
     allowed = _FIELDS | ({'if_observation'} if saving else set())
     if (body.keys() - allowed or body['quarter'] != selected or body.get('mode') != 'files'
             or (saving and 'if_observation' not in body)):
@@ -67,7 +70,7 @@ def _query(raw, selected, *, saving):
     return body
 
 
-def serve(registry, policy, actor, db, record, route, raw):
+def serve(registry, policy, actor, db, record, route, raw, *, clock):
     scope, view_id, selected, name = route
     # Reading the publication already passed authorized(..., 'read') in this transaction.
     # Writing additionally requires CURRENT module write AND workspace administration;
@@ -89,7 +92,7 @@ def serve(registry, policy, actor, db, record, route, raw):
             raise PolicyError(400, 'invalid_request') from None
         # Compare against this view and current publication before storing; the
         # observation does not prove a previous user action or confer any access.
-        data = product_result(registry, scope, view_id, raw, record)
+        data = product_result(registry, scope, view_id, raw, record, clock=clock)
         if not data['quarter_available']:
             raise PolicyError(404, 'not_found')
         if row is not None:
@@ -111,7 +114,7 @@ def serve(registry, policy, actor, db, record, route, raw):
             query = _query(row[0], selected, saving=False)
         except (TypeError, ValueError, KeyError, OverflowError, RecursionError):
             raise StorageError('invalid_product_preset') from None
-        data = product_result(registry, scope, view_id, dump(query).encode('ascii'), record)
+        data = product_result(registry, scope, view_id, dump(query).encode('ascii'), record, clock=clock)
         if not data['quarter_available']:
             raise PolicyError(404, 'not_found')
     return {'format': 1, 'kind': 'product-preset', 'preset_id': name, 'query': query, 'result': data}
