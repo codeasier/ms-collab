@@ -12,13 +12,16 @@ from packages.workspaces import StorageError
 _ZONE = re.compile(r'(?:UTC|(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|'
                    r'Europe|Indian|Pacific|Etc)(?:/[A-Za-z0-9_+-]+){1,2})')
 _RELATIVE = frozenset(('today', 'week', 'month', '30d'))
+_PROOF = re.compile(r'[0-9a-f]{64}')
 
 
 def separate_window(body):
     """Leave old requests completely unchanged. The caller validates the remaining fields."""
-    if type(body) is not dict or not ({'relative_range', 'time_zone'} & body.keys()):
+    if type(body) is not dict or not ({'relative_range', 'time_zone', 'if_publication'} & body.keys()):
         return body, None
     kind, key = body.get('relative_range'), body.get('time_zone')
+    if 'if_publication' in body and (type(body['if_publication']) is not str or not _PROOF.fullmatch(body['if_publication'])):
+        raise ValueError('invalid product publication proof')
     if (body.get('mode') != 'files' or 'start_time' in body or 'end_time' in body
             or type(kind) is not str or kind not in _RELATIVE or type(key) is not str
             or len(key) > 96 or not _ZONE.fullmatch(key)):
@@ -27,7 +30,7 @@ def separate_window(body):
         zone = ZoneInfo(key)
     except ZoneInfoNotFoundError:
         raise ValueError('unknown product time zone') from None
-    return {k: v for k, v in body.items() if k not in ('relative_range', 'time_zone')}, (kind, zone)
+    return {k: v for k, v in body.items() if k not in ('relative_range', 'time_zone', 'if_publication')}, (kind, zone)
 
 
 def resolve_window(spec, clock):

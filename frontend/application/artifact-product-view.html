@@ -63,12 +63,23 @@
       </div>
       <form id="pv-filters" autocomplete="off" novalidate>
         <h3>Find files here</h3>
-        <p class="pv-note">All filters apply together, within this folder and quarter. Times are inclusive: use UTC (Z) or an explicit offset, with up to six fractional digits.</p>
+        <p class="pv-note">All filters apply together, within this folder and quarter. Times are inclusive. For fixed dates use UTC (Z) or an explicit offset, with up to six fractional digits.</p>
         <div class="pv-fields">
           <label>Key contains (case-sensitive)<input id="pv-keyword" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
           <label>Start time (inclusive)<input id="pv-start" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
           <label>End time (inclusive)<input id="pv-end" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
         </div>
+        <div class="pv-fields" aria-describedby="pv-window-help">
+          <label>Time filter<select id="pv-window" autocomplete="off">
+            <option value="">Fixed dates or no time filter</option>
+            <option value="today">Today</option>
+            <option value="week">Last week</option>
+            <option value="month">This month</option>
+            <option value="30d">Last 30 days</option>
+          </select></label>
+          <label>IANA time zone<input id="pv-zone" value="UTC" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="96" placeholder="e.g. Asia/Shanghai"></label>
+        </div>
+        <p id="pv-window-help" class="pv-note">Quick ranges are recalculated by the server in this explicit time zone and apply only within the selected quarter. UTC is the default, not your device time zone. For last week and last 30 days, the server goes back 7 or 30 elapsed days, then starts at the beginning of that local date. Both include today.</p>
         <div class="pv-actions">
           <label class="pv-check"><input id="pv-recursive" type="checkbox" autocomplete="off">Include subfolders</label>
           <button id="pv-apply" class="pv-primary" type="submit">Apply file filters</button>
@@ -78,7 +89,7 @@
       </form>
       <fieldset aria-describedby="pv-preset-help">
         <legend>Named file filters</legend>
-        <p class="pv-note" id="pv-preset-help">Use an exact preset ID for this workspace, bucket, product view and quarter. If enabled by the host, members can reopen a known ID; workspace administrators with write access can save applied filters under a new ID. Dates stay fixed, including “Last 7 UTC dates”.</p>
+        <p class="pv-note" id="pv-preset-help">Use an exact preset ID for this workspace, bucket, product view and quarter. If enabled by the host, members can reopen a known ID; workspace administrators with write access can save applied filters under a new ID. Quick ranges keep their selected time zone and are recalculated when reopened. Explicit dates, including “Last 7 UTC dates”, stay fixed.</p>
         <label>Preset ID<input id="pv-preset-id" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="128" placeholder="e.g. weekly-kit"></label>
         <div class="pv-actions">
           <button id="pv-preset-open" type="button" disabled>Reopen named filters</button>

@@ -1,8 +1,10 @@
 // Metadata from one approved publication. Neither the relative key nor its
 // observation is an authorization, a provider URL, or a download capability.
 const scopeFields = ['workspace_id', 'connection_id', 'bucket_id']
-const baseFields = ['format', 'quarter', 'path', 'mode', 'page', 'page_size', 'if_observation']
-const fileFields = ['recursive', 'keyword', 'start_time', 'end_time']
+const baseFields = ['format', 'quarter', 'path', 'mode', 'page', 'page_size', 'if_observation', 'if_publication']
+const fileFields = ['recursive', 'keyword', 'start_time', 'end_time', 'relative_range', 'time_zone']
+const relativeRanges = ['today','week','month','30d']
+const productZone = /^(?:UTC|(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|Indian|Pacific|Etc)(?:\/[A-Za-z0-9_+-]+){1,2})$/
 const resultFields = ['format', 'kind', 'match', 'scope', 'view_id', 'quarter', 'path', 'mode',
   'observed_at', 'quarter_available', 'catalog_revision', 'observation', 'page', 'page_size',
   'total', 'items', 'source']
@@ -64,6 +66,12 @@ export function productInstantMicros(value) {
   return BigInt(seconds) * 1000000n + BigInt((m[7] || '').padEnd(6, '0'))
 }
 
+// Validate the wire grammar, not the browser's local/installed time-zone DB.
+// Only the host validates the actual IANA zone and resolves the time window.
+export function validProductWindow(range,zone) {
+  return relativeRanges.includes(range)&&typeof zone==='string'&&zone.length<=96&&full(productZone,zone)
+}
+
 export function lastSevenUtcDates(date) {
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) throw invalidRequest()
   const first = new Date(date.getTime())
@@ -119,6 +127,10 @@ export function makeProductRequest(scope, viewId, body) {
     // U+0085 is whitespace; FEFF is not. C0/DEL and lone surrogates are invalid.
     if (typeof s !== 'string' || s.length > 512 || !scalarText(s) || [...s].length > 256 || !/[^\p{White_Space}]/u.test(s)) throw invalidRequest()
   }
+  if ((Object.hasOwn(body,'relative_range')||Object.hasOwn(body,'time_zone')||Object.hasOwn(body,'if_publication'))&&
+      (!validProductWindow(body.relative_range,body.time_zone)||
+       Object.hasOwn(body,'start_time')||Object.hasOwn(body,'end_time')||
+       (Object.hasOwn(body,'if_publication')&&!full(observation,body.if_publication)))) throw invalidRequest()
   const start = Object.hasOwn(body, 'start_time') ? productInstantMicros(body.start_time) : undefined
   const end = Object.hasOwn(body, 'end_time') ? productInstantMicros(body.end_time) : undefined
   if (start !== undefined && end !== undefined && start > end) throw new Error('The start time must not be after the end time.')
@@ -151,21 +163,28 @@ export function validateProductResult(data, request) {
   const expected = makeProductRequest(request.scope, request.viewId, request.body)
   if (request.path !== expected.path) throw invalidResult()
   const {quarter, mode = 'tree', path = '', page = 1, page_size = 50, if_observation,
-    recursive = false, keyword, start_time, end_time} = expected.body
-  if (!fields(data, resultFields) || data.format !== 1 || data.kind !== 'product-view' ||
+    recursive = false, keyword, start_time, end_time, relative_range, if_publication} = expected.body
+  const required=relative_range?[...resultFields,'publication_observation']:resultFields
+  if (!fields(data, required) || data.format !== 1 || data.kind !== 'product-view' ||
       data.match !== 'relative-key-ascii-substring-v1' || !fields(data.scope, scopeFields) ||
       !scopeFields.every(k => expected.scope[k] === data.scope[k]) || data.view_id !== expected.viewId ||
       data.quarter !== quarter || data.mode !== mode || data.path !== path || data.page !== page ||
       data.page_size !== page_size || typeof data.quarter_available !== 'boolean' ||
       !bounded(data.catalog_revision, 1, Number.MAX_SAFE_INTEGER) || !full(observation, data.observation) ||
       (if_observation !== undefined && data.observation !== if_observation) ||
+      (relative_range && (!full(observation,data.publication_observation)||
+        data.publication_observation===data.observation||
+        (if_publication!==undefined&&data.publication_observation!==if_publication))) ||
       !bounded(data.total, 0, 500) || (!data.quarter_available && data.total !== 0) ||
       !Array.isArray(data.items) || data.items.length !== Math.max(0, Math.min(page_size, data.total - (page - 1) * page_size)) ||
       !fields(data.source, sourceFields) || data.source.kind !== 'stored_index' ||
       data.source.full_history_complete !== false || data.source.live_provider_verified !== false ||
       data.source.download_available !== false) throw invalidResult()
   // No source offset or token is exposed: never invent the server's quarter or
-  // matching rule from UTC, a view name, or a provider/bucket guess.
+  // matching rule from UTC, a view name, or a provider/bucket guess. In
+  // particular, the resolved rolling bounds are not echoed: do not substitute
+  // the browser clock/tzdb. The host evaluates those bounds, and the observation
+  // binds them for subsequent requests using the same relative window.
   try {
     const observed = productInstantMicros(data.observed_at)
     const start = start_time === undefined ? undefined : productInstantMicros(start_time)
@@ -206,7 +225,7 @@ export function productPresetPath(scope,viewId,selected,name) {
 const presetRequired=['format','quarter','mode']
 const presetOptional=['path',...fileFields]
 export function productPresetWrite(scope,viewId,body) {
-  if (!fields(body,[...presetRequired,'if_observation'],presetOptional)||body.mode!=='files') throw invalidRequest()
+  if (!fields(body,[...presetRequired,'if_observation'],[...presetOptional,'if_publication'])||body.mode!=='files') throw invalidRequest()
   return makeProductRequest(scope,viewId,body).body
 }
 export function validateProductPreset(data,scope,viewId,selected,name,saved) {
@@ -214,9 +233,14 @@ export function validateProductPreset(data,scope,viewId,selected,name,saved) {
       data.kind!=='product-preset'||data.preset_id!==name||
       !fields(data.query,presetRequired,presetOptional)||data.query.mode!=='files'||data.query.quarter!==selected) throw invalidResult()
   const query=data.query
-  if(saved&&(Object.keys(saved).length!==Object.keys(query).length+1||
-      Object.keys(query).some(k=>!Object.hasOwn(saved,k)||query[k]!==saved[k]))) throw invalidResult()
-  const req=makeProductRequest(scope,viewId,{...query,...(saved?{if_observation:saved.if_observation}:{})})
+  const guards={}
+  if(saved){
+    guards.if_observation=saved.if_observation
+    if(Object.hasOwn(saved,'if_publication'))guards.if_publication=saved.if_publication
+    if(Object.keys(saved).length!==Object.keys(query).length+Object.keys(guards).length||
+       Object.keys(query).some(k=>!Object.hasOwn(saved,k)||query[k]!==saved[k]))throw invalidResult()
+  }
+  const req=makeProductRequest(scope,viewId,{...query,...guards})
   validateProductResult(data.result,req)
   if(!data.result.quarter_available) throw invalidResult()
   return data

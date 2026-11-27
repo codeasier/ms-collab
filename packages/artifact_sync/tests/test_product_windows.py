@@ -97,7 +97,8 @@ class ProductWindowRoutes(unittest.TestCase):
     def test_rollover_active_save_member_reopen_restart_and_immutable_fixed_dates(self):
         initial = self.query(Q)
         self.assertEqual(self.names(initial), ['pkg/Kit_linux_old'])
-        query = Q | {'if_observation': initial['observation']}
+        query = Q | {'if_observation': initial['observation'],
+                     'if_publication': initial['publication_observation']}
         for tok in ('reader', 'developer', 'other', 'approver'):
             self.assertIn(call(self.app, PRESET, method='POST', token=tok, body=query)['status'], (403, 404))
         saved = call(self.app, PRESET, method='POST', token='admin', body=query)
@@ -111,12 +112,15 @@ class ProductWindowRoutes(unittest.TestCase):
         fixed.update(start_time='2026-10-30T16:00:00Z', end_time='2026-11-30T15:59:59Z')
         frozen = self.query(fixed)
         self.assertEqual(self.names(frozen), self.names(initial))
+        self.assertNotIn('publication_observation', frozen)
+        self.assertEqual(frozen['observation'], initial['publication_observation'])
         self.assertEqual(call(self.app, PRESET+'-fixed', method='POST', token='admin',
                               body=fixed | {'if_observation': frozen['observation']})['status'], 200)
         self.now = parse('2026-11-30T16:00:00Z')  # midnight Dec 1 in Singapore; no republish
         restarted = self.restart()
         active = self.query(Q, app=restarted)
         self.assertNotEqual(active['observation'], initial['observation'])
+        self.assertEqual(active['publication_observation'], initial['publication_observation'])
         self.assertEqual(self.names(active), ['pkg/Kit_linux_new'])
         opened = call(restarted, PRESET, token='reader')
         self.assertEqual(opened['status'], 200, opened)
@@ -145,3 +149,34 @@ class ProductWindowRoutes(unittest.TestCase):
                                                      'posix/UTC', 'America/../UTC', 'America/UnknownCity'])]:
             with self.subTest(bad=bad):
                 self.assertEqual(call(self.app, VIEW, method='POST', body=bad)['status'], 400)
+
+    def test_root_proof_rejects_changed_definition_or_bytes_even_with_same_labels_revision_and_time(self):
+        tree = {'format': 1, 'quarter': Q['quarter']}
+        root = self.query(tree)
+        first = self.query(Q | {'if_publication': root['observation']})
+        self.assertEqual(first['publication_observation'], root['observation'])
+        self.assertNotEqual(first['observation'], root['observation'])
+        self.assertEqual(call(self.app, VIEW, method='POST',
+                              body=tree | {'if_publication': root['observation']})['status'], 400)
+        for proof in (None, 42, 'A'*64, '0'*63):
+            self.assertEqual(call(self.app, VIEW, method='POST', body=Q | {'if_publication': proof})['status'], 400)
+        config = self.config
+        self.config = {**config, 'product_token': 'other'}
+        alternate = self.restart()
+        def check(app):
+            output = self.query(Q, app=app)  # independently current fresh query
+            self.assertEqual((output['catalog_revision'], output['observed_at']),
+                             (first['catalog_revision'], first['observed_at']))
+            self.assertNotEqual(output['publication_observation'], root['observation'])
+            old_root = {'if_publication': root['observation']}
+            self.assertEqual(call(app, VIEW, method='POST', body=Q | old_root)['status'], 412)
+            self.assertEqual(call(app, PRESET, method='POST', token='admin',
+                                  body=Q | old_root | {'if_observation': output['observation']})['status'], 412)
+            self.assertEqual(call(app, PRESET, token='reader')['status'], 404)
+        check(alternate)
+        self.config = config
+        # Disposable fixture rebinds the same revision/observed_at to new bytes;
+        # not an operation supported by the normal production approval path.
+        seed_publication(self.store, SCOPE, Snapshot(SCOPE, root['observed_at'], (
+            Artifact('pkg/Kit_linux_diff', '2026-11-10T12:00:00Z', 3),)), actor='approver')
+        check(self.restart())
