@@ -76,9 +76,11 @@ class ApplicationHost:
                  exchange=None, authorization_endpoint=None, authorization_scopes=(),
                  clock=lambda: datetime.now(timezone.utc), artifact_downloads=None, artifact_refresh=None,
                  community_refresh=None, directory_cursors=None, admin_transfers=None,
-                 artifact_product_views=None):
+                 artifact_product_views=None, artifact_product_presets=False):
         if type(config) is not HostConfig or type(sessions) is not SessionPolicyStore or not callable(clock):
             raise ValueError("explicit host configuration, initialized stores and clock required")
+        if type(artifact_product_presets) is not bool or (artifact_product_presets and "artifacts" not in config.modules):
+            raise ValueError("product presets require the configured artifact index")
         if ("artifacts" not in config.modules and artifact_product_views is not None
                 and (type(artifact_product_views) not in (tuple, list) or artifact_product_views)):
             raise ValueError("product views require the configured artifact index")
@@ -106,7 +108,7 @@ class ApplicationHost:
                         "responsibility": ResponsibilityApplication, "assistant": AssistantHistoryApplication,
                         "gui-smoke": GuiSmokeApplication}
         self._modules = {key: constructors[key](session_boundary=self._boundary, clock=clock,
-                         **({"directory_cursors": self._directory_cursors, "product_views": artifact_product_views} if key == "artifacts" else
+                         **({"directory_cursors": self._directory_cursors, "product_views": artifact_product_views, "product_presets": artifact_product_presets} if key == "artifacts" else
                             {"directory_cursors": self._directory_cursors} if key == "pipelines" else
                             {"connections": config.gui_smoke_connections} if key == "gui-smoke" else
                             {"credential_loader": community_refresh.credential_loader} if key == "community" and config.community_refresh else {}))

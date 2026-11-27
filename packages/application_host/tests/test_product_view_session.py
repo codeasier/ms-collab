@@ -10,7 +10,7 @@ from packages.application_host import ApplicationHost, HostConfig
 from packages.application_host.tests.fixtures import NOW, ORIGIN, session, setup
 from packages.artifact_download import (ArtifactDownloadConfiguration, ContentBinding, DownloadPolicy,
                                        initialize_downloads)
-from packages.artifact_sync import product_views, records
+from packages.artifact_sync import initialize_product_presets, product_views, records
 from packages.artifact_sync.tests.authority_fixtures import seed_publication
 from packages.artifacts import Artifact, Scope, Snapshot
 from packages.session_api.application import _CSRF, _SESSION
@@ -94,6 +94,36 @@ class ProductViewSessionTests(unittest.TestCase):
         self.assertEqual((denied_archive['status'], denied_archive['body']), (404, {'error': 'not_found'}))
         self.loader.assert_not_called()
         self.objects.open.assert_not_called()
+
+    def test_cookie_admin_saves_active_query_reader_reopens_and_expired_write_rolls_back(self):
+        initialize_product_presets(self.store)
+        admin = session(self.login, self.exchange, 'admin-sub')
+        host = ApplicationHost(config=HostConfig(ORIGIN, ('artifacts',)), sessions=self.sessions,
+                               artifact_product_views=[self.view], artifact_product_presets=True)
+        path = ROUTE + '/quarters/2026Q1/presets/active-kit'
+        query = {**BODY, 'mode': 'files', 'path': 'pkg/', 'recursive': True, 'keyword': 'one',
+                 'if_observation': self.post()['body']['data']['observation']}
+        for changes in ({'csrf': None}, {'origin': 'https://other.invalid'}):
+            self.assertEqual(self.post(path, app=host, who=admin, body=query, **changes)['status'], 401)
+        self.assertEqual(self.post(path, app=host, body=query)['status'], 403)
+        self.assertEqual(self.post(path, app=host, who=admin, body=query)['status'], 200)
+        read = self.post(path, app=host, method='GET', body=None)
+        self.assertEqual(read['status'], 200)
+        self.assertEqual([r['key'] for r in read['body']['data']['result']['items']], [KEY])
+        self.assertEqual(self.post(path, method='GET', body=None)['status'], 404)
+        before = self.now
+        project = product_views.project
+        def expire(*args, **kwargs):
+            result = project(*args, **kwargs)
+            self.now = admin.expires_at
+            return result
+        second = path + '-expired'
+        with patch.object(product_views, 'project', side_effect=expire):
+            self.assertEqual(self.post(second, app=host, who=admin, body=query)['status'], 401)
+        self.now = before
+        self.assertEqual(self.store._transaction(lambda _, db: db.execute(
+            'SELECT count(*) FROM artifact_product_presets_v1').fetchone()[0],
+            write=False, with_connection=True), 1)
 
     def test_product_post_requires_current_session_same_origin_tls_and_csrf(self):
         other = session(self.login, self.exchange, 'admin-sub')
