@@ -101,6 +101,7 @@ listing at that path, explicitly select files mode. For example, a new read:
 | `if_observation` | Lowercase 64-hex equality hint; required when page > 1. Use also on follow-up drill/filter reads. A stale hint returns 412 after authorization, with no previous/current results. Start a new read explicitly. |
 | `recursive`, `keyword` | Files mode only: strict boolean default false and optional nonblank case-sensitive literal relative-key substring (1–256 Unicode code points; ASCII C0 controls and DEL are not allowed). Leading/trailing spaces in a nonblank keyword are data. |
 | `start_time`, `end_time` | Files mode only: independent inclusive bounds, date + uppercase T + hh:mm:ss, optional 1–6 fractional digits, uppercase Z or explicit ±hh:mm offset. An active time bound does not enable recursion. |
+| `relative_range`, `time_zone` | Files mode only: provide both instead of absolute bounds. Use `today`, `week`, `month` or `30d` with an explicit IANA region (e.g. `Asia/Singapore`) or `UTC`. |
 
 Unknown/duplicate fields, null in place of an optional value, unzoned/reversed
 times, invalid numbers, a mode-inappropriate field (even false) and page > 1
@@ -144,7 +145,12 @@ no insignificant whitespace: the array containing "product-observation-v1",
 the validated read descriptor (without the optional discovery label),
 published_revision, and lowercase SHA-256 of
 the full canonical ASCII publication envelope. It covers neither the private
-candidate nor the request's temporary path/time/mode. Bind the full query
+candidate nor an ordinary request's path, absolute time or mode. For relative
+requests the array additionally ends with `"product-window-v1"`, range name,
+zone key, and resolved UTC bounds (object keys `start_time` and `end_time`, ISO
+seconds with +00:00). Begin a changed window as a fresh read without an old
+observation. Once a window moves, a previous observation on a page or a save
+returns 412, even if the publication is unchanged. Bind the full query
 coordinates in clients separately. The value only compares content; it does not
 establish identity, distinguish byte-identical restores, pin history, or grant
 future access. catalog_revision refers to the published observation, not a new
@@ -270,7 +276,8 @@ production download evidence.
 This backend slice lets a workspace administrator save a file filter for a
 published product view. A second authorized bucket reader who knows the preset
 ID can re-run the same query against the current publication in that quarter.
-It does not expose this action in the browser yet.
+The browser supports named **absolute** queries. Relative ranges below are a
+backend contract, not a browser control or evidence of deployed acceptance.
 
 Opt in twice: explicitly call
 `packages.artifact_sync.initialize_product_presets(workspace_store)` in trusted
@@ -296,6 +303,38 @@ quarter, changed product filter or grant binding, and loss of access do not
 fall back to an unfiltered catalog. A new publication under the same grant
 uses current rows, not frozen results. Presets retain the existing literal
 keyword, directory/recursion and explicit absolute time semantics. There is no
-global list, arbitrary search expression, rolling day/week/month, update/delete,
+global list, arbitrary search expression, update/delete,
 or byte authorization in this slice. Separate browser, real deployment and
 end-user replacement acceptance remain outstanding.
+
+### Saving a moving window, not a pair of fixed dates
+
+For an active file filter, use for example
+`{"format":1,"quarter":"2026Q4","mode":"files","path":"pkg/","keyword":"linux","recursive":true,"relative_range":"30d","time_zone":"Asia/Singapore"}`.
+Read it at the product endpoint, then POST the same query with **its returned**
+`if_observation` to the chosen preset URL. Only the range and zone are saved
+alongside the ordinary constraints: no calculation date or result list is
+stored. On every authenticated active read, save or reopen the server reads
+its trusted clock once for the calculation. The zone stays the same for
+other authorized members. No URL, request clock or machine-local TZ fallback.
+The host needs IANA tzdata for the selected zone.
+
+The definitions follow [OBS #353's quick-range implementation](https://github.com/codeasier/msinsight-obs-web-browser/blob/519c1b82bc809c6d883faa96a6a5c88a0d4d5614/frontend/src/modules/artifacts/model/artifact-time-range.js).
+In the saved zone, the start is inclusive local midnight on:
+
+| Range | Start date |
+| --- | --- |
+| `today` | The current local date. |
+| `month` | The first of the current local month, **not** the last 30 days. |
+| `week` | The local date of the instant that was 7 × 24 hours ago. |
+| `30d` | The local date of the instant that was 30 × 24 hours ago. |
+
+All four end at **23:59:59 inclusive** on the current local date (the OBS
+filter's precision is seconds; a later fractional timestamp is outside).
+At a steady offset, `week` and `30d` can span eight and 31 date labels
+respectively. Across DST, elapsed subtraction *before* selecting the local
+date matters. The index's existing quarter assignment, bound product filter
+and current grants still apply independently; a moving range never jumps
+quarters. Absolute bounds, including microseconds, are unchanged. This
+does not convert an old fixed preset or the browser’s **Last 7 UTC dates**
+shortcut into a relative range.

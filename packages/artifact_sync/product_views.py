@@ -10,6 +10,7 @@ from packages.artifacts import ArtifactCatalog, Scope
 from packages.artifacts.product_projection import MATCH, project, token, validate_request
 from packages.workspace_api.application import _object
 from packages.workspaces import PolicyError, StorageError
+from .product_windows import resolve_window, separate_window
 from .records import MAX_REVISION, decode_snapshot, digest, dump
 
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
@@ -156,18 +157,25 @@ def bound_view(registry, scope, view_id, record):
     return view
 
 
-def product_result(registry, scope, view_id, raw, record):
+def product_result(registry, scope, view_id, raw, record, *, clock):
     view = bound_view(registry, scope, view_id, record)
     try:
         body = json.loads(raw.decode('utf-8'), object_pairs_hook=_object, parse_constant=_bad_constant)
+        body, window = separate_window(body)
         query = validate_request(body)
     except (KeyError, ValueError, TypeError, OverflowError, RecursionError):
         raise PolicyError(400, 'invalid_request') from None
 
     # Exact publication bytes, not private candidate or mutable index revision.
     # This is only an equality hint after current authority; not an access token.
-    observed = digest(dump(['product-observation-v1', view.descriptor(), record.published_revision,
-                            digest(record.published_raw)]))
+    observation = ['product-observation-v1', view.descriptor(), record.published_revision,
+                   digest(record.published_raw)]
+    if window is not None:
+        bounds = resolve_window(window, clock)
+        body.update(bounds)
+        # A new civil window can change membership without republishing the index.
+        observation += ['product-window-v1', window[0], window[1].key, bounds]
+    observed = digest(dump(observation))
     if query.observation is not None and query.observation != observed:
         raise PolicyError(412, 'stale_observation')
     try:

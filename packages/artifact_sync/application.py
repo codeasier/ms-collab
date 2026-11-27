@@ -1,6 +1,8 @@
 # Copyright (c) 2026 codeasier
 # SPDX-License-Identifier: MIT
 """Same read-only artifact routes, backed by explicitly published indexes."""
+from datetime import datetime, timezone
+
 from packages.artifacts import ArtifactCatalog
 from packages.artifacts_api import ArtifactApplication
 from packages.artifacts_api.records import load_view, record_id
@@ -13,8 +15,10 @@ from packages.directory_cursors.directory import configured, serve
 
 
 class IndexedArtifactApplication(ArtifactApplication):
-    def __init__(self, *, directory_cursors=None, product_views=None, product_presets=False, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, directory_cursors=None, product_views=None, product_presets=False,
+                 clock=lambda: datetime.now(timezone.utc), **kwargs):
+        super().__init__(clock=clock, **kwargs)
+        self._product_clock = clock
         self._directory_cursors = configured(directory_cursors)
         self._product_views = ProductViewRegistry(product_views)
         if type(product_presets) is not bool or (product_presets and not self._product_views):
@@ -35,7 +39,7 @@ class IndexedArtifactApplication(ArtifactApplication):
             raw = framed_body(environ) if writing else None
             def product_preset(policy, actor, db):
                 record = authorized(policy, actor, db, preset[0], 'read')
-                return presets.serve(self._product_views, policy, actor, db, record, preset, raw)
+                return presets.serve(self._product_views, policy, actor, db, record, preset, raw, clock=self._product_clock)
             return self._authenticated_transaction(assertion, product_preset, write=writing, with_connection=True)
         route = product_route(environ) if self._product_views else None
         if route is not None:
@@ -46,7 +50,7 @@ class IndexedArtifactApplication(ArtifactApplication):
                 record = authorized(policy, actor, db, scope, 'read')
                 if view_id is None:
                     return product_choices(self._product_views, scope, record)
-                return product_result(self._product_views, scope, view_id, raw, record)
+                return product_result(self._product_views, scope, view_id, raw, record, clock=self._product_clock)
 
             return self._authenticated_transaction(assertion, product_read, with_connection=True)
         scope, kind, selected, definition, view_id, pagination = self._request(environ)
