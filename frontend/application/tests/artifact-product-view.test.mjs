@@ -751,3 +751,82 @@ test('opt-in product shell retires an in-flight byte request on same-tab navigat
     assert.deepEqual(h.client.effects,[]);assert.equal(panel(h,'confirm').disabled,true)
   }
 })
+
+const presetId='audit-files.1', presetRoute=route+'/quarters/2026Q2/presets/'+presetId
+const presetQuery={format:1,quarter:'2026Q2',mode:'files',path:'',recursive:true,keyword:'kit'}
+const presetReply=(query=presetQuery)=>({format:1,kind:'product-preset',preset_id:presetId,query,
+  result:rows(makeProductRequest(scope,'kit',query),[file('kit.bin')])})
+const current=()=>({isCurrent:()=>true})
+test('named filters use only the scoped exact route, fresh CSRF for writes, no body or CSRF for GET',async()=>{
+  const h=harness();await h.session.inspect()
+  const selected={...scope},saving={...presetQuery,if_observation:obs}
+  h.queue.push(()=>response(presetReply()))
+  const pending=h.session.saveArtifactProductPreset(selected,'kit',presetId,saving,current())
+  selected.workspace_id='another';saving.keyword='drift';h.setCookie('C'.repeat(43))
+  assert.deepEqual((await pending).query,presetQuery)
+  h.queue.push(()=>response(presetReply()))
+  await h.session.readArtifactProductPreset(scope,'kit','2026Q2',presetId,current())
+  const [write,read]=h.calls.slice(1)
+  for(const c of [write,read]){
+    assert.equal(c.path,presetRoute)
+    for(const [key,v] of Object.entries({mode:'same-origin',credentials:'same-origin',redirect:'error',referrerPolicy:'no-referrer',cache:'no-store'}))
+      assert.equal(c.options[key],v)
+  }
+  assert.deepEqual(write.options.headers,{'Content-Type':'application/json','X-CSRF-Token':'C'.repeat(43)})
+  assert.deepEqual(JSON.parse(write.options.body),{...presetQuery,if_observation:obs})
+  assert.equal(write.options.method,'POST');assert.equal(read.options.method,'GET');assert.deepEqual(read.options.headers,{})
+  assert.equal(read.options.body,undefined)
+  for(const id of ['a/b','bad\n','../fake','one?scope=beta','x'.repeat(129),''])
+    await assert.rejects(h.session.readArtifactProductPreset(scope,'kit','2026Q2',id,current()))
+  for(const invalid of [undefined,presetQuery,{...presetQuery,mode:'tree',if_observation:obs},
+    {...presetQuery,if_observation:obs,page:1},{...presetQuery,if_observation:obs,workspace_id:'another'}])
+    await assert.rejects(h.session.saveArtifactProductPreset(scope,'kit',presetId,invalid,current()))
+  assert.equal(h.calls.length,3)
+})
+test('named filters reject substituted selectors, non-file queries, stale observations and redirected save filters',async()=>{
+  const h=harness();await h.session.inspect()
+  for(const change of [data=>{data.preset_id='other'},data=>{data.query.quarter='2026Q3'},
+    data=>{data.result.scope.workspace_id='different'},data=>{data.query.mode='tree'},data=>{data.query.if_observation=obs},
+    data=>{data.query.extra=true},data=>{data.result.quarter_available=false},data=>{data.result.page_size=10},
+    data=>{data.query.keyword='it'},data=>{data.result.observation='a'.repeat(64)}]){
+    const data=presetReply({...presetQuery});change(data);h.queue.push(()=>response(data))
+    await assert.rejects(h.session.saveArtifactProductPreset(scope,'kit',presetId,{...presetQuery,if_observation:obs},current()))
+  }
+})
+test('in-place applied query save and date/keyword restore; no listing, unsaved edits or byte access',async()=>{
+  const {ctrl,el,edit,select,plan,client}=await controllerHarness(true)
+  ctrl.activate();await select();plan([]);await el('setup').fire('submit')
+  await edit('preset-id',presetId);assert.equal(el('preset-open').disabled,false);assert.equal(el('preset-save').disabled,true)
+  await edit('keyword','kit');el('recursive').checked=true
+  plan([file('kit.bin')]);await el('filters').fire('submit');assert.equal(el('preset-save').disabled,false)
+  const before=client.calls.length
+  client.queue.push(()=>response(presetReply()))
+  await el('preset-save').fire('click');assert.match(el('status').textContent,/Saved preset audit-files.1/)
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...presetQuery,if_observation:obs})
+  await edit('keyword','other');assert.equal(el('preset-save').disabled,true)
+  await el('preset-save').fire('click');assert.equal(client.calls.length,before+1)
+  const query={...presetQuery,start_time:t,end_time:seen}
+  client.queue.push(()=>response(presetReply(query)))
+  await el('preset-open').fire('click')
+  assert.equal(el('keyword').value,'kit');assert.equal(el('recursive').checked,true);assert.equal(el('start').value,t)
+  assert.equal(el('end').value,seen);assert.equal(el('page-size').value,'50')
+  assert.match(el('status').textContent,/Reopened preset/);assert.match(el('results').text(),/kit.bin/)
+  assert.equal(el('range7').attributes['aria-pressed'],'false')
+  assert.deepEqual(client.calls.slice(before).map(c=>[c.path,c.options.method]),[[presetRoute,'POST'],[presetRoute,'GET']])
+})
+test('denied, missing and stale exact-ID reopen retire old rows and never retry; context edit discards held results',async()=>{
+  for(const outcome of [403,404,412,'new-observation','scope-change']){
+    const {ctrl,el,edit,select,plan,client}=await controllerHarness()
+    ctrl.activate();await select();plan([file('old')]);await el('setup').fire('submit')
+    await edit('preset-id',presetId);const before=client.calls.length
+    const started=deferred(),held=deferred()
+    client.queue.push(()=>{started.resolve();return held.promise})
+    const pending=el('preset-open').fire('click');await started.promise
+    if(outcome==='scope-change')await edit('workspace','beta')
+    const data=presetReply();if(outcome==='new-observation')data.result.observation='c'.repeat(64)
+    held.resolve(response(data,typeof outcome==='number'?outcome:200));await pending
+    assert.equal(el('results').text().trim(),'');assert.equal(el('preset-id').value,'')
+    assert.equal(el('browse').hidden,true);assert.equal(client.calls.length,before+1)
+    assert.doesNotMatch(el('status').textContent,/Reopened preset|kit.bin|old/)
+  }
+})

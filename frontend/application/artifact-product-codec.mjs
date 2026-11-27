@@ -195,3 +195,29 @@ export function validateProductResult(data, request) {
   } catch { throw invalidResult() }
   return data
 }
+
+// A preset names an exact file-filter query, not a list, link or download grant.
+export function validProductPresetId(value) { return full(id,value) }
+export function productPresetPath(scope,viewId,selected,name) {
+  if (!validProductPresetId(name)) throw invalidRequest()
+  const r=makeProductRequest(scope,viewId,{format:1,quarter:selected})
+  return r.path+'/quarters/'+selected+'/presets/'+name
+}
+const presetRequired=['format','quarter','mode']
+const presetOptional=['path',...fileFields]
+export function productPresetWrite(scope,viewId,body) {
+  if (!fields(body,[...presetRequired,'if_observation'],presetOptional)||body.mode!=='files') throw invalidRequest()
+  return makeProductRequest(scope,viewId,body).body
+}
+export function validateProductPreset(data,scope,viewId,selected,name,saved) {
+  if (!fields(data,['format','kind','preset_id','query','result'])||data.format!==1||
+      data.kind!=='product-preset'||data.preset_id!==name||
+      !fields(data.query,presetRequired,presetOptional)||data.query.mode!=='files'||data.query.quarter!==selected) throw invalidResult()
+  const query=data.query
+  if(saved&&(Object.keys(saved).length!==Object.keys(query).length+1||
+      Object.keys(query).some(k=>!Object.hasOwn(saved,k)||query[k]!==saved[k]))) throw invalidResult()
+  const req=makeProductRequest(scope,viewId,{...query,...(saved?{if_observation:saved.if_observation}:{})})
+  validateProductResult(data.result,req)
+  if(!data.result.quarter_available) throw invalidResult()
+  return data
+}
