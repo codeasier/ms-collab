@@ -18,7 +18,8 @@ def main(argv=None):
         sub = parser.add_subparsers(dest='command', required=True, parser_class=Parser)
         sub.add_parser('validate-config')
         initializer = sub.add_parser('init')
-        initializer.add_argument('--layout', type=int, choices=(1, 2), default=1)
+        initializer.add_argument('--layout', type=int, choices=(1, 2, 3), default=1,
+                                 help='3 is a fresh, inspection-only product-preset layout')
         checker = sub.add_parser('check'); checker.add_argument('--require-production', action='store_true')
         for name in ('backup','restore','verify-backup'):
             sub.add_parser(name).add_argument('--directory', required=True)

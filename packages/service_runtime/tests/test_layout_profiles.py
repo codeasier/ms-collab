@@ -169,7 +169,7 @@ class LayoutProfileTests(unittest.TestCase):
         for profile in (one, two):
             with self.assertRaises((AttributeError, TypeError)):
                 profile.format = 99
-        for invalid in (True, False, 1.0, 2.0, '2', None, 0, 3):
+        for invalid in (True, False, 1.0, 2.0, 3.0, '2', '3', None, 0, 4):
             with self.subTest(selector=invalid):
                 with self.assertRaises((ValueError, RuntimeFailure)):
                     schema.layout_profile(invalid)
@@ -229,7 +229,7 @@ class LayoutProfileTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(main(['--config', str(self.config), 'init', *args]), 0)
             self.assertEqual(json.loads((self.directory / 'installation.json').read_text())['format'], layout)
-        for command in (['init', '--layout', '3'], ['init', '--layout', '2.0'],
+        for command in (['init', '--layout', '4'], ['init', '--layout', '2.0'],
                         ['check', '--layout', '2'], ['convert-backup']):
             with redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(main(['--config', str(self.config), *command]), 2)

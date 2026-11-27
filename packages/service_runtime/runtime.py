@@ -123,7 +123,8 @@ def connection(directory, *, writable=False):
         db.close(); raise
 
 
-def inspect(config, db):
+def inspect_manifest(config):
+    """Validate the exact installed profile without opening either database."""
     stored = decode(read_private(config.directory / MANIFEST, 4096))
     if type(stored) is not dict:
         raise RuntimeFailure('unsupported_layout')
@@ -131,6 +132,11 @@ def inspect(config, db):
     expected = manifest(config, layout=profile.format)
     if set(stored) != set(expected) or stored != expected:
         raise RuntimeFailure('unsupported_layout')
+    return profile
+
+
+def inspect(config, db):
+    profile = inspect_manifest(config)
     for name, app, version, expected in (('main',_APPLICATION_ID,_SCHEMA_VERSION,profile.policy_digest),('login',_APP,_VERSION,profile.login_digest)):
         # Recheck the snapshot size under SQLite locks, not only an earlier stat.
         size = db.execute(f'PRAGMA {name}.page_count').fetchone()[0] * db.execute(f'PRAGMA {name}.page_size').fetchone()[0]
@@ -209,6 +215,10 @@ def create_application(config_path):
     try:
         lease = Lease(config.directory)
         with closing(connection(config.directory)) as db: inspection = inspect(config, db)
+        # Inspection-only I3 is not a serving layout. Reject before constructing
+        # a session store/host or advancing the installed login clock.
+        if inspection.profile.format not in (1, 2):
+            raise RuntimeFailure('unsupported_runtime_layout')
         policy = SQLiteWorkspaceService(config.directory / POLICY)
         login = SQLiteLoginStore(config.directory / LOGIN, binding=config.binding)
         sessions = SessionPolicyStore(policy=policy, login=login)
