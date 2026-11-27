@@ -220,15 +220,29 @@ export function authorizationTarget(data,bootstrap,origin){
 // Capture the primitive arguments *before* loading the optional codec. Do not
 // call object getters/toJSON, silently drop unknown fields or borrow mutable
 // form objects across the dynamic import. Full wire validation is in the codec.
-function captureProductFields(value, limit) {
+function captureProductFields(value, limit, allowConditions=false) {
  const invalid=()=>new Error('Invalid product view request.')
  if(value===null||typeof value!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(value)))throw invalid()
  const keys=Reflect.ownKeys(value),copy=Object.create(null)
  if(keys.length>limit)throw invalid()
  for(const k of keys){
   const d=Object.getOwnPropertyDescriptor(value,k)
-  if(typeof k!=='string'||!d.enumerable||!Object.hasOwn(d,'value')||!['number','string','boolean'].includes(typeof d.value))throw invalid()
-  copy[k]=d.value
+  if(typeof k!=='string'||!d.enumerable||!Object.hasOwn(d,'value'))throw invalid()
+  if(allowConditions&&k==='conditions'){
+   const a=d.value
+   if(!Array.isArray(a)||Object.getPrototypeOf(a)!==Array.prototype||a.length<1||a.length>8||
+      Reflect.ownKeys(a).length!==a.length+1)throw invalid()
+   const items=[]
+   for(let i=0;i<a.length;i++){
+    const row=Object.getOwnPropertyDescriptor(a,String(i))
+    if(!row?.enumerable||!Object.hasOwn(row,'value'))throw invalid()
+    items.push(captureProductFields(row.value,2))
+   }
+   copy[k]=Object.freeze(items)
+  }else{
+   if(!['number','string','boolean'].includes(typeof d.value))throw invalid()
+   copy[k]=d.value
+  }
  }
  return Object.freeze(copy)
 }
@@ -393,7 +407,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  async function readArtifactProductView(scope,viewId,body,options) {
   const owner=productOwner(options),{guard}=owner
   const unverified=()=>new Error('The product view response could not be verified.')
-  const selection=captureProductFields(scope,3),criteria=captureProductFields(body,14)
+  const selection=captureProductFields(scope,3),criteria=captureProductFields(body,15,true)
   guard()
   let codec
   try{codec=await import('./artifact-product-codec.mjs')}catch{guard();throw unverified()}
@@ -408,7 +422,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  // reopen are distinct capabilities: a malformed save cannot become a GET.
  async function productPreset(writing,scope,viewId,selected,name,body,options) {
   const owner=productOwner(options),selection=captureProductFields(scope,3)
-  const criteria=writing?captureProductFields(body,11):undefined
+  const criteria=writing?captureProductFields(body,12,true):undefined
   const unverified=()=>new Error('The preset response could not be verified.')
   let codec
   try{codec=await import('./artifact-product-codec.mjs')}catch{owner.guard();throw unverified()}
