@@ -2,7 +2,9 @@
 // observation is an authorization, a provider URL, or a download capability.
 const scopeFields = ['workspace_id', 'connection_id', 'bucket_id']
 const baseFields = ['format', 'quarter', 'path', 'mode', 'page', 'page_size', 'if_observation']
-const fileFields = ['recursive', 'keyword', 'start_time', 'end_time']
+const fileFields = ['recursive', 'keyword', 'start_time', 'end_time', 'relative_range', 'time_zone']
+const relativeRanges = ['today','week','month','30d']
+const productZone = /^(?:UTC|(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|Indian|Pacific|Etc)(?:\/[A-Za-z0-9_+-]+){1,2})$/
 const resultFields = ['format', 'kind', 'match', 'scope', 'view_id', 'quarter', 'path', 'mode',
   'observed_at', 'quarter_available', 'catalog_revision', 'observation', 'page', 'page_size',
   'total', 'items', 'source']
@@ -64,6 +66,12 @@ export function productInstantMicros(value) {
   return BigInt(seconds) * 1000000n + BigInt((m[7] || '').padEnd(6, '0'))
 }
 
+// Validate the wire grammar, not the browser's local/installed time-zone DB.
+// Only the host validates the actual IANA zone and resolves the time window.
+export function validProductWindow(range,zone) {
+  return relativeRanges.includes(range)&&typeof zone==='string'&&zone.length<=96&&full(productZone,zone)
+}
+
 export function lastSevenUtcDates(date) {
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) throw invalidRequest()
   const first = new Date(date.getTime())
@@ -119,6 +127,9 @@ export function makeProductRequest(scope, viewId, body) {
     // U+0085 is whitespace; FEFF is not. C0/DEL and lone surrogates are invalid.
     if (typeof s !== 'string' || s.length > 512 || !scalarText(s) || [...s].length > 256 || !/[^\p{White_Space}]/u.test(s)) throw invalidRequest()
   }
+  if ((Object.hasOwn(body,'relative_range')||Object.hasOwn(body,'time_zone'))&&
+      (!validProductWindow(body.relative_range,body.time_zone)||
+       Object.hasOwn(body,'start_time')||Object.hasOwn(body,'end_time'))) throw invalidRequest()
   const start = Object.hasOwn(body, 'start_time') ? productInstantMicros(body.start_time) : undefined
   const end = Object.hasOwn(body, 'end_time') ? productInstantMicros(body.end_time) : undefined
   if (start !== undefined && end !== undefined && start > end) throw new Error('The start time must not be after the end time.')
@@ -165,7 +176,10 @@ export function validateProductResult(data, request) {
       data.source.full_history_complete !== false || data.source.live_provider_verified !== false ||
       data.source.download_available !== false) throw invalidResult()
   // No source offset or token is exposed: never invent the server's quarter or
-  // matching rule from UTC, a view name, or a provider/bucket guess.
+  // matching rule from UTC, a view name, or a provider/bucket guess. In
+  // particular, the resolved rolling bounds are not echoed: do not substitute
+  // the browser clock/tzdb. The host evaluates those bounds, and the observation
+  // binds them for subsequent requests using the same relative window.
   try {
     const observed = productInstantMicros(data.observed_at)
     const start = start_time === undefined ? undefined : productInstantMicros(start_time)

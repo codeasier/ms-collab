@@ -830,3 +830,65 @@ test('denied, missing and stale exact-ID reopen retire old rows and never retry;
     assert.doesNotMatch(el('status').textContent,/Reopened preset|kit.bin|old/)
   }
 })
+
+const rolling={relative_range:'week',time_zone:'Asia/Shanghai'}
+const rolledObs='c'.repeat(64)
+test('relative filters require one explicit bounded IANA zone and exclude fixed time bounds and tree mode',()=>{
+  for(const relative_range of ['today','week','month','30d'])for(const time_zone of ['UTC','America/Indiana/Indianapolis','Asia/Shanghai','Etc/GMT+8']){
+    const query={...presetQuery,relative_range,time_zone}
+    assert.deepEqual(makeProductRequest(scope,'kit',query).body,query)
+  }
+  for(const invalid of [{...rolling,mode:'tree'},{time_zone:'UTC'},{relative_range:'week'},
+    {...rolling,relative_range:'7d'},{...rolling,start_time:t},{...rolling,end_time:t},
+    ...['Localtime','+08:00','US/Eastern','../../UTC','Asia/../Shanghai','Asia/Shanghai\n','Asia/'+ 'A'.repeat(96)].map(time_zone=>({...rolling,time_zone}))])
+    assert.throws(()=>makeProductRequest(scope,'kit',{...presetQuery,...invalid}))
+})
+test('rolling search, next page and named save bind one explicit zone and observation; reopen restores the exact criteria',async()=>{
+  const {ctrl,el,edit,select,plan,client}=await controllerHarness(true)
+  ctrl.activate();await select();plan([]);await el('setup').fire('submit')
+  await edit('start',t);await edit('window','week')
+  assert.equal(el('start').disabled,true)
+  await edit('zone','Asia/Shanghai');await edit('keyword','kit');el('recursive').checked=true
+  const ordered=Array.from({length:11},(_,i)=>file('kit_'+String(i).padStart(2,'0')))
+  plan(ordered.slice(0,10),{observation:rolledObs,total:11});await el('filters').fire('submit')
+  const query={...presetQuery,...rolling}
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:1,page_size:10})
+  assert.match(el('evidence').textContent,/Last week \(Asia\/Shanghai\)/)
+  plan(ordered.slice(-1),{observation:rolledObs,total:11});await el('next').fire('click')
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:2,page_size:10,if_observation:rolledObs})
+  await edit('preset-id',presetId)
+  const out=presetReply(query);out.result.observation=rolledObs
+  client.queue.push(()=>response(out))
+  await el('preset-save').fire('click');assert.match(el('status').textContent,/Saved preset/)
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,if_observation:rolledObs})
+  await edit('window','');plan([file('kit.bin')]);await el('filters').fire('submit')
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...presetQuery,page:1,page_size:50,if_observation:obs})
+  client.queue.push(()=>response(out))
+  await el('preset-open').fire('click');assert.match(el('status').textContent,/Reopened preset/)
+  assert.equal(el('window').value,'week');assert.equal(el('zone').value,'Asia/Shanghai')
+  assert.equal(el('start').value,'');assert.equal(el('end').value,'')
+  const read=client.calls.at(-1);assert.equal(read.path,presetRoute);assert.equal(read.options.method,'GET')
+  assert.equal(read.options.body,undefined)
+})
+test('a rolling response cannot change publication; clearing after 412 restores focus only when stranded',async()=>{
+  for(const moveFocus of [false,true]){
+    const {ctrl,el,edit,select,plan,client,doc}=await controllerHarness()
+    ctrl.activate();await select();plan([]);await el('setup').fire('submit')
+    await edit('window','today');plan([file('kit.bin')],{observation:rolledObs})
+    await el('filters').fire('submit');await edit('preset-id',presetId)
+    const started=deferred(),held=deferred()
+    client.queue.push(()=>{started.resolve();return held.promise})
+    el('preset-save').focus()
+    const pending=el('preset-save').fire('click');await started.promise
+    if(moveFocus)el('workspace').focus()
+    held.resolve(response({},412));await pending
+    assert.equal(el('results').text().trim(),'');assert.equal(el('preset-id').value,'')
+    assert.equal(el('window').value,'');assert.equal(el('zone').value,'UTC')
+    assert.match(el('status').textContent,/rolling time window changed/)
+    assert.equal(doc.activeElement,el(moveFocus?'workspace':'reopen'))
+    plan([]);await el('reopen').fire('click')
+    await edit('window','today');plan([],{observation:rolledObs,catalog_revision:4})
+    await el('filters').fire('submit')
+    assert.equal(el('browse').hidden,true)
+  }
+})

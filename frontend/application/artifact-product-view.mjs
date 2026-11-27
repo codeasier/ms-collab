@@ -1,6 +1,6 @@
 // A document-local reader. Only the typed Cookie transport knows the network;
 // no links, navigation state or storage are constructed from private values.
-import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validProductPresetId, validateProductResult} from './artifact-product-codec.mjs'
+import {lastSevenUtcDates, makeProductRequest, productInstantMicros, validProductPresetId, validProductWindow, validateProductResult} from './artifact-product-codec.mjs'
 
 // Shared directory outcomes never become grants and never leave this document.
 function mountProductPicker({session, doc, validateWorkspaces, retireSelection, openSelection}) {
@@ -98,9 +98,29 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   const el=id=>doc.getElementById('pv-'+id)
   const make=(tag,text)=>{const node=doc.createElement(tag);if(text!==undefined)node.textContent=text;return node}
   const status=text=>{el('status').textContent=text}
-  // A pin survives local refinements and quarter changes, never a change of
-  // identity. "opened" is a verified location, not the values being edited.
-  let active=false, serial=0, flight=null, checking=null, pin=null, opened=null, shown=null, recovery=false
+  // Fixed observations pin the publication. Rolling observations additionally
+  // pin one window/zone and clock evaluation. Never pass a pin to another kind
+  // of query. "opened" is a verified location, not the values being edited.
+  let active=false, serial=0, flight=null, checking=null, pin=null, windowPin=null, opened=null, shown=null, recovery=false
+  const samePublication=(data,witness)=>!witness||
+    (data.observed_at===witness.observed_at&&data.catalog_revision===witness.catalog_revision)
+  const pinFor=body=>body.relative_range
+    ?(windowPin?.range===body.relative_range&&windowPin.zone===body.time_zone?windowPin:null)
+    :pin
+  function witnessFor(data,request){
+    const witness=Object.freeze({scope:request.scope,viewId:request.viewId,observation:data.observation,
+      observed_at:data.observed_at,catalog_revision:data.catalog_revision})
+    if(request.body.relative_range)windowPin=Object.freeze({...witness,range:request.body.relative_range,zone:request.body.time_zone})
+    else windowPin=null
+    if(!request.body.relative_range)pin=witness
+    return witness
+  }
+  const resetPins=()=>{pin=null;windowPin=null}
+  // Recover only if focus is stranded or still on the initiating control.
+  // A user who moved elsewhere while the request was pending keeps focus.
+  const recoverFocus=trigger=>{
+    if(recovery&&(doc.activeElement===doc.body||doc.activeElement===trigger))el('reopen').focus()
+  }
   const identityFields=['workspace','connection','bucket','view']
   const fields=()=>({scope:{workspace_id:el('workspace').value,connection_id:el('connection').value,bucket_id:el('bucket').value},viewId:el('view').value})
   const navigation=(body,path)=>({format:1,quarter:body.quarter,path,mode:'tree',page:1,page_size:body.page_size})
@@ -114,7 +134,10 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     el('reopen').disabled=!!flight
     el('open').disabled=!active||recovery||!!flight
     el('up').disabled=!opened?.body.path||!!flight
-    for(const id of ['apply','range7','tree'])el(id).disabled=!opened||!!flight
+    for(const id of ['apply','range7','tree','window'])el(id).disabled=!opened||!!flight
+    const relative=!!el('window').value
+    el('zone').disabled=!opened||!relative||!!flight
+    for(const id of ['start','end'])el(id).disabled=!opened||relative||!!flight
     const named=!!opened&&!flight&&validProductPresetId(el('preset-id').value)
     el('preset-id').disabled=!opened||!!flight
     el('preset-open').disabled=!named
@@ -143,6 +166,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   function resetFilters(){
     for(const id of ['keyword','start','end'])el(id).value=''
     el('recursive').checked=false
+    el('window').value='';el('zone').value='UTC'
     el('range7').setAttribute('aria-pressed','false')
   }
   function forgetLocation(){
@@ -154,7 +178,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     resetFilters()
   }
   function retireSelection(){
-    retire();pin=null;recovery=false
+    retire();resetPins();recovery=false
     for(const id of [...identityFields,'quarter'])el(id).value=''
     forgetLocation();status('');controls()
   }
@@ -169,7 +193,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     if(el('controls').contains?.(doc.activeElement))doc.activeElement?.blur?.()
     active=false;picker?.clear()
     retire()
-    pin=null;recovery=false
+    resetPins();recovery=false
     for(const id of [...identityFields,'quarter'])el(id).value=''
     forgetLocation();status('');controls()
   }
@@ -181,7 +205,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   function editSetup(identity){
     if(!active)return
     picker?.manual();retire()
-    if(identity){pin=null;recovery=false}
+    if(identity){resetPins();recovery=false}
     forgetLocation();controls()
     if(recovery){status('Reopen the product view to check the selected quarter at the root.');return}
     status(identity?'Selection changed. Open the exact product view to read its root.':'Quarter changed. Open the product view to read that quarter at the root.')
@@ -189,7 +213,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   function editFilters(id){
     if(!active||!opened)return
     retire()
-    if(id==='start'||id==='end')el('range7').setAttribute('aria-pressed','false')
+    if(id==='start'||id==='end'||id==='window')el('range7').setAttribute('aria-pressed','false')
     controls()
     status('Filters changed. Apply file filters to see matching files.')
   }
@@ -198,15 +222,15 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     if(statusCode===401){clear();return} // The real transport also notified the shell.
     if(statusCode===400){
       controls()
-      status('Invalid request. Check the exact IDs, quarter and file filters before applying again.')
+      status('Invalid request. Check the exact IDs, quarter, file filters and time zone before applying again.')
       return
     }
-    pin=null;recovery=true;forgetLocation();controls()
+    resetPins();recovery=true;forgetLocation();controls()
     const message={
       403:'This product view is unavailable or inaccessible.',
       404:'This product view is unavailable or inaccessible.',
       409:'The workspace or artifacts module is unavailable.',
-      412:'The publication or view changed.'
+      412:'The publication or view changed, or the rolling time window changed.'
     }[statusCode]||'Could not verify this response. No results were loaded.'
     status(message+' Reopen the product view to start at the root.')
   }
@@ -237,7 +261,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   async function checkFile(receipt,index,row){
     if(!download||!active||!receipt||shown!==receipt||flight)return
     retireCheck()
-    const abort=new AbortController();checking=abort
+    const trigger=doc.activeElement,abort=new AbortController();checking=abort
     const isCurrent=()=>active&&shown===receipt&&checking===abort&&!abort.signal.aborted
     const {request,witness,total}=receipt
     // Same query, including literal filters and current page. First-page
@@ -250,7 +274,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       const data=validateProductResult(answer,query),same=data.items[index]
       if(!data.quarter_available||data.catalog_revision!==witness.catalog_revision||data.observed_at!==witness.observed_at||
          data.total!==total||!same||!Object.keys(row).every(k=>same[k]===row[k]))throw Error('File no longer matches this result.')
-    }catch(error){if(isCurrent())fail(error?.status);return}
+    }catch(error){if(isCurrent()){fail(error?.status);recoverFocus(trigger)}return}
     if(!isCurrent())return
     // No view ID, filter, modified time or view proof enters byte authorization.
     // The two reads are separate. Only the byte service may supply a digest.
@@ -292,7 +316,9 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     else if(!data.items.length)message=body.mode==='files'?'No files match these filters at this location.':'No rows at this level match the product view.'
     else message=(body.mode==='tree'?'Folder view':'Files only')+' loaded. '+count+'.'
     el('results').replaceChildren(data.items.length?list:make('p',message))
-    el('evidence').textContent='Published revision '+data.catalog_revision+' · Observed '+data.observed_at+' · Stored index, not a live listing'
+    const windowLabels={today:'Today',week:'Last week',month:'This month','30d':'Last 30 days'}
+    const window=body.relative_range?' · '+windowLabels[body.relative_range]+' ('+body.time_zone+')':''
+    el('evidence').textContent='Published revision '+data.catalog_revision+' · Observed '+data.observed_at+' · Stored index, not a live listing'+window
     const pages=Math.max(1,Math.ceil(data.total/body.page_size))
     el('page').textContent='Page '+body.page+' of '+pages+' · '+count
     el('page-size').value=String(body.page_size)
@@ -300,12 +326,14 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   }
   async function read(scope,viewId,body,{fresh=false,focusLocation=false}={}){
     if(!active||flight)return
-    const expected=fresh?null:pin
+    const expected=fresh?null:pinFor(body),publication=fresh?null:pin,trigger=doc.activeElement
     retire()
     const ticket=serial
     let request
     try{
-      request=makeProductRequest(scope,viewId,expected?{...body,if_observation:expected.observation}:body)
+      const query={...body};delete query.if_observation
+      if(expected)query.if_observation=expected.observation
+      request=makeProductRequest(scope,viewId,query)
     }catch{
       controls()
       status(body.mode==='files'?'Check the file filters. Enter a nonblank literal keyword of at most 256 characters, or leave it empty; check both time bounds.':'Enter complete valid IDs and a quarter in YYYYQ1 through YYYYQ4 format.')
@@ -319,11 +347,12 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       if(!isCurrent())return
       // The typed transport checked all 17 fields against this exact request,
       // including the proof. The first receipt also pins these two witnesses.
-      if(expected&&(data.observation!==expected.observation||data.observed_at!==expected.observed_at||data.catalog_revision!==expected.catalog_revision))throw Error('Inconsistent observation.')
+      if(!samePublication(data,publication)||(expected&&data.observation!==expected.observation))
+        throw Object.assign(Error(),{status:412})
       if(download)validateProductResult(data,request)
-      pin=Object.freeze({scope:request.scope,viewId:request.viewId,observation:data.observation,observed_at:data.observed_at,catalog_revision:data.catalog_revision})
+      const witness=witnessFor(data,request)
       opened=request;recovery=false
-      shown=Object.freeze({request,total:data.total,witness:pin,available:data.quarter_available})
+      shown=Object.freeze({request,total:data.total,witness,available:data.quarter_available})
       drawLocation();drawRows(data,request,ticket)
       if(focusLocation&&doc.activeElement===doc.body)el('location').focus()
     }catch(error){
@@ -331,20 +360,20 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     }finally{
       if(isCurrent()){
         flight=null;controls()
-        if(recovery&&doc.activeElement===doc.body)el('reopen').focus()
+        recoverFocus(trigger)
       }
     }
   }
   async function namedFilters(saving){
-    const name=el('preset-id').value,previous=shown,expected=pin
-    if(!active||flight||!opened||!expected||!validProductPresetId(name)||
+    const name=el('preset-id').value,previous=shown,publication=pin,trigger=doc.activeElement
+    if(!active||flight||!opened||!publication||!validProductPresetId(name)||
        (saving&&(!previous?.available||previous.request.body.mode!=='files')))return
     const {scope,viewId,body}=opened,q=body.quarter
     const current=fields()
     if(current.viewId!==viewId||el('quarter').value!==q||
        Object.keys(scope).some(k=>current.scope[k]!==scope[k])){editSetup(true);return}
     // Never collect unchecked form edits, rows, paging, selectors or grants.
-    const saved=saving?{...previous.request.body,if_observation:expected.observation}:null
+    const saved=saving?{...previous.request.body,if_observation:previous.witness.observation}:null
     if(saved){delete saved.page;delete saved.page_size}
     retire()
     const ticket=serial,abort=new AbortController();flight=abort
@@ -358,15 +387,17 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       if(!isCurrent())return
       // Both paths return the authorized query and newly computed page one.
       const {query,result}=answer
-      if(expected.observation!==result.observation||expected.observed_at!==result.observed_at||
-         expected.catalog_revision!==result.catalog_revision)throw Object.assign(Error(),{status:412})
-      const request=makeProductRequest(scope,viewId,{...query,path:query.path??'',page:1,page_size:50,if_observation:expected.observation})
+      const expected=saving?previous.witness:pinFor(query)
+      if(!samePublication(result,publication)||(expected&&result.observation!==expected.observation))
+        throw Object.assign(Error(),{status:412})
+      const request=makeProductRequest(scope,viewId,{...query,path:query.path??'',page:1,page_size:50,if_observation:result.observation})
       validateProductResult(result,request)
       resetFilters()
       el('keyword').value=query.keyword??'';el('start').value=query.start_time??'';el('end').value=query.end_time??''
       el('recursive').checked=query.recursive===true
+      if(query.relative_range){el('window').value=query.relative_range;el('zone').value=query.time_zone}
       opened=request
-      shown=Object.freeze({request,total:result.total,witness:expected,available:true})
+      shown=Object.freeze({request,total:result.total,witness:witnessFor(result,request),available:true})
       drawLocation();drawRows(result,request,ticket)
       status((saving?'Saved':'Reopened')+' preset '+name+'. '+result.total+' matching files.')
     }catch(error){
@@ -379,14 +410,14 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       if(code===404||code===403)status('Presets may be disabled, inaccessible or the ID unavailable. Reopen the product view to continue.')
       else if(code===409)status('Preset could not be created or opened. No overwrite was attempted. Reopen the product view to continue.')
       else if(saving&&!code)status('Save outcome not verified. Reopen the product view and check the exact ID before retrying.')
-    }finally{if(isCurrent()){flight=null;controls()}}
+    }finally{if(isCurrent()){flight=null;controls();recoverFocus(trigger)}}
   }
   function open(fresh){
     if(!active||flight||recovery!==fresh)return
     const {scope,viewId}=fields()
     // Confirm the user's edited tuple. Never carry a proof to another ID even
     // if an input's value changed without its input event.
-    if(pin&&(viewId!==pin.viewId||['workspace_id','connection_id','bucket_id'].some(k=>scope[k]!==pin.scope[k])))pin=null
+    if(pin&&(viewId!==pin.viewId||['workspace_id','connection_id','bucket_id'].some(k=>scope[k]!==pin.scope[k])))resetPins()
     forgetLocation()
     return read(scope,viewId,{format:1,quarter:el('quarter').value,path:'',mode:'tree',page:1,page_size:10},{fresh})
   }
@@ -399,8 +430,19 @@ export function mountArtifactProductView({session, download=null, validateWorksp
         retire();controls();status('Could not determine the last seven UTC dates. Enter explicit time bounds.')
         return
       }
+      el('window').value='';el('zone').value='UTC'
       el('start').value=bounds.start_time;el('end').value=bounds.end_time
       el('range7').setAttribute('aria-pressed','true')
+    }
+    const relative_range=el('window').value,time_zone=el('zone').value
+    const query={format:1,quarter:body.quarter,path:body.path,mode:'files',page:1,page_size:body.page_size,recursive:el('recursive').checked}
+    if(el('keyword').value!=='')query.keyword=el('keyword').value
+    if(relative_range){
+      if(!validProductWindow(relative_range,time_zone)){
+        retire();controls();status('Enter a valid IANA time zone, such as UTC or Asia/Shanghai, before applying a quick range.')
+        return
+      }
+      return read(scope,viewId,{...query,relative_range,time_zone})
     }
     const start=el('start').value,end=el('end').value
     try{
@@ -410,8 +452,6 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       retire();controls();status('Check the time range: use a real date, seconds and Z or an explicit offset. The start must not be after the end.')
       return
     }
-    const query={format:1,quarter:body.quarter,path:body.path,mode:'files',page:1,page_size:body.page_size,recursive:el('recursive').checked}
-    if(el('keyword').value!=='')query.keyword=el('keyword').value
     if(start)query.start_time=start
     if(end)query.end_time=end
     return read(scope,viewId,query)
@@ -426,7 +466,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
 
   for(const id of identityFields)el(id).addEventListener('input',()=>editSetup(true))
   el('quarter').addEventListener('input',()=>editSetup(false))
-  for(const id of ['keyword','start','end','recursive'])el(id).addEventListener('input',()=>editFilters(id))
+  for(const id of ['keyword','start','end','recursive','window','zone'])el(id).addEventListener('input',()=>editFilters(id))
   el('preset-id').addEventListener('input',controls)
   el('preset-save').addEventListener('click',()=>namedFilters(true))
   el('preset-open').addEventListener('click',()=>namedFilters(false))
