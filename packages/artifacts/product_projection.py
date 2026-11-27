@@ -7,15 +7,15 @@ import json
 import re
 
 from .catalog import Artifact, Entry, Snapshot, instant, key, quarter, quarter_for_time, text
+from .product_conditions import ASCII_FOLD, compile_conditions, matches_conditions
 
 MATCH = 'relative-key-ascii-substring-v1'
 _TOKEN = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 _HEX = re.compile(r'[0-9a-f]{64}')
 _TIME = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]'
                    r'(?:\.[0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])')
-_FOLD = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
 _BASE_FIELDS = frozenset(('format', 'quarter', 'path', 'mode', 'page', 'page_size', 'if_observation'))
-_FILE_FIELDS = frozenset(('recursive', 'keyword', 'start_time', 'end_time'))
+_FILE_FIELDS = frozenset(('recursive', 'keyword', 'conditions', 'start_time', 'end_time'))
 _MAX_OBJECTS, _MAX_KEY_BYTES, _MAX_SEGMENTS, _MAX_JSON = 500, 1024, 32, 1048576
 
 
@@ -45,6 +45,7 @@ class _Query:
     page_size: int
     recursive: bool
     keyword: str | None
+    conditions: tuple | None
     start: datetime | None
     end: datetime | None
     observation: str | None
@@ -74,11 +75,16 @@ def validate_request(body):
     keyword = text(body['keyword'], 256) if 'keyword' in body else None
     if keyword is not None and not keyword.strip():
         raise ValueError('empty product refinement')
+    conditions = None
+    if 'conditions' in body:
+        if 'keyword' in body:
+            raise ValueError('ambiguous product refinement')
+        conditions = compile_conditions(body['conditions'])
     start = _time(body['start_time']) if 'start_time' in body else None
     end = _time(body['end_time']) if 'end_time' in body else None
     if start is not None and end is not None and start > end:
         raise ValueError('reversed product time range')
-    return _Query(selected, path, mode, page, size, recursive, keyword, start, end, observed)
+    return _Query(selected, path, mode, page, size, recursive, keyword, conditions, start, end, observed)
 
 
 def _ascii_bytes(value):
@@ -110,7 +116,7 @@ def project(snapshot, product_token, request):
     pass filters complete leaves before deriving *one* directory level.
     """
     query = validate_request(request)
-    needle = token(product_token).translate(_FOLD)
+    needle = token(product_token).translate(ASCII_FOLD)
     rows = {}
     available = False
     for item in _bounded_rows(snapshot):
@@ -119,7 +125,7 @@ def project(snapshot, product_token, request):
         available = True
         if item.is_dir:
             continue
-        folded = item.key.translate(_FOLD)
+        folded = item.key.translate(ASCII_FOLD)
         if folded.endswith('.sha256') or needle not in folded or not item.key.startswith(query.path):
             continue
         rest = item.key[len(query.path):]
@@ -136,6 +142,8 @@ def project(snapshot, product_token, request):
             if not query.recursive and '/' in rest:
                 continue
             if query.keyword is not None and query.keyword not in item.key:
+                continue
+            if query.conditions is not None and not matches_conditions(folded, query.conditions):
                 continue
             if query.start is not None or query.end is not None:
                 when = instant(item.modified_at)

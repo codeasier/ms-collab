@@ -18,7 +18,7 @@ workspace TEXT NOT NULL, connection TEXT NOT NULL, bucket TEXT NOT NULL,
 view TEXT NOT NULL, binding TEXT NOT NULL, quarter TEXT NOT NULL,
 preset TEXT NOT NULL, created_by TEXT NOT NULL, query TEXT NOT NULL CHECK(length(query) <= 16384),
 PRIMARY KEY(workspace,connection,bucket,view,binding,quarter,preset))"""
-_FIELDS = {'format', 'quarter', 'mode', 'path', 'keyword', 'recursive', 'start_time', 'end_time',
+_FIELDS = {'format', 'quarter', 'mode', 'path', 'keyword', 'conditions', 'recursive', 'start_time', 'end_time',
            'relative_range', 'time_zone'}
 
 
@@ -61,11 +61,12 @@ def preset_route(env):
 
 def _query(raw, selected, *, saving):
     body = json.loads(raw, object_pairs_hook=_object)
-    ordinary, _ = separate_window(body)
+    ordinary, window = separate_window(body)
     validate_request(ordinary)
     allowed = _FIELDS | ({'if_observation', 'if_publication'} if saving else set())
     if (body.keys() - allowed or body['quarter'] != selected or body.get('mode') != 'files'
-            or (saving and 'if_observation' not in body)):
+            or (saving and 'if_observation' not in body)
+            or (saving and window is not None and 'conditions' in body and 'if_publication' not in body)):
         raise ValueError('expected active product file query')
     return body
 

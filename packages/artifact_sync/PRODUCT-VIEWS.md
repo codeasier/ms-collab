@@ -100,6 +100,7 @@ listing at that path, explicitly select files mode. For example, a new read:
 | `page`, `page_size` | Positive integers, up to 1,000,000 and 100; defaults 1 and 50. Page past end returns no items, unchanged total. |
 | `if_observation` | Lowercase 64-hex equality hint; required when page > 1. Use also on follow-up drill/filter reads. A stale hint returns 412 after authorization, with no previous/current results. Start a new read explicitly. |
 | `recursive`, `keyword` | Files mode only: strict boolean default false and optional nonblank case-sensitive literal relative-key substring (1–256 Unicode code points; ASCII C0 controls and DEL are not allowed). Leading/trailing spaces in a nonblank keyword are data. |
+| `conditions` | Files mode only. An ordered OBS advanced-condition list instead of `keyword`; see below. |
 | `start_time`, `end_time` | Files mode only: independent inclusive bounds, date + uppercase T + hh:mm:ss, optional 1–6 fractional digits, uppercase Z or explicit ±hh:mm offset. An active time bound does not enable recursion. |
 | `relative_range`, `time_zone` | Files mode only: provide both instead of absolute bounds. Use `today`, `week`, `month` or `30d` with an explicit IANA region (e.g. `Asia/Singapore`) or `UTC`. |
 
@@ -276,8 +277,8 @@ production download evidence.
 This backend slice lets a workspace administrator save a file filter for a
 published product view. A second authorized bucket reader who knows the preset
 ID can re-run the same query against the current publication in that quarter.
-The browser supports named **absolute** queries. Relative ranges below are a
-backend contract, not a browser control or evidence of deployed acceptance.
+The browser supports named absolute and relative queries. The compound
+condition list below is an API contract, not yet an editable browser control.
 
 Opt in twice: explicitly call
 `packages.artifact_sync.initialize_product_presets(workspace_store)` in trusted
@@ -338,3 +339,36 @@ and current grants still apply independently; a moving range never jumps
 quarters. Absolute bounds, including microseconds, are unchanged. This
 does not convert an old fixed preset or the browser’s **Last 7 UTC dates**
 shortcut into a relative range.
+
+### Reusing OBS advanced conditions
+
+When a kit owner wants the Linux build but not the Jupyter variant, send this
+file filter to the existing scoped product endpoint:
+
+```json
+{"format":1,"quarter":"2026Q4","mode":"files","path":"pkg/","recursive":true,"conditions":[{"operator":"包含","keyword":"kit"},{"operator":"AND","keyword":"linux"},{"operator":"AND NOT","keyword":"jupyter"}]}
+```
+
+The list uses the [OBS advanced search request](https://github.com/codeasier/msinsight-obs-web-browser/blob/519c1b82bc809c6d883faa96a6a5c88a0d4d5614/frontend/src/modules/artifacts/model/search-request.js)
+and [ordered SQL conditions](https://github.com/codeasier/msinsight-obs-web-browser/blob/519c1b82bc809c6d883faa96a6a5c88a0d4d5614/backend/modules/artifacts/object_dao.py).
+The first row is `包含`; each following row is `AND`, `OR`, or `AND NOT`.
+AND and exclusion bind more tightly than OR: `a OR b AND NOT c` means
+`a OR (b AND NOT c)`. An OR never skips the product requirement, current
+grant, path, quarter or time bounds. Each trimmed term matches anywhere in
+the visible **relative key**, not the hidden provider bucket name or URI.
+As in SQLite LIKE, letter folding is ASCII-only, `%` matches zero or more
+characters and `_` matches exactly one Unicode code point. Basic `keyword`
+still uses the original case-sensitive literal match.
+
+Use 1–8 flat rows each with exactly `operator` and `keyword`, at most 100
+code points per keyword, no blank terms or control characters. Malformed or
+nested conditions, an unknown operator, or a simultaneous basic keyword fail
+with 400; they never turn into unfiltered results. Do not send empty UI
+placeholder rows. The role, exact view/quarter and readback rules remain
+unchanged. For a fixed compound query save the current `if_observation`.
+For a rolling compound query also send the current `if_publication` from
+the bound root's `observation` (returned as `publication_observation` on
+the successful rolling read). Neither proof, the rows nor any byte grant is
+part of the stored preset. Reopening requires current authorization and
+recalculates a relative range using the trusted clock. This API does not
+add a browser editor, a new download grant, or real-account acceptance.
