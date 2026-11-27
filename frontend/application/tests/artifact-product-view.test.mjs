@@ -27,6 +27,7 @@ function rows(req=request(), items=[]) {
   return {format:1, kind:'product-view', match:'relative-key-ascii-substring-v1',scope:{...req.scope},
     view_id:req.viewId,quarter,path,mode,page,page_size,observed_at:seen,quarter_available:true,
     catalog_revision:3,observation:obs,total:items.length,items,
+    ...(req.body.relative_range?{publication_observation:obs}:{}),
     source:{kind:'stored_index',full_history_complete:false,live_provider_verified:false,download_available:false}}
 }
 
@@ -852,15 +853,15 @@ test('rolling search, next page and named save bind one explicit zone and observ
   const ordered=Array.from({length:11},(_,i)=>file('kit_'+String(i).padStart(2,'0')))
   plan(ordered.slice(0,10),{observation:rolledObs,total:11});await el('filters').fire('submit')
   const query={...presetQuery,...rolling}
-  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:1,page_size:10})
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:1,page_size:10,if_publication:obs})
   assert.match(el('evidence').textContent,/Last week \(Asia\/Shanghai\)/)
   plan(ordered.slice(-1),{observation:rolledObs,total:11});await el('next').fire('click')
-  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:2,page_size:10,if_observation:rolledObs})
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,page:2,page_size:10,if_observation:rolledObs,if_publication:obs})
   await edit('preset-id',presetId)
   const out=presetReply(query);out.result.observation=rolledObs
   client.queue.push(()=>response(out))
   await el('preset-save').fire('click');assert.match(el('status').textContent,/Saved preset/)
-  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,if_observation:rolledObs})
+  assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...query,if_observation:rolledObs,if_publication:obs})
   await edit('window','');plan([file('kit.bin')]);await el('filters').fire('submit')
   assert.deepEqual(JSON.parse(client.calls.at(-1).options.body),{...presetQuery,page:1,page_size:50,if_observation:obs})
   client.queue.push(()=>response(out))
@@ -891,4 +892,39 @@ test('a rolling response cannot change publication; clearing after 412 restores 
     await el('filters').fire('submit')
     assert.equal(el('browse').hidden,true)
   }
+})
+
+
+test('rolling typed transport rejects absent, wrong or internally reused root proofs; fixed shape unchanged',async()=>{
+  const h=harness();await h.session.inspect()
+  const r=makeProductRequest(scope,'kit',{...presetQuery,...rolling,if_publication:obs})
+  for(const change of [
+    data=>{delete data.publication_observation},
+    data=>{data.publication_observation='1'.repeat(64)},
+    data=>{data.observation=obs},
+  ]){
+    const data=rows(r,[file('kit.bin')]);data.observation=rolledObs;change(data)
+    h.queue.push(()=>response(data))
+    await assert.rejects(h.session.readArtifactProductView(scope,'kit',r.body,current()),/could not be verified/)
+  }
+  assert.throws(()=>validateProductResult({...rows(request()),publication_observation:obs},request()))
+})
+
+test('exact named recall verifies the publication fingerprint even when equal revision and time obscure a changed publication',async()=>{
+  const {ctrl,el,edit,select,plan,client}=await controllerHarness()
+  ctrl.activate();await select();plan([file('old.bin')]);await el('setup').fire('submit')
+  await edit('preset-id',presetId)
+  const other=presetReply({...presetQuery,...rolling})
+  other.result.observation=rolledObs
+  other.result.publication_observation='d'.repeat(64)
+  client.queue.push(()=>response(other));await el('preset-open').fire('click')
+  assert.match(el('status').textContent,/publication or view changed/)
+  assert.equal(el('results').text().trim(),'')
+  assert.equal(el('browse').hidden,true)
+  assert.equal(el('preset-save').disabled,true)
+  // A same-proof 200 that lies about revision is not reported as stale.
+  plan([]);await el('reopen').fire('click')
+  plan([],{catalog_revision:777});await el('tree').fire('click')
+  assert.match(el('status').textContent,/Could not verify/)
+  assert.doesNotMatch(el('status').textContent,/changed/)
 })

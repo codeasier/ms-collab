@@ -393,7 +393,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  async function readArtifactProductView(scope,viewId,body,options) {
   const owner=productOwner(options),{guard}=owner
   const unverified=()=>new Error('The product view response could not be verified.')
-  const selection=captureProductFields(scope,3),criteria=captureProductFields(body,13)
+  const selection=captureProductFields(scope,3),criteria=captureProductFields(body,14)
   guard()
   let codec
   try{codec=await import('./artifact-product-codec.mjs')}catch{guard();throw unverified()}
@@ -408,7 +408,7 @@ export function createSessionClient({fetcher=fetch,cookie=()=>document.cookie,on
  // reopen are distinct capabilities: a malformed save cannot become a GET.
  async function productPreset(writing,scope,viewId,selected,name,body,options) {
   const owner=productOwner(options),selection=captureProductFields(scope,3)
-  const criteria=writing?captureProductFields(body,10):undefined
+  const criteria=writing?captureProductFields(body,11):undefined
   const unverified=()=>new Error('The preset response could not be verified.')
   let codec
   try{codec=await import('./artifact-product-codec.mjs')}catch{owner.guard();throw unverified()}

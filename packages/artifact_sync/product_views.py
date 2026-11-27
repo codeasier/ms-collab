@@ -160,8 +160,11 @@ def bound_view(registry, scope, view_id, record):
 def product_result(registry, scope, view_id, raw, record, *, clock):
     view = bound_view(registry, scope, view_id, record)
     try:
-        body = json.loads(raw.decode('utf-8'), object_pairs_hook=_object, parse_constant=_bad_constant)
-        body, window = separate_window(body)
+        raw_body = json.loads(raw.decode('utf-8'), object_pairs_hook=_object, parse_constant=_bad_constant)
+        body, window = separate_window(raw_body)
+        expected_publication = None
+        if window is not None:
+            expected_publication = raw_body.get('if_publication')
         query = validate_request(body)
     except (KeyError, ValueError, TypeError, OverflowError, RecursionError):
         raise PolicyError(400, 'invalid_request') from None
@@ -170,12 +173,16 @@ def product_result(registry, scope, view_id, raw, record, *, clock):
     # This is only an equality hint after current authority; not an access token.
     observation = ['product-observation-v1', view.descriptor(), record.published_revision,
                    digest(record.published_raw)]
+    publication = digest(dump(observation))
+    if expected_publication is not None and expected_publication != publication:
+        raise PolicyError(412, 'stale_observation')
+    observed = publication
     if window is not None:
         bounds = resolve_window(window, clock)
         body.update(bounds)
         # A new civil window can change membership without republishing the index.
         observation += ['product-window-v1', window[0], window[1].key, bounds]
-    observed = digest(dump(observation))
+        observed = digest(dump(observation))
     if query.observation is not None and query.observation != observed:
         raise PolicyError(412, 'stale_observation')
     try:
@@ -188,4 +195,6 @@ def product_result(registry, scope, view_id, raw, record, *, clock):
                   catalog_revision=record.published_revision, observation=observed,
                   source={'kind': 'stored_index', 'full_history_complete': False,
                           'live_provider_verified': False, 'download_available': False})
+    if window is not None:
+        result['publication_observation'] = publication
     return result

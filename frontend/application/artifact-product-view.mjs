@@ -102,8 +102,18 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   // pin one window/zone and clock evaluation. Never pass a pin to another kind
   // of query. "opened" is a verified location, not the values being edited.
   let active=false, serial=0, flight=null, checking=null, pin=null, windowPin=null, opened=null, shown=null, recovery=false
-  const samePublication=(data,witness)=>!witness||
-    (data.observed_at===witness.observed_at&&data.catalog_revision===witness.catalog_revision)
+  function verifyContinuity(data,publication,expected){
+    if(!publication)return
+    const root=data.publication_observation??data.observation
+    const rootMatches=root===publication.observation
+    // A 200 that contradicts the proof it carries is a protocol failure,
+    // not evidence that publication or time actually changed.
+    if((!rootMatches&&expected&&data.observation===expected.observation)||
+       (rootMatches&&(data.observed_at!==publication.observed_at||
+                      data.catalog_revision!==publication.catalog_revision)))throw Error('Inconsistent publication receipt.')
+    if(!rootMatches||(expected&&data.observation!==expected.observation))
+      throw Object.assign(Error(),{status:412})
+  }
   const pinFor=body=>body.relative_range
     ?(windowPin?.range===body.relative_range&&windowPin.zone===body.time_zone?windowPin:null)
     :pin
@@ -266,7 +276,9 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     const {request,witness,total}=receipt
     // Same query, including literal filters and current page. First-page
     // results also need a positive observation precondition on this reread.
-    const query=makeProductRequest(request.scope,request.viewId,{...request.body,if_observation:witness.observation})
+    const body={...request.body,if_observation:witness.observation}
+    if(body.relative_range)body.if_publication=pin.observation
+    const query=makeProductRequest(request.scope,request.viewId,body)
     status('Rechecking the selected file in the same product view. No bytes have been requested.')
     try{
       const answer=await session.readArtifactProductView(query.scope,query.viewId,query.body,{signal:abort.signal,isCurrent})
@@ -331,8 +343,9 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     const ticket=serial
     let request
     try{
-      const query={...body};delete query.if_observation
+      const query={...body};delete query.if_observation;delete query.if_publication
       if(expected)query.if_observation=expected.observation
+      if(publication&&query.relative_range)query.if_publication=publication.observation
       request=makeProductRequest(scope,viewId,query)
     }catch{
       controls()
@@ -347,8 +360,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       if(!isCurrent())return
       // The typed transport checked all 17 fields against this exact request,
       // including the proof. The first receipt also pins these two witnesses.
-      if(!samePublication(data,publication)||(expected&&data.observation!==expected.observation))
-        throw Object.assign(Error(),{status:412})
+      verifyContinuity(data,publication,expected)
       if(download)validateProductResult(data,request)
       const witness=witnessFor(data,request)
       opened=request;recovery=false
@@ -374,7 +386,10 @@ export function mountArtifactProductView({session, download=null, validateWorksp
        Object.keys(scope).some(k=>current.scope[k]!==scope[k])){editSetup(true);return}
     // Never collect unchecked form edits, rows, paging, selectors or grants.
     const saved=saving?{...previous.request.body,if_observation:previous.witness.observation}:null
-    if(saved){delete saved.page;delete saved.page_size}
+    if(saved){
+      delete saved.page;delete saved.page_size
+      if(saved.relative_range)saved.if_publication=publication.observation
+    }
     retire()
     const ticket=serial,abort=new AbortController();flight=abort
     const isCurrent=()=>active&&ticket===serial&&flight===abort&&!abort.signal.aborted
@@ -388,9 +403,10 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       // Both paths return the authorized query and newly computed page one.
       const {query,result}=answer
       const expected=saving?previous.witness:pinFor(query)
-      if(!samePublication(result,publication)||(expected&&result.observation!==expected.observation))
-        throw Object.assign(Error(),{status:412})
-      const request=makeProductRequest(scope,viewId,{...query,path:query.path??'',page:1,page_size:50,if_observation:result.observation})
+      verifyContinuity(result,publication,expected)
+      const body={...query,path:query.path??'',page:1,page_size:50,if_observation:result.observation}
+      if(query.relative_range)body.if_publication=publication.observation
+      const request=makeProductRequest(scope,viewId,body)
       validateProductResult(result,request)
       resetFilters()
       el('keyword').value=query.keyword??'';el('start').value=query.start_time??'';el('end').value=query.end_time??''

@@ -63,7 +63,7 @@ def _query(raw, selected, *, saving):
     body = json.loads(raw, object_pairs_hook=_object)
     ordinary, _ = separate_window(body)
     validate_request(ordinary)
-    allowed = _FIELDS | ({'if_observation'} if saving else set())
+    allowed = _FIELDS | ({'if_observation', 'if_publication'} if saving else set())
     if (body.keys() - allowed or body['quarter'] != selected or body.get('mode') != 'files'
             or (saving and 'if_observation' not in body)):
         raise ValueError('expected active product file query')
@@ -102,6 +102,7 @@ def serve(registry, policy, actor, db, record, route, raw, *, clock):
         if count >= 128:
             raise PolicyError(409, 'preset_limit')
         del query['if_observation']
+        query.pop('if_publication', None)
         # Immutable creation provenance stays inside the private preset record. Never
         # put a query, preset name, view token, or file key in workspace-wide resources.
         db.execute(f'INSERT INTO {_TABLE} VALUES (?,?,?,?,?,?,?,?,?)', (*coords, actor, dump(query)))
