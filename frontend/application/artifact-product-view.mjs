@@ -131,6 +131,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   const recoverFocus=trigger=>{
     if(recovery&&(doc.activeElement===doc.body||doc.activeElement===trigger))el('reopen').focus()
   }
+  let conditionRows=[]
   const identityFields=['workspace','connection','bucket','view']
   const fields=()=>({scope:{workspace_id:el('workspace').value,connection_id:el('connection').value,bucket_id:el('bucket').value},viewId:el('view').value})
   const navigation=(body,path)=>({format:1,quarter:body.quarter,path,mode:'tree',page:1,page_size:body.page_size})
@@ -145,6 +146,16 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     el('open').disabled=!active||recovery||!!flight
     el('up').disabled=!opened?.body.path||!!flight
     for(const id of ['apply','range7','tree','window'])el(id).disabled=!opened||!!flight
+    const advanced=el('advanced').checked,locked=!opened||!!flight
+    el('advanced').disabled=locked
+    el('keyword').disabled=locked||advanced
+    el('conditions').hidden=!advanced
+    el('condition-add').disabled=locked||!advanced||conditionRows.length>=8
+    for(const {op,input,remove} of conditionRows){
+      input.disabled=locked
+      if(op)op.disabled=locked
+      if(remove)remove.disabled=locked
+    }
     const relative=!!el('window').value
     el('zone').disabled=!opened||!relative||!!flight
     for(const id of ['start','end'])el(id).disabled=!opened||relative||!!flight
@@ -173,8 +184,55 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     previous?.abort()
     discardRows()
   }
+  function conditionValues(){
+    return conditionRows.map(({op,input})=>({operator:op?.value??'包含',keyword:input.value}))
+  }
+  function renderConditions(values=[],focusIndex){
+    const holder=el('condition-rows')
+    if(!values.length){holder.replaceChildren();conditionRows=[];return}
+    conditionRows=values.map(({operator,keyword},i)=>{
+      const row=make('div');row.className='pv-fields'
+      const label=make('label',i?'Condition '+(i+1)+' pattern':'Include pattern')
+      const input=make('input');input.value=keyword;input.maxLength=200;input.autocomplete='off'
+      input.spellcheck=false;input.setAttribute('autocapitalize','none')
+      input.addEventListener('input',()=>{if(conditionRows[i]?.input===input)editFilters('conditions')})
+      label.append(input)
+      let op,remove
+      if(i){
+        const opLabel=make('label','Condition '+(i+1)+' operator')
+        op=make('select');op.autocomplete='off'
+        for(const name of ['AND','OR','AND NOT']){
+          const option=make('option',name);option.value=name;op.append(option)
+        }
+        op.value=operator
+        op.addEventListener('change',()=>{if(conditionRows[i]?.op===op)editFilters('conditions')})
+        opLabel.append(op);row.append(opLabel)
+      }
+      row.append(label)
+      if(i){
+        remove=make('button','Remove condition '+(i+1));remove.type='button'
+        remove.addEventListener('click',()=>{
+          if(!active||!opened||flight||!el('advanced').checked||conditionRows[i]?.remove!==remove)return
+          const draft=conditionValues()
+          draft.splice(i,1);renderConditions(draft,Math.min(i,draft.length-1));editFilters('conditions')
+        })
+        row.append(remove)
+      }
+      return {row,input,op,remove}
+    })
+    holder.replaceChildren(...conditionRows.map(({row})=>row))
+    conditionRows[focusIndex]?.input.focus()
+  }
+  function switchConditions(){
+    if(!active||!opened||flight)return
+    const advanced=el('advanced').checked
+    el('keyword').value='' // A mode switch cannot leave an invisible filter.
+    renderConditions(advanced?[{operator:'包含',keyword:''}]:[])
+    editFilters('conditions')
+  }
   function resetFilters(){
     for(const id of ['keyword','start','end'])el(id).value=''
+    el('advanced').checked=false;renderConditions()
     el('recursive').checked=false
     el('window').value='';el('zone').value='UTC'
     el('range7').setAttribute('aria-pressed','false')
@@ -330,7 +388,8 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     el('results').replaceChildren(data.items.length?list:make('p',message))
     const windowLabels={today:'Today',week:'Last week',month:'This month','30d':'Last 30 days'}
     const window=body.relative_range?' · '+windowLabels[body.relative_range]+' ('+body.time_zone+')':''
-    el('evidence').textContent='Published revision '+data.catalog_revision+' · Observed '+data.observed_at+' · Stored index, not a live listing'+window
+    el('evidence').textContent='Published revision '+data.catalog_revision+' · Observed '+data.observed_at+' · Stored index, not a live listing'+window+
+      (body.conditions?' · '+body.conditions.length+' advanced key conditions':'')
     const pages=Math.max(1,Math.ceil(data.total/body.page_size))
     el('page').textContent='Page '+body.page+' of '+pages+' · '+count
     el('page-size').value=String(body.page_size)
@@ -349,7 +408,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       request=makeProductRequest(scope,viewId,query)
     }catch{
       controls()
-      status(body.mode==='files'?'Check the file filters. Enter a nonblank literal keyword of at most 256 characters, or leave it empty; check both time bounds.':'Enter complete valid IDs and a quarter in YYYYQ1 through YYYYQ4 format.')
+      status(body.conditions?'Check advanced key conditions: use 1 to 8 nonblank patterns of at most 100 characters.':body.mode==='files'?'Check the file filters. Enter a nonblank literal keyword of at most 256 characters, or leave it empty; check both time bounds.':'Enter complete valid IDs and a quarter in YYYYQ1 through YYYYQ4 format.')
       return
     }
     const abort=new AbortController();flight=abort
@@ -411,6 +470,7 @@ export function mountArtifactProductView({session, download=null, validateWorksp
       resetFilters()
       el('keyword').value=query.keyword??'';el('start').value=query.start_time??'';el('end').value=query.end_time??''
       el('recursive').checked=query.recursive===true
+      if(query.conditions){el('advanced').checked=true;renderConditions(query.conditions)}
       if(query.relative_range){el('window').value=query.relative_range;el('zone').value=query.time_zone}
       opened=request
       shown=Object.freeze({request,total:result.total,witness:witnessFor(result,request),available:true})
@@ -452,7 +512,8 @@ export function mountArtifactProductView({session, download=null, validateWorksp
     }
     const relative_range=el('window').value,time_zone=el('zone').value
     const query={format:1,quarter:body.quarter,path:body.path,mode:'files',page:1,page_size:body.page_size,recursive:el('recursive').checked}
-    if(el('keyword').value!=='')query.keyword=el('keyword').value
+    if(el('advanced').checked)query.conditions=conditionValues()
+    else if(el('keyword').value!=='')query.keyword=el('keyword').value
     if(relative_range){
       if(!validProductWindow(relative_range,time_zone)){
         retire();controls();status('Enter a valid IANA time zone, such as UTC or Asia/Shanghai, before applying a quick range.')
@@ -486,6 +547,12 @@ export function mountArtifactProductView({session, download=null, validateWorksp
   el('preset-id').addEventListener('input',controls)
   el('preset-save').addEventListener('click',()=>namedFilters(true))
   el('preset-open').addEventListener('click',()=>namedFilters(false))
+  el('advanced').addEventListener('change',switchConditions)
+  el('condition-add').addEventListener('click',()=>{
+    if(!active||!opened||flight||!el('advanced').checked||conditionRows.length>=8)return
+    const values=conditionValues()
+    renderConditions([...values,{operator:'AND',keyword:''}],values.length);editFilters('conditions')
+  })
   el('setup').addEventListener('submit',e=>{e.preventDefault();return open(false)})
   el('reopen').addEventListener('click',()=>open(true))
   el('filters').addEventListener('submit',e=>{e.preventDefault();return apply()})

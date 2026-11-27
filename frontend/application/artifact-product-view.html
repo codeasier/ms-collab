@@ -69,6 +69,13 @@
           <label>Start time (inclusive)<input id="pv-start" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
           <label>End time (inclusive)<input id="pv-end" placeholder="YYYY-MM-DDThh:mm:ssZ" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
         </div>
+        <label class="pv-check"><input id="pv-advanced" type="checkbox" autocomplete="off" aria-controls="pv-conditions">Use advanced key conditions</label>
+        <fieldset id="pv-conditions" aria-describedby="pv-conditions-help" hidden>
+          <legend>Advanced key conditions</legend>
+          <p class="pv-note" id="pv-conditions-help">Advanced conditions replace the simple keyword, without changing dates or subfolder choice. Add up to eight conditions in order, with up to 100 characters per pattern. AND and AND NOT group before OR. Matching ignores ASCII case; % matches zero or more characters and _ matches one.</p>
+          <div id="pv-condition-rows"></div>
+          <button id="pv-condition-add" type="button" disabled>Add condition</button>
+        </fieldset>
         <div class="pv-fields" aria-describedby="pv-window-help">
           <label>Time filter<select id="pv-window" autocomplete="off">
             <option value="">Fixed dates or no time filter</option>

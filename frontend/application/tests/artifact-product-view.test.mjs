@@ -928,3 +928,109 @@ test('exact named recall verifies the publication fingerprint even when equal re
   assert.match(el('status').textContent,/Could not verify/)
   assert.doesNotMatch(el('status').textContent,/changed/)
 })
+
+const conditions=[
+  {operator:'包含',keyword:' LiNuX '},
+  {operator:'AND',keyword:'kit'},
+  {operator:'AND NOT',keyword:'jupyter'},
+]
+const advancedQuery={format:1,quarter:'2026Q2',mode:'files',path:'',recursive:true,conditions}
+const advancedPreset=(query=advancedQuery,key='release/KIT-Linux.zip')=>({format:1,kind:'product-preset',preset_id:presetId,
+  query,result:rows(makeProductRequest(scope,'kit',query),key?[file(key)]:[])})
+
+test('compound conditions are ordered, deeply detached and reject exotic or invalid row shapes without getters',()=>{
+  const edited=conditions.map(v=>({...v}))
+  const valid=makeProductRequest(scope,'kit',{...advancedQuery,conditions:edited})
+  edited[0].keyword='different';edited.reverse()
+  assert.deepEqual(valid.body.conditions,conditions)
+  assert.ok(Object.isFrozen(valid.body.conditions)&&valid.body.conditions.every(Object.isFrozen))
+  const f=items=>makeProductRequest(scope,'kit',{...advancedQuery,conditions:items})
+  const term=(operator,keyword='kit')=>({operator,keyword}),first=term('包含')
+  let read=0
+  const row={operator:'包含',get keyword(){read++;return 'leak'}}
+  const array=[first];Object.defineProperty(array,0,{enumerable:true,get(){read++;return first}})
+  const custom=[first];custom.extra='bad'
+  for(const bad of [[],{0:first},[row],array,custom,new Array(1),[term('OR')],[first,term('包含')],
+    [term('包含','\u0085')],[term('包含','\uD800')],[term('包含','x'.repeat(101))],
+    [first,{...first,extra:true}],Array(9).fill(first)])assert.throws(()=>f(bad))
+  assert.equal(read,0)
+  assert.throws(()=>makeProductRequest(scope,'kit',{...advancedQuery,keyword:'kit'}))
+  assert.throws(()=>makeProductRequest(scope,'kit',{...advancedQuery,mode:'tree'}))
+  assert.equal(f([term('包含','😀'.repeat(100)),...Array(7).fill(term('OR','k'))]).body.conditions.length,8)
+})
+test('compound row receipts require exact LIKE precedence, ASCII fold, underscore wildcard and literal punctuation',()=>{
+  const query=cond=>makeProductRequest(scope,'kit',{...advancedQuery,conditions:cond})
+  const check=(cond,accept,reject)=>{
+    const req=query(cond)
+    for(const k of accept)assert.doesNotThrow(()=>validateProductResult(rows(req,[file(k)]),req),k)
+    for(const k of reject)assert.throws(()=>validateProductResult(rows(req,[file(k)]),req),undefined,k)
+  }
+  check(conditions,['release/KIT-linux.zip'],['release/KIT-linux-jupyter.zip','other-linux.zip','kit-mac.zip'])
+  check([{operator:'包含',keyword:'kit'},{operator:'OR',keyword:'OTHER'},{operator:'AND NOT',keyword:'debug'}],
+    ['kit-debug.zip','other-linux.zip'],['other-debug.zip','alternate.zip'])
+  check([{operator:'包含',keyword:'A_%[.+B'}],['a🌟zz[.+b'],['a[.+b','a🌟zzxyb'])
+  check([{operator:'包含',keyword:'Ä'}],['pkg/Ä.bin'],['pkg/ä.bin'])
+})
+test('compound typed transport captures rows before awaiting and saved response requires structurally exact order and text',async()=>{
+  const h=harness();await h.session.inspect()
+  const draft=conditions.map(v=>({...v}))
+  const expected=makeProductRequest(scope,'kit',advancedQuery)
+  h.queue.push(()=>response(rows(expected,[file('pkg/kit-linux')])))
+  const read=h.session.readArtifactProductView(scope,'kit',{...advancedQuery,conditions:draft},current())
+  draft[0].keyword='tampered';draft.reverse();await read
+  assert.deepEqual(JSON.parse(h.calls.at(-1).options.body).conditions,conditions)
+  const saving={...advancedQuery,if_observation:obs}
+  h.queue.push(()=>response(advancedPreset({...advancedQuery,conditions:conditions.map(v=>({...v}))})))
+  assert.equal((await h.session.saveArtifactProductPreset(scope,'kit',presetId,saving,current())).preset_id,presetId)
+  for(const alternate of [[conditions[0],conditions[2],conditions[1]],
+    [{...conditions[0],keyword:conditions[0].keyword.trim()},...conditions.slice(1)],
+    [conditions[0],{...conditions[1],operator:'OR'},conditions[2]]]){
+    h.queue.push(()=>response(advancedPreset({...advancedQuery,conditions:alternate})))
+    await assert.rejects(h.session.saveArtifactProductPreset(scope,'kit',presetId,saving,current()),/could not be verified/)
+  }
+  const before=h.calls.length
+  await assert.rejects(h.session.saveArtifactProductPreset(scope,'kit',presetId,{...saving,...rolling},current()))
+  const sparse=[conditions[0]];Object.defineProperty(sparse,0,{enumerable:true,get(){assert.fail('row getter called')}})
+  await assert.rejects(h.session.readArtifactProductView(scope,'kit',{...advancedQuery,conditions:sparse},current()))
+  assert.equal(h.calls.length,before)
+})
+test('advanced editor safely replaces simple keyword, carries compound fixed/rolling dates to save and reopen, caps and clears drafts',async()=>{
+  const {ctrl,el,edit,select,plan,client}=await controllerHarness()
+  const field=(i,tag)=>el('condition-rows').children[i].all(tag)[0]
+  const change=async(i,tag,value)=>{
+    const node=field(i,tag);node.value=value;await node.fire(tag==='SELECT'?'change':'input')
+  }
+  const toggle=async yes=>{el('advanced').checked=yes;await el('advanced').fire('change')}
+  ctrl.activate();await select();plan([]);await el('setup').fire('submit')
+  await edit('keyword','discard me');await edit('start',t);await toggle(true)
+  assert.equal(el('keyword').value,'');assert.equal(el('keyword').disabled,true);assert.equal(el('start').value,t)
+  await change(0,'INPUT',' LiNuX ')
+  await el('condition-add').fire('click');await change(1,'INPUT','kit')
+  await el('condition-add').fire('click');await change(2,'SELECT','AND NOT');await change(2,'INPUT','jupyter')
+  el('recursive').checked=true
+  plan([file('pkg/kit-linux')]);await el('filters').fire('submit')
+  const wired=()=>JSON.parse(client.calls.at(-1).options.body)
+  assert.deepEqual(wired(),{...advancedQuery,start_time:t,page:1,page_size:10,if_observation:obs})
+  await edit('window','week');await edit('zone','Asia/Shanghai')
+  plan([file('pkg/kit-linux')],{observation:rolledObs});await el('filters').fire('submit')
+  const query={...advancedQuery,...rolling}
+  assert.deepEqual(wired(),{...query,page:1,page_size:10,if_publication:obs})
+  await edit('preset-id',presetId)
+  const saved=advancedPreset({...query,conditions:conditions.map(v=>({...v}))});saved.result.observation=rolledObs
+  client.queue.push(()=>response(saved));await el('preset-save').fire('click')
+  assert.deepEqual(wired(),{...query,if_observation:rolledObs,if_publication:obs})
+  assert.match(el('status').textContent,/Saved preset/)
+  await toggle(false)
+  assert.equal(el('conditions').hidden,true);assert.equal(el('keyword').disabled,false);assert.equal(el('window').value,'week')
+  client.queue.push(()=>response(saved));await el('preset-open').fire('click')
+  assert.equal(client.calls.at(-1).options.method,'GET')
+  assert.equal(el('advanced').checked,true);assert.equal(el('keyword').value,'')
+  assert.equal(field(2,'SELECT').value,'AND NOT');assert.equal(field(0,'INPUT').value,' LiNuX ')
+  assert.equal(el('zone').value,'Asia/Shanghai')
+  for(let i=0;i<6;i++)await el('condition-add').fire('click')
+  assert.equal(el('condition-rows').children.length,8)
+  assert.equal(el('condition-add').disabled,true)
+  await field(7,'BUTTON').fire('click');assert.equal(el('condition-rows').children.length,7)
+  await edit('quarter','2026Q3');assert.equal(el('condition-rows').children.length,0)
+  assert.equal(el('advanced').checked,false);assert.equal(el('preset-id').value,'')
+})

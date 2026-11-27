@@ -2,7 +2,8 @@
 // observation is an authorization, a provider URL, or a download capability.
 const scopeFields = ['workspace_id', 'connection_id', 'bucket_id']
 const baseFields = ['format', 'quarter', 'path', 'mode', 'page', 'page_size', 'if_observation', 'if_publication']
-const fileFields = ['recursive', 'keyword', 'start_time', 'end_time', 'relative_range', 'time_zone']
+const fileFields = ['recursive', 'keyword', 'start_time', 'end_time', 'relative_range', 'time_zone', 'conditions']
+const conditionOperators=['AND','OR','AND NOT']
 const relativeRanges = ['today','week','month','30d']
 const productZone = /^(?:UTC|(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|Indian|Pacific|Etc)(?:\/[A-Za-z0-9_+-]+){1,2})$/
 const resultFields = ['format', 'kind', 'match', 'scope', 'view_id', 'quarter', 'path', 'mode',
@@ -33,6 +34,59 @@ function fields(value, required, optional = []) {
       const property = Object.getOwnPropertyDescriptor(value, k)
       return property.enumerable && Object.hasOwn(property, 'value')
     })
+}
+
+// Only dense ordinary arrays and exact scalar rows. Preserve order and literal
+// keywords (including surrounding whitespace) for named preset round trips.
+function captureConditions(items){
+  if(!Array.isArray(items)||Object.getPrototypeOf(items)!==Array.prototype||
+     !bounded(items.length,1,8)||Reflect.ownKeys(items).length!==items.length+1)throw invalidRequest()
+  const rows=[]
+  for(let i=0;i<items.length;i++){
+    const d=Object.getOwnPropertyDescriptor(items,String(i))
+    if(!d?.enumerable||!Object.hasOwn(d,'value')||!fields(d.value,['operator','keyword']))throw invalidRequest()
+    const {operator,keyword}=d.value
+    if(!(i?conditionOperators.includes(operator):operator==='包含')||
+       typeof keyword!=='string'||keyword.length>200||!scalarText(keyword)||
+       [...keyword].length>100||!/[^\p{White_Space}]/u.test(keyword))throw invalidRequest()
+    rows.push(Object.freeze({operator,keyword}))
+  }
+  return Object.freeze(rows)
+}
+const sameConditions=(a,b)=>a.length===b.length&&a.every((x,i)=>x.operator===b[i].operator&&x.keyword===b[i].keyword)
+const asciiFold=s=>s.replace(/[A-Z]/g,c=>c.toLowerCase())
+function compileConditions(conditions){
+  const groups=[[]]
+  for(const {operator,keyword} of conditions){
+    if(operator==='OR')groups.push([])
+    const pieces=asciiFold(keyword.replace(/^\p{White_Space}+|\p{White_Space}+$/gu,'')).split('%').filter(Boolean)
+    // A LIKE percent separates ordered parts. An underscore consumes exactly
+    // one Unicode code point. Regexes are fixed length: no quantifiers or
+    // alternation may be constructed from the user's data.
+    const compiled=pieces.map(piece=>piece.includes('_')?new RegExp(piece.split('_')
+      .map(s=>s.replace(/[.*+?^$(){}|[\]\\]/g,'\\$&')).join('.'),'gsu'):piece)
+    groups.at(-1).push([operator==='AND NOT',compiled])
+  }
+  return groups
+}
+function matchesConditions(key,groups){
+  const folded=asciiFold(key)
+  const matches=pieces=>{
+    let at=0
+    for(const part of pieces){
+      if(typeof part==='string'){
+        const found=folded.indexOf(part,at)
+        if(found<0)return false
+        at=found+part.length
+      }else{
+        part.lastIndex=at
+        if(!part.test(folded))return false
+        at=part.lastIndex
+      }
+    }
+    return true
+  }
+  return groups.some(group=>group.every(([not,pieces])=>matches(pieces)!==not))
 }
 
 function relativeKey(value, directory, root = false) {
@@ -134,13 +188,18 @@ export function makeProductRequest(scope, viewId, body) {
   const start = Object.hasOwn(body, 'start_time') ? productInstantMicros(body.start_time) : undefined
   const end = Object.hasOwn(body, 'end_time') ? productInstantMicros(body.end_time) : undefined
   if (start !== undefined && end !== undefined && start > end) throw new Error('The start time must not be after the end time.')
+  const detached={...body}
+  if(Object.hasOwn(body,'conditions')){
+    if(Object.hasOwn(body,'keyword'))throw invalidRequest()
+    detached.conditions=captureConditions(body.conditions)
+  }
   const {workspace_id: w, connection_id: c, bucket_id: b} = scope
-  // Validated fields are all primitives. Preserve optional-field presence and
+  // Preserve optional-field presence, order of clauses, and
   // exact values, including literal slashes, Unicode and fractional precision.
   return Object.freeze({
     scope: Object.freeze({...scope}), viewId,
     path: `/api/workspaces/${w}/artifacts/${c}/${b}/product-views/${viewId}`,
-    body: Object.freeze({...body}),
+    body: Object.freeze(detached),
   })
 }
 
@@ -163,7 +222,7 @@ export function validateProductResult(data, request) {
   const expected = makeProductRequest(request.scope, request.viewId, request.body)
   if (request.path !== expected.path) throw invalidResult()
   const {quarter, mode = 'tree', path = '', page = 1, page_size = 50, if_observation,
-    recursive = false, keyword, start_time, end_time, relative_range, if_publication} = expected.body
+    recursive = false, keyword, conditions, start_time, end_time, relative_range, if_publication} = expected.body
   const required=relative_range?[...resultFields,'publication_observation']:resultFields
   if (!fields(data, required) || data.format !== 1 || data.kind !== 'product-view' ||
       data.match !== 'relative-key-ascii-substring-v1' || !fields(data.scope, scopeFields) ||
@@ -189,6 +248,7 @@ export function validateProductResult(data, request) {
     const observed = productInstantMicros(data.observed_at)
     const start = start_time === undefined ? undefined : productInstantMicros(start_time)
     const end = end_time === undefined ? undefined : productInstantMicros(end_time)
+    const groups=conditions?compileConditions(conditions):null
     const seen = new Set()
     let previous
     for (const row of data.items) {
@@ -205,6 +265,7 @@ export function validateProductResult(data, request) {
         const modified = productInstantMicros(row.modified_at)
         if (/^\.[sS][hH][aA]256$/.test(row.key.slice(-7)) || modified > observed ||
             (keyword !== undefined && !row.key.includes(keyword)) ||
+            (groups&&!matchesConditions(row.key,groups)) ||
             (start !== undefined && modified < start) || (end !== undefined && modified > end)) throw invalidResult()
       }
       if (previous && rowOrder(previous, row) >= 0) throw invalidResult()
@@ -225,7 +286,8 @@ export function productPresetPath(scope,viewId,selected,name) {
 const presetRequired=['format','quarter','mode']
 const presetOptional=['path',...fileFields]
 export function productPresetWrite(scope,viewId,body) {
-  if (!fields(body,[...presetRequired,'if_observation'],[...presetOptional,'if_publication'])||body.mode!=='files') throw invalidRequest()
+  if (!fields(body,[...presetRequired,'if_observation'],[...presetOptional,'if_publication'])||body.mode!=='files'||
+      (Object.hasOwn(body,'conditions')&&Object.hasOwn(body,'relative_range')&&!Object.hasOwn(body,'if_publication'))) throw invalidRequest()
   return makeProductRequest(scope,viewId,body).body
 }
 export function validateProductPreset(data,scope,viewId,selected,name,saved) {
@@ -237,10 +299,12 @@ export function validateProductPreset(data,scope,viewId,selected,name,saved) {
   if(saved){
     guards.if_observation=saved.if_observation
     if(Object.hasOwn(saved,'if_publication'))guards.if_publication=saved.if_publication
-    if(Object.keys(saved).length!==Object.keys(query).length+Object.keys(guards).length||
-       Object.keys(query).some(k=>!Object.hasOwn(saved,k)||query[k]!==saved[k]))throw invalidResult()
   }
   const req=makeProductRequest(scope,viewId,{...query,...guards})
+  const detached=req.body
+  if(saved&&(Object.keys(saved).length!==Object.keys(detached).length||
+      Object.keys(detached).some(k=>!Object.hasOwn(saved,k)||
+        (k==='conditions'?!sameConditions(detached.conditions,saved.conditions):detached[k]!==saved[k]))))throw invalidResult()
   validateProductResult(data.result,req)
   if(!data.result.quarter_available) throw invalidResult()
   return data
